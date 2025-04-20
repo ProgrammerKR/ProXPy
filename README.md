@@ -41,17 +41,11 @@ class Base(object):
 
   def show(self):
     print self.value
-<<<<<<< HEAD
 ```
 
 ### ProXPy:
 
 ```
-=======
-      
-ProXPy:
-
->>>>>>> 2c18157 (Initial commit for ProXPy)
     try 
     {
       if true
@@ -77,9 +71,4 @@ ProXPy:
         print this.value;
       }
     }
-<<<<<<< HEAD
 ```
-=======
-    
->>>>>>> 2c18157 (Initial commit for ProXPy)
-    
