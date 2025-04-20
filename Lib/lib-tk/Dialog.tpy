@@ -1,0 +1,54 @@
+# dialog.py -- Tkinter interface to the tk_dialog script.
+
+from Tkinter import *;
+from Tkinter import _cnfmerge;
+
+if TkVersion <= 3.6{
+    DIALOG_ICON = 'warning';
+} else{
+    DIALOG_ICON = 'questhead';
+
+
+}
+class Dialog(Widget){
+    function __init__( master=nil, cnf={}, **kw){
+        cnf = _cnfmerge((cnf, kw));
+        this.widgetName = '__dialog__';
+        Widget._setup(this, master, cnf);
+        this.num = this.tk.getint(
+                this.tk.call(
+                      'tk_dialog', this._w,
+                      cnf['title'], cnf['text'],
+                      cnf['bitmap'], cnf['default'],
+                      *cnf['strings']));
+        try{ Widget.destroy(this);}
+        except TclError{ pass;}
+    } function destroy(){ pass;}
+
+}
+function _test(){
+    d = Dialog(nil, {'title': 'File Modified',
+                      'text':
+                      'File "Python.h" has been modified'
+                      ' since the last time it was saved.'
+                      ' Do you want to save it before'
+                      ' exiting the application.',
+                      'bitmap': DIALOG_ICON,
+                      'default': 0,
+                      'strings': ('Save File',
+                                  'Discard Changes',
+                                  'Return to Editor')});
+    print d.num;
+
+
+}
+if __name__ == '__main__'{
+    t = Button(nil, {'text': 'Test',
+                      'command': _test,
+                      Pack: {}});
+    q = Button(nil, {'text': 'Quit',
+                      'command': t.quit,
+                      Pack: {}});
+    t.mainloop();
+
+}

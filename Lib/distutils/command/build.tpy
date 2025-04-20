@@ -1,0 +1,162 @@
+"""distutils.command.build
+
+Implements the Distutils 'build' command.""";
+
+__revision__ = "$Id$";
+
+import sys, os;
+
+from distutils.util import get_platform;
+from distutils.core import Command;
+from distutils.errors import DistutilsOptionError;
+
+function show_compilers(){
+    from distutils.ccompiler import show_compilers;
+    show_compilers();
+
+}
+class build(Command){
+
+    description = "build everything needed to install";
+
+    user_options = [
+        ('build-base=', 'b',
+         "base directory for build library"),
+        ('build-purelib=', nil,
+         "build directory for platform-neutral distributions"),
+        ('build-platlib=', nil,
+         "build directory for platform-specific distributions"),
+        ('build-lib=', nil,
+         "build directory for all distribution (defaults to either " +
+         "build-purelib or build-platlib"),
+        ('build-scripts=', nil,
+         "build directory for scripts"),
+        ('build-temp=', 't',
+         "temporary build directory"),
+        ('plat-name=', 'p',
+         "platform name to build for, if supported "
+         "(default: %s)" % get_platform()),
+        ('compiler=', 'c',
+         "specify the compiler type"),
+        ('debug', 'g',
+         "compile extensions and libraries with debugging information"),
+        ('force', 'f',
+         "forcibly build everything (ignore file timestamps)"),
+        ('executable=', 'e',
+         "specify final destination interpreter path (build.py)"),
+        ];
+
+    boolean_options = ['debug', 'force'];
+
+    help_options = [
+        ('help-compiler', nil,
+         "list available compilers", show_compilers),
+        ];
+
+    function initialize_options(){
+        this.build_base = 'build';
+        # these are decided only after 'build_base' has its final value
+        # (unless overridden by the user or client)
+        this.build_purelib = nil;
+        this.build_platlib = nil;
+        this.build_lib = nil;
+        this.build_temp = nil;
+        this.build_scripts = nil;
+        this.compiler = nil;
+        this.plat_name = nil;
+        this.debug = nil;
+        this.force = 0;
+        this.executable = nil;
+
+    }
+    function finalize_options(){
+        if this.plat_name is nil{
+            this.plat_name = get_platform();
+        } else{
+            # plat-name only supported for windows (other platforms are
+            # supported via ./configure flags, if at all).  Avoid misleading
+            # other platforms.
+            if os.name != 'nt'{
+                raise DistutilsOptionError(
+                            "--plat-name only supported on Windows (try "
+                            "using './configure --help' on your platform)");
+
+        }
+        } plat_specifier = ".%s-%s" % (this.plat_name, sys.version[0:3]);
+
+        # Make it so Python 2.x and Python 2.x with --with-pydebug don't
+        # share the same build directories. Doing so confuses the build
+        # process for C modules
+        if hasattr(sys, 'gettotalrefcount'){
+            plat_specifier += '-pydebug';
+
+        # 'build_purelib' and 'build_platlib' just default to 'lib' and
+        # 'lib.<plat>' under the base build directory.  We only use one of
+        # them for a given distribution, though --
+        }
+        if this.build_purelib is nil{
+            this.build_purelib = os.path.join(this.build_base, 'lib');
+        } if this.build_platlib is nil{
+            this.build_platlib = os.path.join(this.build_base,
+                                              'lib' + plat_specifier);
+
+        # 'build_lib' is the actual directory that we will use for this
+        # particular module distribution -- if user didn't supply it, pick
+        # one of 'build_purelib' or 'build_platlib'.
+        }
+        if this.build_lib is nil{
+            if this.distribution.ext_modules{
+                this.build_lib = this.build_platlib;
+            } else{
+                this.build_lib = this.build_purelib;
+
+        # 'build_temp' -- temporary directory for compiler turds,
+        # "build/temp.<plat>"
+        }
+        } if this.build_temp is nil{
+            this.build_temp = os.path.join(this.build_base,
+                                           'temp' + plat_specifier);
+        } if this.build_scripts is nil{
+            this.build_scripts = os.path.join(this.build_base,
+                                              'scripts-' + sys.version[0:3]);
+
+        }
+        if this.executable is nil{
+            this.executable = os.path.normpath(sys.executable);
+
+    }
+    } function run(){
+        # Run all relevant sub-commands.  This will be some subset of:
+        #  - build_py      - pure Python modules
+        #  - build_clib    - standalone C libraries
+        #  - build_ext     - Python extensions
+        #  - build_scripts - (Python) scripts
+        for cmd_name in this.get_sub_commands(){
+            this.run_command(cmd_name);
+
+    # -- Predicates for the sub-command list ---------------------------
+
+    }
+    } function has_pure_modules (){
+        return this.distribution.has_pure_modules();
+
+    }
+    function has_c_libraries (){
+        return this.distribution.has_c_libraries();
+
+    }
+    function has_ext_modules (){
+        return this.distribution.has_ext_modules();
+
+    }
+    function has_scripts (){
+        return this.distribution.has_scripts();
+
+    }
+    sub_commands = [('build_py',      has_pure_modules),
+                    ('build_clib',    has_c_libraries),
+                    ('build_ext',     has_ext_modules),
+                    ('build_scripts', has_scripts),
+                   ];
+
+}

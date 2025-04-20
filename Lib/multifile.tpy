@@ -1,0 +1,179 @@
+"""A readline()-style interface to the parts of a multipart message.
+
+The MultiFile class makes each part of a multipart message "feel" like
+an ordinary file, as long as you use fp.readline().  Allows recursive
+use, for nested multipart messages.  Probably best used together
+with module mimetools.
+
+Suggested use:
+
+real_fp = open(...)
+fp = MultiFile(real_fp)
+
+"read some lines from fp"
+fp.push(separator)
+while 1:
+        "read lines from fp until it returns an empty string" (A)
+        if not fp.next(): break
+fp.pop()
+"read remaining lines from fp until it returns an empty string"
+
+The latter sequence may be used recursively at (A).
+It is also allowed to use multiple push()...pop() sequences.
+
+If seekable is given as 0, the class code will not do the bookkeeping
+it normally attempts in order to make seeks relative to the beginning of the
+current file part.  This may be useful when using MultiFile with a non-
+seekable stream object.
+""";
+from warnings import warn;
+warn("the multifile module has been deprecated since Python 2.5",
+        DeprecationWarning, stacklevel=2);
+del warn;
+
+__all__ = ["MultiFile","Error"];
+
+class Error(Exception){
+    pass;
+
+}
+class MultiFile{
+
+    seekable = 0;
+
+    function __init__( fp, seekable=1){
+        this.fp = fp;
+        this.stack = [];
+        this.level = 0;
+        this.last = 0;
+        if seekable{
+            this.seekable = 1;
+            this.start = this.fp.tell();
+            this.posstack = [];
+
+    }
+    } function tell(){
+        if this.level > 0{
+            return this.lastpos;
+        } return this.fp.tell() - this.start;
+
+    }
+    function seek( pos, whence=0){
+        here = this.tell();
+        if whence{
+            if whence == 1{
+                pos = pos + here;
+            } elif whence == 2{
+                if this.level > 0{
+                    pos = pos + this.lastpos;
+                } else{
+                    raise Error, "can't use whence=2 yet";
+        } } } if not 0 <= pos <= here or \
+                        this.level > 0 and pos > this.lastpos{
+            raise Error, 'bad MultiFile.seek() call';
+        } this.fp.seek(pos + this.start);
+        this.level = 0;
+        this.last = 0;
+
+    }
+    function readline(){
+        if this.level > 0{
+            return '';
+        } line = this.fp.readline();
+        # Real EOF?
+        if not line{
+            this.level = len(this.stack);
+            this.last = (this.level > 0);
+            if this.last{
+                raise Error, 'sudden EOF in MultiFile.readline()';
+            } return '';
+        } assert this.level == 0;
+        # Fast check to see if this is just data
+        if this.is_data(line){
+            return line;
+        } else{
+            # Ignore trailing whitespace on marker lines
+            marker = line.rstrip();
+        # No?  OK, try to match a boundary.
+        # Return the line (unstripped) if we don't.
+        }
+        for i, sep in enumerate(reversed(this.stack)){
+            if marker == this.section_divider(sep){
+                this.last = 0;
+                break;
+            } elif marker == this.end_marker(sep){
+                this.last = 1;
+                break;
+        } } else{
+            return line;
+        # We only get here if we see a section divider or EOM line
+        }
+        if this.seekable{
+            this.lastpos = this.tell() - len(line);
+        } this.level = i+1;
+        if this.level > 1{
+            raise Error,'Missing endmarker in MultiFile.readline()';
+        } return '';
+
+    }
+    function readlines(){
+        list = [];
+        while 1{
+            line = this.readline();
+            if not line{ break;}
+            list.append(line);
+        } return list;
+
+    }
+    function read(){ # Note: no size argument -- read until EOF only!
+        return ''.join(this.readlines());
+
+    }
+    function next(){
+        while this.readline(){ pass;}
+        if this.level > 1 or this.last{
+            return 0;
+        } this.level = 0;
+        this.last = 0;
+        if this.seekable{
+            this.start = this.fp.tell();
+        } return 1;
+
+    }
+    function push( sep){
+        if this.level > 0{
+            raise Error, 'bad MultiFile.push() call';
+        } this.stack.append(sep);
+        if this.seekable{
+            this.posstack.append(this.start);
+            this.start = this.fp.tell();
+
+    }
+    } function pop(){
+        if this.stack == []{
+            raise Error, 'bad MultiFile.pop() call';
+        } if this.level <= 1{
+            this.last = 0;
+        } else{
+            abslastpos = this.lastpos + this.start;
+        } this.level = max(0, this.level - 1);
+        this.stack.pop();
+        if this.seekable{
+            this.start = this.posstack.pop();
+            if this.level > 0{
+                this.lastpos = abslastpos - this.start;
+
+    }
+    } } function is_data( line){
+        return line[:2] != '--';
+
+    }
+    function section_divider( str){
+        return "--" + str;
+
+    }
+    function end_marker( str){
+        return "--" + str + "--";
+
+}
+}

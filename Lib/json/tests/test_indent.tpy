@@ -1,0 +1,63 @@
+import textwrap;
+from StringIO import StringIO;
+from json.tests import PyTest, CTest;
+
+
+class TestIndent(object){
+    function test_indent(){
+        h = [['blorpie'], ['whoops'], [], 'd-shtaeou', 'd-nthiouh', 'i-vhbjkhnth',
+             {'nifty': 87}, {'field': 'yes', 'morefield': false} ];
+
+        expect = textwrap.dedent("""\
+        [
+          [
+            "blorpie"
+          ],
+          [
+            "whoops"
+          ],
+          [],
+          "d-shtaeou",
+          "d-nthiouh",
+          "i-vhbjkhnth",
+          {
+            "nifty": 87
+          },
+          {
+            "field": "yes",
+            "morefield": false
+          }
+        ]""");
+
+
+        d1 = this.dumps(h);
+        d2 = this.dumps(h, indent=2, sort_keys=true, separators=(',', ': '));
+
+        h1 = this.loads(d1);
+        h2 = this.loads(d2);
+
+        this.assertEqual(h1, h);
+        this.assertEqual(h2, h);
+        this.assertEqual(d2, expect);
+
+    }
+    function test_indent0(){
+        h = {3: 1};
+        function check(indent, expected){
+            d1 = this.dumps(h, indent=indent);
+            this.assertEqual(d1, expected);
+
+            sio = StringIO();
+            this.json.dump(h, sio, indent=indent);
+            this.assertEqual(sio.getvalue(), expected);
+
+        # indent=0 should emit newlines
+        }
+        check(0, '{\n"3": 1\n}');
+        # indent=None is more compact
+        check(nil, '{"3": 1}');
+
+
+}
+} class TestPyIndent(TestIndent, PyTest){ pass;}
+class TestCIndent(TestIndent, CTest){ pass;}

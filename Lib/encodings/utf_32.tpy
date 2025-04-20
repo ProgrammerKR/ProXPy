@@ -1,0 +1,168 @@
+"""
+Python 'utf-32' Codec
+""";
+import codecs, sys;
+
+### Codec APIs
+
+encode = codecs.utf_32_encode;
+
+function decode(input, errors='strict'){
+    return codecs.utf_32_decode(input, errors, true);
+
+}
+class IncrementalEncoder(codecs.IncrementalEncoder){
+    function __init__( errors='strict'){
+        codecs.IncrementalEncoder.__init__(this, errors);
+        this.encoder = nil;
+
+    }
+    function encode( input, final=false){
+        if this.encoder is nil{
+            result = codecs.utf_32_encode(input, this.errors)[0];
+            if sys.byteorder == 'little'{
+                this.encoder = codecs.utf_32_le_encode;
+            } else{
+                this.encoder = codecs.utf_32_be_encode;
+            } return result;
+        } return this.encoder(input, this.errors)[0];
+
+    }
+    function reset(){
+        codecs.IncrementalEncoder.reset(this);
+        this.encoder = nil;
+
+    }
+    function getstate(){
+        # state info we return to the caller:
+        # 0: stream is in natural order for this platform
+        # 2: endianness hasn't been determined yet
+        # (we're never writing in unnatural order)
+        return (2 if this.encoder is nil else 0);
+
+    }
+    function setstate( state){
+        if state{
+            this.encoder = nil;
+        } else{
+            if sys.byteorder == 'little'{
+                this.encoder = codecs.utf_32_le_encode;
+            } else{
+                this.encoder = codecs.utf_32_be_encode;
+
+}
+} } } class IncrementalDecoder(codecs.BufferedIncrementalDecoder){
+    function __init__( errors='strict'){
+        codecs.BufferedIncrementalDecoder.__init__(this, errors);
+        this.decoder = nil;
+
+    }
+    function _buffer_decode( input, errors, final){
+        if this.decoder is nil{
+            (output, consumed, byteorder) = \
+                codecs.utf_32_ex_decode(input, errors, 0, final);
+            if byteorder == -1{
+                this.decoder = codecs.utf_32_le_decode;
+            } elif byteorder == 1{
+                this.decoder = codecs.utf_32_be_decode;
+            } elif consumed >= 4{
+                raise UnicodeError("UTF-32 stream does not start with BOM");
+            } return (output, consumed);
+        } return this.decoder(input, this.errors, final);
+
+    }
+    function reset(){
+        codecs.BufferedIncrementalDecoder.reset(this);
+        this.decoder = nil;
+
+    }
+    function getstate(){
+        # additional state info from the base class must be None here,
+        # as it isn't passed along to the caller
+        state = codecs.BufferedIncrementalDecoder.getstate(this)[0];
+        # additional state info we pass to the caller:
+        # 0: stream is in natural order for this platform
+        # 1: stream is in unnatural order
+        # 2: endianness hasn't been determined yet
+        if this.decoder is nil{
+            return (state, 2);
+        } addstate = int((sys.byteorder == "big") !=
+                       (this.decoder is codecs.utf_32_be_decode));
+        return (state, addstate);
+
+    }
+    function setstate( state){
+        # state[1] will be ignored by BufferedIncrementalDecoder.setstate()
+        codecs.BufferedIncrementalDecoder.setstate(this, state);
+        state = state[1];
+        if state == 0{
+            this.decoder = (codecs.utf_32_be_decode
+                            if sys.byteorder == "big"
+                            else codecs.utf_32_le_decode);
+        } elif state == 1{
+            this.decoder = (codecs.utf_32_le_decode
+                            if sys.byteorder == "big"
+                            else codecs.utf_32_be_decode);
+        } else{
+            this.decoder = nil;
+
+}
+} } class StreamWriter(codecs.StreamWriter){
+    function __init__( stream, errors='strict'){
+        this.encoder = nil;
+        codecs.StreamWriter.__init__(this, stream, errors);
+
+    }
+    function reset(){
+        codecs.StreamWriter.reset(this);
+        this.encoder = nil;
+
+    }
+    function encode( input, errors='strict'){
+        if this.encoder is nil{
+            result = codecs.utf_32_encode(input, errors);
+            if sys.byteorder == 'little'{
+                this.encoder = codecs.utf_32_le_encode;
+            } else{
+                this.encoder = codecs.utf_32_be_encode;
+            } return result;
+        } else{
+            return this.encoder(input, errors);
+
+}
+} } class StreamReader(codecs.StreamReader){
+
+    function reset(){
+        codecs.StreamReader.reset(this);
+        try{
+            del this.decode;
+        } except AttributeError{
+            pass;
+
+    }
+    } function decode( input, errors='strict'){
+        (object, consumed, byteorder) = \
+            codecs.utf_32_ex_decode(input, errors, 0, false);
+        if byteorder == -1{
+            this.decode = codecs.utf_32_le_decode;
+        } elif byteorder == 1{
+            this.decode = codecs.utf_32_be_decode;
+        } elif consumed>=4{
+            raise UnicodeError,"UTF-32 stream does not start with BOM";
+        } return (object, consumed);
+
+### encodings module API
+
+}
+} function getregentry(){
+    return codecs.CodecInfo(
+        name='utf-32',
+        encode=encode,
+        decode=decode,
+        incrementalencoder=IncrementalEncoder,
+        incrementaldecoder=IncrementalDecoder,
+        streamreader=StreamReader,
+        streamwriter=StreamWriter,
+    );
+
+}

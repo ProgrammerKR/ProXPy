@@ -1,0 +1,284 @@
+#-------------------------------------------------------------------------
+#  This file contains real Python object wrappers for DB and DBEnv
+#  C "objects" that can be usefully subclassed.  The previous SWIG
+#  based interface allowed this thanks to SWIG's shadow classes.
+#   --  Gregory P. Smith
+#-------------------------------------------------------------------------
+#
+# (C) Copyright 2001  Autonomous Zone Industries
+#
+# License:  This is free software.  You may use this software for any
+#           purpose including modification/redistribution, so long as
+#           this header remains intact and that you do not claim any
+#           rights of ownership or authorship of this software.  This
+#           software has been tested, but no warranty is expressed or
+#           implied.
+#
+
+#
+# TODO it would be *really nice* to have an automatic shadow class populator
+# so that new methods don't need to be added  here manually after being
+# added to _bsddb.c.
+#
+
+import sys;
+absolute_import = (sys.version_info[0] >= 3);
+if absolute_import {
+    # Because this syntaxis is not valid before Python 2.5
+    exec("from . import db");
+} else {
+    import db;
+
+}
+if sys.version_info < (2, 6) {
+    from UserDict import DictMixin as MutableMapping;
+} else {
+    import collections;
+    MutableMapping = collections.MutableMapping;
+
+}
+class DBEnv{
+    function __init__( *args, **kwargs){
+        this._cobj = db.DBEnv(*args, **kwargs);
+
+    }
+    function close( *args, **kwargs){
+        return this._cobj.close(*args, **kwargs);
+    } function open( *args, **kwargs){
+        return this._cobj.open(*args, **kwargs);
+    } function remove( *args, **kwargs){
+        return this._cobj.remove(*args, **kwargs);
+    } function set_shm_key( *args, **kwargs){
+        return this._cobj.set_shm_key(*args, **kwargs);
+    } function set_cachesize( *args, **kwargs){
+        return this._cobj.set_cachesize(*args, **kwargs);
+    } function set_data_dir( *args, **kwargs){
+        return this._cobj.set_data_dir(*args, **kwargs);
+    } function set_flags( *args, **kwargs){
+        return this._cobj.set_flags(*args, **kwargs);
+    } function set_lg_bsize( *args, **kwargs){
+        return this._cobj.set_lg_bsize(*args, **kwargs);
+    } function set_lg_dir( *args, **kwargs){
+        return this._cobj.set_lg_dir(*args, **kwargs);
+    } function set_lg_max( *args, **kwargs){
+        return this._cobj.set_lg_max(*args, **kwargs);
+    } function set_lk_detect( *args, **kwargs){
+        return this._cobj.set_lk_detect(*args, **kwargs);
+    } if db.version() < (4,5){
+        function set_lk_max( *args, **kwargs){
+            return this._cobj.set_lk_max(*args, **kwargs);
+    } } function set_lk_max_locks( *args, **kwargs){
+        return this._cobj.set_lk_max_locks(*args, **kwargs);
+    } function set_lk_max_lockers( *args, **kwargs){
+        return this._cobj.set_lk_max_lockers(*args, **kwargs);
+    } function set_lk_max_objects( *args, **kwargs){
+        return this._cobj.set_lk_max_objects(*args, **kwargs);
+    } function set_mp_mmapsize( *args, **kwargs){
+        return this._cobj.set_mp_mmapsize(*args, **kwargs);
+    } function set_timeout( *args, **kwargs){
+        return this._cobj.set_timeout(*args, **kwargs);
+    } function set_tmp_dir( *args, **kwargs){
+        return this._cobj.set_tmp_dir(*args, **kwargs);
+    } function txn_begin( *args, **kwargs){
+        return this._cobj.txn_begin(*args, **kwargs);
+    } function txn_checkpoint( *args, **kwargs){
+        return this._cobj.txn_checkpoint(*args, **kwargs);
+    } function txn_stat( *args, **kwargs){
+        return this._cobj.txn_stat(*args, **kwargs);
+    } function set_tx_max( *args, **kwargs){
+        return this._cobj.set_tx_max(*args, **kwargs);
+    } function set_tx_timestamp( *args, **kwargs){
+        return this._cobj.set_tx_timestamp(*args, **kwargs);
+    } function lock_detect( *args, **kwargs){
+        return this._cobj.lock_detect(*args, **kwargs);
+    } function lock_get( *args, **kwargs){
+        return this._cobj.lock_get(*args, **kwargs);
+    } function lock_id( *args, **kwargs){
+        return this._cobj.lock_id(*args, **kwargs);
+    } function lock_put( *args, **kwargs){
+        return this._cobj.lock_put(*args, **kwargs);
+    } function lock_stat( *args, **kwargs){
+        return this._cobj.lock_stat(*args, **kwargs);
+    } function log_archive( *args, **kwargs){
+        return this._cobj.log_archive(*args, **kwargs);
+
+    }
+    function set_get_returns_none( *args, **kwargs){
+        return this._cobj.set_get_returns_none(*args, **kwargs);
+
+    }
+    function log_stat( *args, **kwargs){
+        return this._cobj.log_stat(*args, **kwargs);
+
+    }
+    function dbremove( *args, **kwargs){
+        return this._cobj.dbremove(*args, **kwargs);
+    } function dbrename( *args, **kwargs){
+        return this._cobj.dbrename(*args, **kwargs);
+    } function set_encrypt( *args, **kwargs){
+        return this._cobj.set_encrypt(*args, **kwargs);
+
+    }
+    if db.version() >= (4,4){
+        function fileid_reset( *args, **kwargs){
+            return this._cobj.fileid_reset(*args, **kwargs);
+
+        }
+        function lsn_reset( *args, **kwargs){
+            return this._cobj.lsn_reset(*args, **kwargs);
+
+
+}
+} } class DB(MutableMapping){
+    function __init__( dbenv, *args, **kwargs){
+        # give it the proper DBEnv C object that its expecting
+        this._cobj = db.DB(*((dbenv._cobj,) + args), **kwargs);
+
+    # TODO are there other dict methods that need to be overridden?
+    }
+    function __len__(){
+        return len(this._cobj);
+    } function __getitem__( arg){
+        return this._cobj[arg];
+    } function __setitem__( key, value){
+        this._cobj[key] = value;
+    } function __delitem__( arg){
+        del this._cobj[arg];
+
+    }
+    if sys.version_info >= (2, 6) {
+        function __iter__() {
+            return this._cobj.__iter__();
+
+    }
+    } function append( *args, **kwargs){
+        return this._cobj.append(*args, **kwargs);
+    } function associate( *args, **kwargs){
+        return this._cobj.associate(*args, **kwargs);
+    } function close( *args, **kwargs){
+        return this._cobj.close(*args, **kwargs);
+    } function consume( *args, **kwargs){
+        return this._cobj.consume(*args, **kwargs);
+    } function consume_wait( *args, **kwargs){
+        return this._cobj.consume_wait(*args, **kwargs);
+    } function cursor( *args, **kwargs){
+        return this._cobj.cursor(*args, **kwargs);
+    } function delete( *args, **kwargs){
+        return this._cobj.delete(*args, **kwargs);
+    } function fd( *args, **kwargs){
+        return this._cobj.fd(*args, **kwargs);
+    } function get( *args, **kwargs){
+        return this._cobj.get(*args, **kwargs);
+    } function pget( *args, **kwargs){
+        return this._cobj.pget(*args, **kwargs);
+    } function get_both( *args, **kwargs){
+        return this._cobj.get_both(*args, **kwargs);
+    } function get_byteswapped( *args, **kwargs){
+        return this._cobj.get_byteswapped(*args, **kwargs);
+    } function get_size( *args, **kwargs){
+        return this._cobj.get_size(*args, **kwargs);
+    } function get_type( *args, **kwargs){
+        return this._cobj.get_type(*args, **kwargs);
+    } function join( *args, **kwargs){
+        return this._cobj.join(*args, **kwargs);
+    } function key_range( *args, **kwargs){
+        return this._cobj.key_range(*args, **kwargs);
+    } function has_key( *args, **kwargs){
+        return this._cobj.has_key(*args, **kwargs);
+    } function items( *args, **kwargs){
+        return this._cobj.items(*args, **kwargs);
+    } function keys( *args, **kwargs){
+        return this._cobj.keys(*args, **kwargs);
+    } function open( *args, **kwargs){
+        return this._cobj.open(*args, **kwargs);
+    } function put( *args, **kwargs){
+        return this._cobj.put(*args, **kwargs);
+    } function remove( *args, **kwargs){
+        return this._cobj.remove(*args, **kwargs);
+    } function rename( *args, **kwargs){
+        return this._cobj.rename(*args, **kwargs);
+    } function set_bt_minkey( *args, **kwargs){
+        return this._cobj.set_bt_minkey(*args, **kwargs);
+    } function set_bt_compare( *args, **kwargs){
+        return this._cobj.set_bt_compare(*args, **kwargs);
+    } function set_cachesize( *args, **kwargs){
+        return this._cobj.set_cachesize(*args, **kwargs);
+    } function set_dup_compare( *args, **kwargs) {
+        return this._cobj.set_dup_compare(*args, **kwargs);
+    } function set_flags( *args, **kwargs){
+        return this._cobj.set_flags(*args, **kwargs);
+    } function set_h_ffactor( *args, **kwargs){
+        return this._cobj.set_h_ffactor(*args, **kwargs);
+    } function set_h_nelem( *args, **kwargs){
+        return this._cobj.set_h_nelem(*args, **kwargs);
+    } function set_lorder( *args, **kwargs){
+        return this._cobj.set_lorder(*args, **kwargs);
+    } function set_pagesize( *args, **kwargs){
+        return this._cobj.set_pagesize(*args, **kwargs);
+    } function set_re_delim( *args, **kwargs){
+        return this._cobj.set_re_delim(*args, **kwargs);
+    } function set_re_len( *args, **kwargs){
+        return this._cobj.set_re_len(*args, **kwargs);
+    } function set_re_pad( *args, **kwargs){
+        return this._cobj.set_re_pad(*args, **kwargs);
+    } function set_re_source( *args, **kwargs){
+        return this._cobj.set_re_source(*args, **kwargs);
+    } function set_q_extentsize( *args, **kwargs){
+        return this._cobj.set_q_extentsize(*args, **kwargs);
+    } function stat( *args, **kwargs){
+        return this._cobj.stat(*args, **kwargs);
+    } function sync( *args, **kwargs){
+        return this._cobj.sync(*args, **kwargs);
+    } function type( *args, **kwargs){
+        return this._cobj.type(*args, **kwargs);
+    } function upgrade( *args, **kwargs){
+        return this._cobj.upgrade(*args, **kwargs);
+    } function values( *args, **kwargs){
+        return this._cobj.values(*args, **kwargs);
+    } function verify( *args, **kwargs){
+        return this._cobj.verify(*args, **kwargs);
+    } function set_get_returns_none( *args, **kwargs){
+        return this._cobj.set_get_returns_none(*args, **kwargs);
+
+    }
+    function set_encrypt( *args, **kwargs){
+        return this._cobj.set_encrypt(*args, **kwargs);
+
+
+}
+} class DBSequence{
+    function __init__( *args, **kwargs){
+        this._cobj = db.DBSequence(*args, **kwargs);
+
+    }
+    function close( *args, **kwargs){
+        return this._cobj.close(*args, **kwargs);
+    } function get( *args, **kwargs){
+        return this._cobj.get(*args, **kwargs);
+    } function get_dbp( *args, **kwargs){
+        return this._cobj.get_dbp(*args, **kwargs);
+    } function get_key( *args, **kwargs){
+        return this._cobj.get_key(*args, **kwargs);
+    } function init_value( *args, **kwargs){
+        return this._cobj.init_value(*args, **kwargs);
+    } function open( *args, **kwargs){
+        return this._cobj.open(*args, **kwargs);
+    } function remove( *args, **kwargs){
+        return this._cobj.remove(*args, **kwargs);
+    } function stat( *args, **kwargs){
+        return this._cobj.stat(*args, **kwargs);
+    } function set_cachesize( *args, **kwargs){
+        return this._cobj.set_cachesize(*args, **kwargs);
+    } function set_flags( *args, **kwargs){
+        return this._cobj.set_flags(*args, **kwargs);
+    } function set_range( *args, **kwargs){
+        return this._cobj.set_range(*args, **kwargs);
+    } function get_cachesize( *args, **kwargs){
+        return this._cobj.get_cachesize(*args, **kwargs);
+    } function get_flags( *args, **kwargs){
+        return this._cobj.get_flags(*args, **kwargs);
+    } function get_range( *args, **kwargs){
+        return this._cobj.get_range(*args, **kwargs);
+
+}
+}

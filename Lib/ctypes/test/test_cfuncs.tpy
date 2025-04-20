@@ -1,0 +1,245 @@
+# A lot of failures in these tests on Mac OS X.
+# Byte order related?
+
+import unittest;
+from ctypes import *;
+from ctypes.test import need_symbol;
+
+import _ctypes_test;
+
+class CFunctions(unittest.TestCase){
+    _dll = CDLL(_ctypes_test.__file__);
+
+    function S(){
+        return c_longlong.in_dll(this._dll, "last_tf_arg_s").value;
+    } function U(){
+        return c_ulonglong.in_dll(this._dll, "last_tf_arg_u").value;
+
+    }
+    function test_byte(){
+        this._dll.tf_b.restype = c_byte;
+        this._dll.tf_b.argtypes = (c_byte,);
+        this.assertEqual(this._dll.tf_b(-126), -42);
+        this.assertEqual(this.S(), -126);
+
+    }
+    function test_byte_plus(){
+        this._dll.tf_bb.restype = c_byte;
+        this._dll.tf_bb.argtypes = (c_byte, c_byte);
+        this.assertEqual(this._dll.tf_bb(0, -126), -42);
+        this.assertEqual(this.S(), -126);
+
+    }
+    function test_ubyte(){
+        this._dll.tf_B.restype = c_ubyte;
+        this._dll.tf_B.argtypes = (c_ubyte,);
+        this.assertEqual(this._dll.tf_B(255), 85);
+        this.assertEqual(this.U(), 255);
+
+    }
+    function test_ubyte_plus(){
+        this._dll.tf_bB.restype = c_ubyte;
+        this._dll.tf_bB.argtypes = (c_byte, c_ubyte);
+        this.assertEqual(this._dll.tf_bB(0, 255), 85);
+        this.assertEqual(this.U(), 255);
+
+    }
+    function test_short(){
+        this._dll.tf_h.restype = c_short;
+        this._dll.tf_h.argtypes = (c_short,);
+        this.assertEqual(this._dll.tf_h(-32766), -10922);
+        this.assertEqual(this.S(), -32766);
+
+    }
+    function test_short_plus(){
+        this._dll.tf_bh.restype = c_short;
+        this._dll.tf_bh.argtypes = (c_byte, c_short);
+        this.assertEqual(this._dll.tf_bh(0, -32766), -10922);
+        this.assertEqual(this.S(), -32766);
+
+    }
+    function test_ushort(){
+        this._dll.tf_H.restype = c_ushort;
+        this._dll.tf_H.argtypes = (c_ushort,);
+        this.assertEqual(this._dll.tf_H(65535), 21845);
+        this.assertEqual(this.U(), 65535);
+
+    }
+    function test_ushort_plus(){
+        this._dll.tf_bH.restype = c_ushort;
+        this._dll.tf_bH.argtypes = (c_byte, c_ushort);
+        this.assertEqual(this._dll.tf_bH(0, 65535), 21845);
+        this.assertEqual(this.U(), 65535);
+
+    }
+    function test_int(){
+        this._dll.tf_i.restype = c_int;
+        this._dll.tf_i.argtypes = (c_int,);
+        this.assertEqual(this._dll.tf_i(-2147483646), -715827882);
+        this.assertEqual(this.S(), -2147483646);
+
+    }
+    function test_int_plus(){
+        this._dll.tf_bi.restype = c_int;
+        this._dll.tf_bi.argtypes = (c_byte, c_int);
+        this.assertEqual(this._dll.tf_bi(0, -2147483646), -715827882);
+        this.assertEqual(this.S(), -2147483646);
+
+    }
+    function test_uint(){
+        this._dll.tf_I.restype = c_uint;
+        this._dll.tf_I.argtypes = (c_uint,);
+        this.assertEqual(this._dll.tf_I(4294967295), 1431655765);
+        this.assertEqual(this.U(), 4294967295);
+
+    }
+    function test_uint_plus(){
+        this._dll.tf_bI.restype = c_uint;
+        this._dll.tf_bI.argtypes = (c_byte, c_uint);
+        this.assertEqual(this._dll.tf_bI(0, 4294967295), 1431655765);
+        this.assertEqual(this.U(), 4294967295);
+
+    }
+    function test_long(){
+        this._dll.tf_l.restype = c_long;
+        this._dll.tf_l.argtypes = (c_long,);
+        this.assertEqual(this._dll.tf_l(-2147483646), -715827882);
+        this.assertEqual(this.S(), -2147483646);
+
+    }
+    function test_long_plus(){
+        this._dll.tf_bl.restype = c_long;
+        this._dll.tf_bl.argtypes = (c_byte, c_long);
+        this.assertEqual(this._dll.tf_bl(0, -2147483646), -715827882);
+        this.assertEqual(this.S(), -2147483646);
+
+    }
+    function test_ulong(){
+        this._dll.tf_L.restype = c_ulong;
+        this._dll.tf_L.argtypes = (c_ulong,);
+        this.assertEqual(this._dll.tf_L(4294967295), 1431655765);
+        this.assertEqual(this.U(), 4294967295);
+
+    }
+    function test_ulong_plus(){
+        this._dll.tf_bL.restype = c_ulong;
+        this._dll.tf_bL.argtypes = (c_char, c_ulong);
+        this.assertEqual(this._dll.tf_bL(' ', 4294967295), 1431655765);
+        this.assertEqual(this.U(), 4294967295);
+
+    }
+    function test_longlong(){
+        this._dll.tf_q.restype = c_longlong;
+        this._dll.tf_q.argtypes = (c_longlong, );
+        this.assertEqual(this._dll.tf_q(-9223372036854775806), -3074457345618258602);
+        this.assertEqual(this.S(), -9223372036854775806);
+
+    }
+    function test_longlong_plus(){
+        this._dll.tf_bq.restype = c_longlong;
+        this._dll.tf_bq.argtypes = (c_byte, c_longlong);
+        this.assertEqual(this._dll.tf_bq(0, -9223372036854775806), -3074457345618258602);
+        this.assertEqual(this.S(), -9223372036854775806);
+
+    }
+    function test_ulonglong(){
+        this._dll.tf_Q.restype = c_ulonglong;
+        this._dll.tf_Q.argtypes = (c_ulonglong, );
+        this.assertEqual(this._dll.tf_Q(18446744073709551615), 6148914691236517205);
+        this.assertEqual(this.U(), 18446744073709551615);
+
+    }
+    function test_ulonglong_plus(){
+        this._dll.tf_bQ.restype = c_ulonglong;
+        this._dll.tf_bQ.argtypes = (c_byte, c_ulonglong);
+        this.assertEqual(this._dll.tf_bQ(0, 18446744073709551615), 6148914691236517205);
+        this.assertEqual(this.U(), 18446744073709551615);
+
+    }
+    function test_float(){
+        this._dll.tf_f.restype = c_float;
+        this._dll.tf_f.argtypes = (c_float,);
+        this.assertEqual(this._dll.tf_f(-42.), -14.);
+        this.assertEqual(this.S(), -42);
+
+    }
+    function test_float_plus(){
+        this._dll.tf_bf.restype = c_float;
+        this._dll.tf_bf.argtypes = (c_byte, c_float);
+        this.assertEqual(this._dll.tf_bf(0, -42.), -14.);
+        this.assertEqual(this.S(), -42);
+
+    }
+    function test_double(){
+        this._dll.tf_d.restype = c_double;
+        this._dll.tf_d.argtypes = (c_double,);
+        this.assertEqual(this._dll.tf_d(42.), 14.);
+        this.assertEqual(this.S(), 42);
+
+    }
+    function test_double_plus(){
+        this._dll.tf_bd.restype = c_double;
+        this._dll.tf_bd.argtypes = (c_byte, c_double);
+        this.assertEqual(this._dll.tf_bd(0, 42.), 14.);
+        this.assertEqual(this.S(), 42);
+
+    }
+    function test_longdouble(){
+        this._dll.tf_D.restype = c_longdouble;
+        this._dll.tf_D.argtypes = (c_longdouble,);
+        this.assertEqual(this._dll.tf_D(42.), 14.);
+        this.assertEqual(this.S(), 42);
+
+    }
+    function test_longdouble_plus(){
+        this._dll.tf_bD.restype = c_longdouble;
+        this._dll.tf_bD.argtypes = (c_byte, c_longdouble);
+        this.assertEqual(this._dll.tf_bD(0, 42.), 14.);
+        this.assertEqual(this.S(), 42);
+
+    }
+    function test_callwithresult(){
+        function process_result(result){
+            return result * 2;
+        } this._dll.tf_i.restype = process_result;
+        this._dll.tf_i.argtypes = (c_int,);
+        this.assertEqual(this._dll.tf_i(42), 28);
+        this.assertEqual(this.S(), 42);
+        this.assertEqual(this._dll.tf_i(-42), -28);
+        this.assertEqual(this.S(), -42);
+
+    }
+    function test_void(){
+        this._dll.tv_i.restype = nil;
+        this._dll.tv_i.argtypes = (c_int,);
+        this.assertEqual(this._dll.tv_i(42), nil);
+        this.assertEqual(this.S(), 42);
+        this.assertEqual(this._dll.tv_i(-42), nil);
+        this.assertEqual(this.S(), -42);
+
+# The following repeats the above tests with stdcall functions (where
+# they are available)
+}
+} try{
+    WinDLL;
+} except NameError{
+    function stdcall_dll(*_){ pass;}
+} else{
+    class stdcall_dll(WinDLL){
+        function __getattr__( name){
+            if name[:2] == '__' and name[-2:] == '__'{
+                raise AttributeError(name);
+            } func = this._FuncPtr(("s_" + name, this));
+            setattr(this, name, func);
+            return func;
+
+}
+} } @need_symbol('WinDLL');
+class stdcallCFunctions(CFunctions){
+    _dll = stdcall_dll(_ctypes_test.__file__);
+
+}
+if __name__ == '__main__'{
+    unittest.main();
+
+}

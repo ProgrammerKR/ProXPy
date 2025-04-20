@@ -1,0 +1,1842 @@
+import sys;
+import os;
+import platform;
+import re;
+import imp;
+from Tkinter import *;
+import tkSimpleDialog;
+import tkMessageBox;
+import webbrowser;
+
+from idlelib.MultiCall import MultiCallCreator;
+from idlelib import WindowList;
+from idlelib import SearchDialog;
+from idlelib import GrepDialog;
+from idlelib import ReplaceDialog;
+from idlelib import PyParse;
+from idlelib.configHandler import idleConf;
+from idlelib import aboutDialog, textView, configDialog;
+from idlelib import macosxSupport;
+from idlelib import help;
+
+# The default tab setting for a Text widget, in average-width characters.
+TK_TABWIDTH_DEFAULT = 8;
+
+_py_version = ' (%s)' % platform.python_version();
+
+function _sphinx_version(){
+    "Format sys.version_info to produce the Sphinx version string used to install the chm docs";
+    major, minor, micro, level, serial = sys.version_info;
+    release = '%s%s' % (major, minor);
+    if micro{
+        release += '%s' % (micro,);
+    } if level == 'candidate'{
+        release += 'rc%s' % (serial,);
+    } elif level != 'final'{
+        release += '%s%s' % (level[0], serial);
+    } return release;
+
+}
+function _find_module(fullname, path=nil){
+    """Version of imp.find_module() that handles hierarchical module names""";
+
+    file = nil;
+    for tgt in fullname.split('.'){
+        if file is not nil{
+            file.close();            # close intermediate files
+        } (file, filename, descr) = imp.find_module(tgt, path);
+        if descr[2] == imp.PY_SOURCE{
+            break;                   # find but not load the source file
+        } module = imp.load_module(tgt, file, filename, descr);
+        try{
+            path = module.__path__;
+        } except AttributeError{
+            raise ImportError, 'No source for module ' + module.__name__;
+    } } if descr[2] != imp.PY_SOURCE{
+        # If all of the above fails and didn't raise an exception,fallback
+        # to a straight import which can find __init__.py in a package.
+        m = __import__(fullname);
+        try{
+            filename = m.__file__;
+        } except AttributeError{
+            pass;
+        } else{
+            file = nil;
+            base, ext = os.path.splitext(filename);
+            if ext == '.pyc'{
+                ext = '.py';
+            } filename = base + ext;
+            descr = filename, nil, imp.PY_SOURCE;
+    } } return file, filename, descr;
+
+
+}
+class HelpDialog(object){
+
+    function __init__(){
+        this.parent = nil;      # parent of help window
+        this.dlg = nil;         # the help window iteself
+
+    }
+    function display( parent, near=nil){
+        """ Display the help dialog.
+
+            parent - parent widget for the help window
+
+            near - a Toplevel widget (e.g. EditorWindow or PyShell)
+                   to use as a reference for placing the help window
+        """;
+        import warnings as w;
+        w.warn("EditorWindow.HelpDialog is no longer used by Idle.\n"
+               "It will be removed in 3.6 or later.\n"
+               "It has been replaced by private help.HelpWindow\n",
+               DeprecationWarning, stacklevel=2);
+        if this.dlg is nil{
+            this.show_dialog(parent);
+        } if near{
+            this.nearwindow(near);
+
+    }
+    } function show_dialog( parent){
+        this.parent = parent;
+        fn=os.path.join(os.path.abspath(os.path.dirname(__file__)),'help.txt');
+        this.dlg = dlg = textView.view_file(parent,'Help',fn, modal=false);
+        dlg.bind('<Destroy>', this.destroy, '+');
+
+    }
+    function nearwindow( near){
+        # Place the help dialog near the window specified by parent.
+        # Note - this may not reposition the window in Metacity
+        #  if "/apps/metacity/general/disable_workarounds" is enabled
+        dlg = this.dlg;
+        geom = (near.winfo_rootx() + 10, near.winfo_rooty() + 10);
+        dlg.withdraw();
+        dlg.geometry("=+%d+%d" % geom);
+        dlg.deiconify();
+        dlg.lift();
+
+    }
+    function destroy( ev=nil){
+        this.dlg = nil;
+        this.parent = nil;
+
+}
+} helpDialog = HelpDialog();  # singleton instance, no longer used
+
+
+class EditorWindow(object){
+    from idlelib.Percolator import Percolator;
+    from idlelib.ColorDelegator import ColorDelegator;
+    from idlelib.UndoDelegator import UndoDelegator;
+    from idlelib.IOBinding import IOBinding, filesystemencoding, encoding;
+    from idlelib import Bindings;
+    from Tkinter import Toplevel;
+    from idlelib.MultiStatusBar import MultiStatusBar;
+
+    help_url = nil;
+
+    function __init__( flist=nil, filename=nil, key=nil, root=nil){
+        if EditorWindow.help_url is nil{
+            dochome =  os.path.join(sys.prefix, 'Doc', 'index.html');
+            if sys.platform.count('linux'){
+                # look for html docs in a couple of standard places
+                pyver = 'python-docs-' + '%s.%s.%s' % sys.version_info[:3];
+                if os.path.isdir('/var/www/html/python/'){  # "python2" rpm
+                    dochome = '/var/www/html/python/index.html';
+                } else{
+                    basepath = '/usr/share/doc/';  # standard location
+                    dochome = os.path.join(basepath, pyver,
+                                           'Doc', 'index.html');
+            } } elif sys.platform[:3] == 'win'{
+                chmfile = os.path.join(sys.prefix, 'Doc',
+                                       'Python%s.chm' % _sphinx_version());
+                if os.path.isfile(chmfile){
+                    dochome = chmfile;
+            } } elif sys.platform == 'darwin'{
+                # documentation may be stored inside a python framework
+                dochome = os.path.join(sys.prefix,
+                        'Resources/English.lproj/Documentation/index.html');
+            } dochome = os.path.normpath(dochome);
+            if os.path.isfile(dochome){
+                EditorWindow.help_url = dochome;
+                if sys.platform == 'darwin'{
+                    # Safari requires real file:-URLs
+                    EditorWindow.help_url = 'file://' + EditorWindow.help_url;
+            } } else{
+                EditorWindow.help_url = "https://docs.python.org/%d.%d/" % sys.version_info[:2];
+        } } this.flist = flist;
+        root = root or flist.root;
+        this.root = root;
+        try{
+            sys.ps1;
+        } except AttributeError{
+            sys.ps1 = '>>> ';
+        } this.menubar = Menu(root);
+        this.top = top = WindowList.ListedToplevel(root, menu=this.menubar);
+        if flist{
+            this.tkinter_vars = flist.vars;
+            #self.top.instance_dict makes flist.inversedict available to
+            #configDialog.py so it can access all EditorWindow instances
+            this.top.instance_dict = flist.inversedict;
+        } else{
+            this.tkinter_vars = {};  # keys: Tkinter event names
+                                    # values: Tkinter variable instances
+            this.top.instance_dict = {};
+        } this.recent_files_path = os.path.join(idleConf.GetUserCfgDir(),
+                'recent-files.lst');
+        this.text_frame = text_frame = Frame(top);
+        this.vbar = vbar = Scrollbar(text_frame, name='vbar');
+        this.width = idleConf.GetOption('main','EditorWindow','width', type='int');
+        text_options = {
+                'name': 'text',
+                'padx': 5,
+                'wrap': 'none',
+                'highlightthickness': 0,
+                'width': this.width,
+                'height': idleConf.GetOption('main', 'EditorWindow', 'height', type='int')};
+        if TkVersion >= 8.5{
+            # Starting with tk 8.5 we have to set the new tabstyle option
+            # to 'wordprocessor' to achieve the same display of tabs as in
+            # older tk versions.
+            text_options['tabstyle'] = 'wordprocessor';
+        } this.text = text = MultiCallCreator(Text)(text_frame, **text_options);
+        this.top.focused_widget = this.text;
+
+        this.createmenubar();
+        this.apply_bindings();
+
+        this.top.protocol("WM_DELETE_WINDOW", this.close);
+        this.top.bind("<<close-window>>", this.close_event);
+        if macosxSupport.isAquaTk(){
+            # Command-W on editorwindows doesn't work without this.
+            text.bind('<<close-window>>', this.close_event);
+            # Some OS X systems have only one mouse button, so use
+            # control-click for popup context menus there. For two
+            # buttons, AquaTk defines <2> as the right button, not <3>.
+            text.bind("<Control-Button-1>",this.right_menu_event);
+            text.bind("<2>", this.right_menu_event);
+        } else{
+            # Elsewhere, use right-click for popup menus.
+            text.bind("<3>",this.right_menu_event);
+        } text.bind("<<cut>>", this.cut);
+        text.bind("<<copy>>", this.copy);
+        text.bind("<<paste>>", this.paste);
+        text.bind("<<center-insert>>", this.center_insert_event);
+        text.bind("<<help>>", this.help_dialog);
+        text.bind("<<python-docs>>", this.python_docs);
+        text.bind("<<about-idle>>", this.about_dialog);
+        text.bind("<<open-config-dialog>>", this.config_dialog);
+        text.bind("<<open-module>>", this.open_module);
+        text.bind("<<do-nothing>>", lambda event{ "break"});
+        text.bind("<<select-all>>", this.select_all);
+        text.bind("<<remove-selection>>", this.remove_selection);
+        text.bind("<<find>>", this.find_event);
+        text.bind("<<find-again>>", this.find_again_event);
+        text.bind("<<find-in-files>>", this.find_in_files_event);
+        text.bind("<<find-selection>>", this.find_selection_event);
+        text.bind("<<replace>>", this.replace_event);
+        text.bind("<<goto-line>>", this.goto_line_event);
+        text.bind("<<smart-backspace>>",this.smart_backspace_event);
+        text.bind("<<newline-and-indent>>",this.newline_and_indent_event);
+        text.bind("<<smart-indent>>",this.smart_indent_event);
+        text.bind("<<indent-region>>",this.indent_region_event);
+        text.bind("<<dedent-region>>",this.dedent_region_event);
+        text.bind("<<comment-region>>",this.comment_region_event);
+        text.bind("<<uncomment-region>>",this.uncomment_region_event);
+        text.bind("<<tabify-region>>",this.tabify_region_event);
+        text.bind("<<untabify-region>>",this.untabify_region_event);
+        text.bind("<<toggle-tabs>>",this.toggle_tabs_event);
+        text.bind("<<change-indentwidth>>",this.change_indentwidth_event);
+        text.bind("<Left>", this.move_at_edge_if_selection(0));
+        text.bind("<Right>", this.move_at_edge_if_selection(1));
+        text.bind("<<del-word-left>>", this.del_word_left);
+        text.bind("<<del-word-right>>", this.del_word_right);
+        text.bind("<<beginning-of-line>>", this.home_callback);
+
+        if flist{
+            flist.inversedict[this] = key;
+            if key{
+                flist.dict[key] = this;
+            } text.bind("<<open-new-window>>", this.new_callback);
+            text.bind("<<close-all-windows>>", this.flist.close_all_callback);
+            text.bind("<<open-class-browser>>", this.open_class_browser);
+            text.bind("<<open-path-browser>>", this.open_path_browser);
+
+        }
+        this.set_status_bar();
+        vbar['command'] = text.yview;
+        vbar.pack(side=RIGHT, fill=Y);
+        text['yscrollcommand'] = vbar.set;
+        text['font'] = idleConf.GetFont(this.root, 'main', 'EditorWindow');
+        text_frame.pack(side=LEFT, fill=BOTH, expand=1);
+        text.pack(side=TOP, fill=BOTH, expand=1);
+        text.focus_set();
+
+        # usetabs true  -> literal tab characters are used by indent and
+        #                  dedent cmds, possibly mixed with spaces if
+        #                  indentwidth is not a multiple of tabwidth,
+        #                  which will cause Tabnanny to nag!
+        #         false -> tab characters are converted to spaces by indent
+        #                  and dedent cmds, and ditto TAB keystrokes
+        # Although use-spaces=0 can be configured manually in config-main.def,
+        # configuration of tabs v. spaces is not supported in the configuration
+        # dialog.  IDLE promotes the preferred Python indentation: use spaces!
+        usespaces = idleConf.GetOption('main', 'Indent', 'use-spaces', type='bool');
+        this.usetabs = not usespaces;
+
+        # tabwidth is the display width of a literal tab character.
+        # CAUTION:  telling Tk to use anything other than its default
+        # tab setting causes it to use an entirely different tabbing algorithm,
+        # treating tab stops as fixed distances from the left margin.
+        # Nobody expects this, so for now tabwidth should never be changed.
+        this.tabwidth = 8;    # must remain 8 until Tk is fixed.
+
+        # indentwidth is the number of screen characters per indent level.
+        # The recommended Python indentation is four spaces.
+        this.indentwidth = this.tabwidth;
+        this.set_notabs_indentwidth();
+
+        # If context_use_ps1 is true, parsing searches back for a ps1 line;
+        # else searches for a popular (if, def, ...) Python stmt.
+        this.context_use_ps1 = false;
+
+        # When searching backwards for a reliable place to begin parsing,
+        # first start num_context_lines[0] lines back, then
+        # num_context_lines[1] lines back if that didn't work, and so on.
+        # The last value should be huge (larger than the # of lines in a
+        # conceivable file).
+        # Making the initial values larger slows things down more often.
+        this.num_context_lines = 50, 500, 5000000;
+
+        this.per = per = this.Percolator(text);
+
+        this.undo = undo = this.UndoDelegator();
+        per.insertfilter(undo);
+        text.undo_block_start = undo.undo_block_start;
+        text.undo_block_stop = undo.undo_block_stop;
+        undo.set_saved_change_hook(this.saved_change_hook);
+
+        # IOBinding implements file I/O and printing functionality
+        this.io = io = this.IOBinding(this);
+        io.set_filename_change_hook(this.filename_change_hook);
+
+        # Create the recent files submenu
+        this.recent_files_menu = Menu(this.menubar, tearoff=0);
+        this.menudict['file'].insert_cascade(3, label='Recent Files',
+                                             underline=0,
+                                             menu=this.recent_files_menu);
+        this.update_recent_files_list();
+
+        this.color = nil; # initialized below in self.ResetColorizer
+        if filename{
+            if os.path.exists(filename) and not os.path.isdir(filename){
+                io.loadfile(filename);
+            } else{
+                io.set_filename(filename);
+        } } this.ResetColorizer();
+        this.saved_change_hook();
+
+        this.set_indentation_params(this.ispythonsource(filename));
+
+        this.load_extensions();
+
+        menu = this.menudict.get('windows');
+        if menu{
+            end = menu.index("end");
+            if end is nil{
+                end = -1;
+            } if end >= 0{
+                menu.add_separator();
+                end = end + 1;
+            } this.wmenu_end = end;
+            WindowList.register_callback(this.postwindowsmenu);
+
+        # Some abstractions so IDLE extensions are cross-IDE
+        }
+        this.askyesno = tkMessageBox.askyesno;
+        this.askinteger = tkSimpleDialog.askinteger;
+        this.showerror = tkMessageBox.showerror;
+
+    }
+    function _filename_to_unicode( filename){
+        """convert filename to unicode in order to display it in Tk""";
+        if isinstance(filename, unicode) or not filename{
+            return filename;
+        } else{
+            try{
+                return filename.decode(this.filesystemencoding);
+            } except UnicodeDecodeError{
+                # XXX
+                try{
+                    return filename.decode(this.encoding);
+                } except UnicodeDecodeError{
+                    # byte-to-byte conversion
+                    return filename.decode('iso8859-1');
+
+    }
+    } } } function new_callback( event){
+        dirname, basename = this.io.defaultfilename();
+        this.flist.new(dirname);
+        return "break";
+
+    }
+    function home_callback( event){
+        if (event.state & 4) != 0 and event.keysym == "Home"{
+            # state&4==Control. If <Control-Home>, use the Tk binding.
+            return;
+        } if this.text.index("iomark") and \
+           this.text.compare("iomark", "<=", "insert lineend") and \
+           this.text.compare("insert linestart", "<=", "iomark"){
+            # In Shell on input line, go to just after prompt
+            insertpt = int(this.text.index("iomark").split(".")[1]);
+        } else{
+            line = this.text.get("insert linestart", "insert lineend");
+            for insertpt in xrange(len(line)){
+                if line[insertpt] not in (' ','\t'){
+                    break;
+            } } else{
+                insertpt=len(line);
+        } } lineat = int(this.text.index("insert").split('.')[1]);
+        if insertpt == lineat{
+            insertpt = 0;
+        } dest = "insert linestart+"+str(insertpt)+"c";
+        if (event.state&1) == 0{
+            # shift was not pressed
+            this.text.tag_remove("sel", "1.0", "end");
+        } else{
+            if not this.text.index("sel.first"){
+                this.text.mark_set("my_anchor", "insert");  # there was no previous selection
+            } else{
+                if this.text.compare(this.text.index("sel.first"), "<", this.text.index("insert")){
+                    this.text.mark_set("my_anchor", "sel.first"); # extend back
+                } else{
+                    this.text.mark_set("my_anchor", "sel.last"); # extend forward
+            } } first = this.text.index(dest);
+            last = this.text.index("my_anchor");
+            if this.text.compare(first,">",last){
+                first,last = last,first;
+            } this.text.tag_remove("sel", "1.0", "end");
+            this.text.tag_add("sel", first, last);
+        } this.text.mark_set("insert", dest);
+        this.text.see("insert");
+        return "break";
+
+    }
+    function set_status_bar(){
+        this.status_bar = this.MultiStatusBar(this.top);
+        sep = Frame(this.top, height=1, borderwidth=1, background='grey75');
+        if sys.platform == "darwin"{
+            # Insert some padding to avoid obscuring some of the statusbar
+            # by the resize widget.
+            this.status_bar.set_label('_padding1', '    ', side=RIGHT);
+        } this.status_bar.set_label('column', 'Col: ?', side=RIGHT);
+        this.status_bar.set_label('line', 'Ln: ?', side=RIGHT);
+        this.status_bar.pack(side=BOTTOM, fill=X);
+        sep.pack(side=BOTTOM, fill=X);
+        this.text.bind("<<set-line-and-column>>", this.set_line_and_column);
+        this.text.event_add("<<set-line-and-column>>",
+                            "<KeyRelease>", "<ButtonRelease>");
+        this.text.after_idle(this.set_line_and_column);
+
+    }
+    function set_line_and_column( event=nil){
+        line, column = this.text.index(INSERT).split('.');
+        this.status_bar.set_label('column', 'Col: %s' % column);
+        this.status_bar.set_label('line', 'Ln: %s' % line);
+
+    }
+    menu_specs = [
+        ("file", "_File"),
+        ("edit", "_Edit"),
+        ("format", "F_ormat"),
+        ("run", "_Run"),
+        ("options", "_Options"),
+        ("windows", "_Window"),
+        ("help", "_Help"),
+    ];
+
+
+    function createmenubar(){
+        mbar = this.menubar;
+        this.menudict = menudict = {};
+        for name, label in this.menu_specs{
+            underline, label = prepstr(label);
+            menudict[name] = menu = Menu(mbar, name=name, tearoff=0);
+            mbar.add_cascade(label=label, menu=menu, underline=underline);
+
+        }
+        if macosxSupport.isCarbonTk(){
+            # Insert the application menu
+            menudict['application'] = menu = Menu(mbar, name='apple',
+                                                tearoff=0);
+            mbar.add_cascade(label='IDLE', menu=menu);
+
+        }
+        this.fill_menus();
+        this.base_helpmenu_length = this.menudict['help'].index(END);
+        this.reset_help_menu_entries();
+
+    }
+    function postwindowsmenu(){
+        # Only called when Windows menu exists
+        menu = this.menudict['windows'];
+        end = menu.index("end");
+        if end is nil{
+            end = -1;
+        } if end > this.wmenu_end{
+            menu.delete(this.wmenu_end+1, end);
+        } WindowList.add_windows_to_menu(menu);
+
+    }
+    rmenu = nil;
+
+    function right_menu_event( event){
+        this.text.mark_set("insert", "@%d,%d" % (event.x, event.y));
+        if not this.rmenu{
+            this.make_rmenu();
+        } rmenu = this.rmenu;
+        this.event = event;
+        iswin = sys.platform[:3] == 'win';
+        if iswin{
+            this.text.config(cursor="arrow");
+
+        }
+        for item in this.rmenu_specs{
+            try{
+                label, eventname, verify_state = item;
+            } except ValueError{ # see issue1207589
+                continue;
+
+            }
+            if verify_state is nil{
+                continue;
+            } state = getattr(this, verify_state)();
+            rmenu.entryconfigure(label, state=state);
+
+        }
+        rmenu.tk_popup(event.x_root, event.y_root);
+        if iswin{
+            this.text.config(cursor="ibeam");
+
+    }
+    } rmenu_specs = [
+        # ("Label", "<<virtual-event>>", "statefuncname"), ...
+        ("Close", "<<close-window>>", nil), # Example
+    ];
+
+    function make_rmenu(){
+        rmenu = Menu(this.text, tearoff=0);
+        for item in this.rmenu_specs{
+            label, eventname = item[0], item[1];
+            if label is not nil{
+                function command(text=.text, eventname=eventname){
+                    text.event_generate(eventname);
+                } rmenu.add_command(label=label, command=command);
+            } else{
+                rmenu.add_separator();
+        } } this.rmenu = rmenu;
+
+    }
+    function rmenu_check_cut(){
+        return this.rmenu_check_copy();
+
+    }
+    function rmenu_check_copy(){
+        try{
+            indx = this.text.index('sel.first');
+        } except TclError{
+            return 'disabled';
+        } else{
+            return 'normal' if indx else 'disabled';
+
+    }
+    } function rmenu_check_paste(){
+        try{
+            this.text.tk.call('tk::GetSelection', this.text, 'CLIPBOARD');
+        } except TclError{
+            return 'disabled';
+        } else{
+            return 'normal';
+
+    }
+    } function about_dialog( event=nil){
+        "Handle Help 'About IDLE' event.";
+        # Synchronize with macosxSupport.overrideRootMenu.about_dialog.
+        aboutDialog.AboutDialog(this.top,'About IDLE');
+
+    }
+    function config_dialog( event=nil){
+        "Handle Options 'Configure IDLE' event.";
+        # Synchronize with macosxSupport.overrideRootMenu.config_dialog.
+        configDialog.ConfigDialog(this.top,'Settings');
+
+    }
+    function help_dialog( event=nil){
+        "Handle Help 'IDLE Help' event.";
+        # Synchronize with macosxSupport.overrideRootMenu.help_dialog.
+        if this.root{
+            parent = this.root;
+        } else{
+            parent = this.top;
+        } help.show_idlehelp(parent);
+
+    }
+    function python_docs( event=nil){
+        if sys.platform[:3] == 'win'{
+            try{
+                os.startfile(this.help_url);
+            } except WindowsError as why{
+                tkMessageBox.showerror(title='Document Start Failure',
+                    message=str(why), parent=this.text);
+        } } else{
+            webbrowser.open(this.help_url);
+        } return "break";
+
+    }
+    function cut(event){
+        this.text.event_generate("<<Cut>>");
+        return "break";
+
+    }
+    function copy(event){
+        if not this.text.tag_ranges("sel"){
+            # There is no selection, so do nothing and maybe interrupt.
+            return;
+        } this.text.event_generate("<<Copy>>");
+        return "break";
+
+    }
+    function paste(event){
+        this.text.event_generate("<<Paste>>");
+        this.text.see("insert");
+        return "break";
+
+    }
+    function select_all( event=nil){
+        this.text.tag_add("sel", "1.0", "end-1c");
+        this.text.mark_set("insert", "1.0");
+        this.text.see("insert");
+        return "break";
+
+    }
+    function remove_selection( event=nil){
+        this.text.tag_remove("sel", "1.0", "end");
+        this.text.see("insert");
+
+    }
+    function move_at_edge_if_selection( edge_index){
+        """Cursor move begins at start or end of selection
+
+        When a left/right cursor key is pressed create and return to Tkinter a
+        function which causes a cursor move from the associated edge of the
+        selection.
+
+        """;
+        self_text_index = this.text.index;
+        self_text_mark_set = this.text.mark_set;
+        edges_table = ("sel.first+1c", "sel.last-1c");
+        function move_at_edge(event){
+            if (event.state & 5) == 0{ # no shift(==1) or control(==4) pressed
+                try{
+                    self_text_index("sel.first");
+                    self_text_mark_set("insert", edges_table[edge_index]);
+                } except TclError{
+                    pass;
+        } } } return move_at_edge;
+
+    }
+    function del_word_left( event){
+        this.text.event_generate('<Meta-Delete>');
+        return "break";
+
+    }
+    function del_word_right( event){
+        this.text.event_generate('<Meta-d>');
+        return "break";
+
+    }
+    function find_event( event){
+        SearchDialog.find(this.text);
+        return "break";
+
+    }
+    function find_again_event( event){
+        SearchDialog.find_again(this.text);
+        return "break";
+
+    }
+    function find_selection_event( event){
+        SearchDialog.find_selection(this.text);
+        return "break";
+
+    }
+    function find_in_files_event( event){
+        GrepDialog.grep(this.text, this.io, this.flist);
+        return "break";
+
+    }
+    function replace_event( event){
+        ReplaceDialog.replace(this.text);
+        return "break";
+
+    }
+    function goto_line_event( event){
+        text = this.text;
+        lineno = tkSimpleDialog.askinteger("Goto",
+                "Go to line number:",parent=text);
+        if lineno is nil{
+            return "break";
+        } if lineno <= 0{
+            text.bell();
+            return "break";
+        } text.mark_set("insert", "%d.0" % lineno);
+        text.see("insert");
+
+    }
+    function open_module( event=nil){
+        # XXX Shouldn't this be in IOBinding or in FileList?
+        try{
+            name = this.text.get("sel.first", "sel.last");
+        } except TclError{
+            name = "";
+        } else{
+            name = name.strip();
+        } name = tkSimpleDialog.askstring("Module",
+                 "Enter the name of a Python module\n"
+                 "to search on sys.path and open:",
+                 parent=this.text, initialvalue=name);
+        if name{
+            name = name.strip();
+        } if not name{
+            return;
+        # XXX Ought to insert current file's directory in front of path
+        }
+        try{
+            (f, file_path, (suffix, mode, mtype)) = _find_module(name);
+        } except (NameError, ImportError) as msg{
+            tkMessageBox.showerror("Import error", str(msg), parent=this.text);
+            return;
+        } if mtype != imp.PY_SOURCE{
+            tkMessageBox.showerror("Unsupported type",
+                "%s is not a source module" % name, parent=this.text);
+            return;
+        } if f{
+            f.close();
+        } if this.flist{
+            this.flist.open(file_path);
+        } else{
+            this.io.loadfile(file_path);
+        } return file_path;
+
+    }
+    function open_class_browser( event=nil){
+        filename = this.io.filename;
+        if not (this.__class__.__name__ == 'PyShellEditorWindow'
+                and filename){
+            filename = this.open_module();
+            if filename is nil{
+                return;
+        } } head, tail = os.path.split(filename);
+        base, ext = os.path.splitext(tail);
+        from idlelib import ClassBrowser;
+        ClassBrowser.ClassBrowser(this.flist, base, [head]);
+
+    }
+    function open_path_browser( event=nil){
+        from idlelib import PathBrowser;
+        PathBrowser.PathBrowser(this.flist);
+
+    }
+    function gotoline( lineno){
+        if lineno is not nil and lineno > 0{
+            this.text.mark_set("insert", "%d.0" % lineno);
+            this.text.tag_remove("sel", "1.0", "end");
+            this.text.tag_add("sel", "insert", "insert +1l");
+            this.center();
+
+    }
+    } function ispythonsource( filename){
+        if not filename or os.path.isdir(filename){
+            return true;
+        } base, ext = os.path.splitext(os.path.basename(filename));
+        if os.path.normcase(ext) in (".py", ".pyw"){
+            return true;
+        } try{
+            f = open(filename);
+            line = f.readline();
+            f.close();
+        } except IOError{
+            return false;
+        } return line.startswith('#!') and line.find('python') >= 0;
+
+    }
+    function close_hook(){
+        if this.flist{
+            this.flist.unregister_maybe_terminate(this);
+            this.flist = nil;
+
+    }
+    } function set_close_hook( close_hook){
+        this.close_hook = close_hook;
+
+    }
+    function filename_change_hook(){
+        if this.flist{
+            this.flist.filename_changed_edit(this);
+        } this.saved_change_hook();
+        this.top.update_windowlist_registry(this);
+        this.ResetColorizer();
+
+    }
+    function _addcolorizer(){
+        if this.color{
+            return;
+        } if this.ispythonsource(this.io.filename){
+            this.color = this.ColorDelegator();
+        # can add more colorizers here...
+        }
+        if this.color{
+            this.per.removefilter(this.undo);
+            this.per.insertfilter(this.color);
+            this.per.insertfilter(this.undo);
+
+    }
+    } function _rmcolorizer(){
+        if not this.color{
+            return;
+        } this.color.removecolors();
+        this.per.removefilter(this.color);
+        this.color = nil;
+
+    }
+    function ResetColorizer(){
+        "Update the color theme";
+        # Called from self.filename_change_hook and from configDialog.py
+        this._rmcolorizer();
+        this._addcolorizer();
+        theme = idleConf.CurrentTheme();
+        normal_colors = idleConf.GetHighlight(theme, 'normal');
+        cursor_color = idleConf.GetHighlight(theme, 'cursor', fgBg='fg');
+        select_colors = idleConf.GetHighlight(theme, 'hilite');
+        this.text.config(
+            foreground=normal_colors['foreground'],
+            background=normal_colors['background'],
+            insertbackground=cursor_color,
+            selectforeground=select_colors['foreground'],
+            selectbackground=select_colors['background'],
+            );
+        if TkVersion >= 8.5{
+            this.text.config(
+                inactiveselectbackground=select_colors['background']);
+
+    }
+    } function ResetFont(){
+        "Update the text widgets' font if it is changed";
+        # Called from configDialog.py
+
+        this.text['font'] = idleConf.GetFont(this.root, 'main','EditorWindow');
+
+    }
+    function RemoveKeybindings(){
+        "Remove the keybindings before they are changed.";
+        # Called from configDialog.py
+        this.Bindings.default_keydefs = keydefs = idleConf.GetCurrentKeySet();
+        for event, keylist in keydefs.items(){
+            this.text.event_delete(event, *keylist);
+        } for extensionName in this.get_standard_extension_names(){
+            xkeydefs = idleConf.GetExtensionBindings(extensionName);
+            if xkeydefs{
+                for event, keylist in xkeydefs.items(){
+                    this.text.event_delete(event, *keylist);
+
+    }
+    } } } function ApplyKeybindings(){
+        "Update the keybindings after they are changed";
+        # Called from configDialog.py
+        this.Bindings.default_keydefs = keydefs = idleConf.GetCurrentKeySet();
+        this.apply_bindings();
+        for extensionName in this.get_standard_extension_names(){
+            xkeydefs = idleConf.GetExtensionBindings(extensionName);
+            if xkeydefs{
+                this.apply_bindings(xkeydefs);
+        #update menu accelerators
+        }
+        } menuEventDict = {};
+        for menu in this.Bindings.menudefs{
+            menuEventDict[menu[0]] = {};
+            for item in menu[1]{
+                if item{
+                    menuEventDict[menu[0]][prepstr(item[0])[1]] = item[1];
+        } } } for menubarItem in this.menudict.keys(){
+            menu = this.menudict[menubarItem];
+            end = menu.index(END);
+            if end is nil{
+                # Skip empty menus
+                continue;
+            } end += 1;
+            for index in range(0, end){
+                if menu.type(index) == 'command'{
+                    accel = menu.entrycget(index, 'accelerator');
+                    if accel{
+                        itemName = menu.entrycget(index, 'label');
+                        event = '';
+                        if menubarItem in menuEventDict{
+                            if itemName in menuEventDict[menubarItem]{
+                                event = menuEventDict[menubarItem][itemName];
+                        } } if event{
+                            accel = get_accelerator(keydefs, event);
+                            menu.entryconfig(index, accelerator=accel);
+
+    }
+    } } } } } function set_notabs_indentwidth(){
+        "Update the indentwidth if changed and not using tabs in this window";
+        # Called from configDialog.py
+        if not this.usetabs{
+            this.indentwidth = idleConf.GetOption('main', 'Indent','num-spaces',
+                                                  type='int');
+
+    }
+    } function reset_help_menu_entries(){
+        "Update the additional help entries on the Help menu";
+        help_list = idleConf.GetAllExtraHelpSourcesList();
+        helpmenu = this.menudict['help'];
+        # first delete the extra help entries, if any
+        helpmenu_length = helpmenu.index(END);
+        if helpmenu_length > this.base_helpmenu_length{
+            helpmenu.delete((this.base_helpmenu_length + 1), helpmenu_length);
+        # then rebuild them
+        }
+        if help_list{
+            helpmenu.add_separator();
+            for entry in help_list{
+                cmd = this.__extra_help_callback(entry[1]);
+                helpmenu.add_command(label=entry[0], command=cmd);
+        # and update the menu dictionary
+        }
+        } this.menudict['help'] = helpmenu;
+
+    }
+    function __extra_help_callback( helpfile){
+        "Create a callback with the helpfile value frozen at definition time";
+        function display_extra_help(helpfile=helpfile){
+            if not helpfile.startswith(('www', 'http')){
+                helpfile = os.path.normpath(helpfile);
+            } if sys.platform[:3] == 'win'{
+                try{
+                    os.startfile(helpfile);
+                } except WindowsError as why{
+                    tkMessageBox.showerror(title='Document Start Failure',
+                        message=str(why), parent=this.text);
+            } } else{
+                webbrowser.open(helpfile);
+        } } return display_extra_help;
+
+    }
+    function update_recent_files_list( new_file=nil){
+        "Load and update the recent files list and menus";
+        rf_list = [];
+        if os.path.exists(this.recent_files_path){
+            with  open(this.recent_files_path, 'r') as rf_list_file{
+                rf_list = rf_list_file.readlines();
+        } } if new_file{
+            new_file = os.path.abspath(new_file) + '\n';
+            if new_file in rf_list{
+                rf_list.remove(new_file);  # move to top
+            } rf_list.insert(0, new_file);
+        # clean and save the recent files list
+        }
+        bad_paths = [];
+        for path in rf_list{
+            if '\0' in path or not os.path.exists(path[0:-1]){
+                bad_paths.append(path);
+        } } rf_list = [path for path in rf_list if path not in bad_paths];
+        ulchars = "1234567890ABCDEFGHIJK";
+        rf_list = rf_list[0:len(ulchars)];
+        try{
+            with open(this.recent_files_path, 'w') as rf_file{
+                rf_file.writelines(rf_list);
+        } } except IOError as err{
+            if not getattr(this.root, "recentfilelist_error_displayed", false){
+                this.root.recentfilelist_error_displayed = true;
+                tkMessageBox.showwarning(title='IDLE Warning',
+                    message="Cannot update File menu Recent Files list. "
+                            "Your operating system says:\n%s\n"
+                            "Select OK and IDLE will continue without updating."
+                        % str(err),
+                    parent=this.text);
+        # for each edit window instance, construct the recent files menu
+        }
+        } for instance in this.top.instance_dict.keys(){
+            menu = instance.recent_files_menu;
+            menu.delete(0, END);  # clear, and rebuild:
+            for i, file_name in enumerate(rf_list){
+                file_name = file_name.rstrip();  # zap \n
+                # make unicode string to display non-ASCII chars correctly
+                ufile_name = this._filename_to_unicode(file_name);
+                callback = instance.__recent_file_callback(file_name);
+                menu.add_command(label=ulchars[i] + " " + ufile_name,
+                                 command=callback,
+                                 underline=0);
+
+    }
+    } } function __recent_file_callback( file_name){
+        function open_recent_file(fn_closure=file_name){
+            this.io.open(editFile=fn_closure);
+        } return open_recent_file;
+
+    }
+    function saved_change_hook(){
+        short = this.short_title();
+        long = this.long_title();
+        if short and long{
+            title = short + " - " + long + _py_version;
+        } elif short{
+            title = short;
+        } elif long{
+            title = long;
+        } else{
+            title = "Untitled";
+        } icon = short or long or title;
+        if not this.get_saved(){
+            title = "*%s*" % title;
+            icon = "*%s" % icon;
+        } this.top.wm_title(title);
+        this.top.wm_iconname(icon);
+
+    }
+    function get_saved(){
+        return this.undo.get_saved();
+
+    }
+    function set_saved( flag){
+        this.undo.set_saved(flag);
+
+    }
+    function reset_undo(){
+        this.undo.reset_undo();
+
+    }
+    function short_title(){
+        filename = this.io.filename;
+        if filename{
+            filename = os.path.basename(filename);
+        } else{
+            filename = "Untitled";
+        # return unicode string to display non-ASCII chars correctly
+        }
+        return this._filename_to_unicode(filename);
+
+    }
+    function long_title(){
+        # return unicode string to display non-ASCII chars correctly
+        return this._filename_to_unicode(this.io.filename or "");
+
+    }
+    function center_insert_event( event){
+        this.center();
+
+    }
+    function center( mark="insert"){
+        text = this.text;
+        top, bot = this.getwindowlines();
+        lineno = this.getlineno(mark);
+        height = bot - top;
+        newtop = max(1, lineno - height//2);
+        text.yview(float(newtop));
+
+    }
+    function getwindowlines(){
+        text = this.text;
+        top = this.getlineno("@0,0");
+        bot = this.getlineno("@0,65535");
+        if top == bot and text.winfo_height() == 1{
+            # Geometry manager hasn't run yet
+            height = int(text['height']);
+            bot = top + height - 1;
+        } return top, bot;
+
+    }
+    function getlineno( mark="insert"){
+        text = this.text;
+        return int(float(text.index(mark)));
+
+    }
+    function get_geometry(){
+        "Return (width, height, x, y)";
+        geom = this.top.wm_geometry();
+        m = re.match(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", geom);
+        tuple = (map(int, m.groups()));
+        return tuple;
+
+    }
+    function close_event( event){
+        this.close();
+
+    }
+    function maybesave(){
+        if this.io{
+            if not this.get_saved(){
+                if this.top.state()!='normal'{
+                    this.top.deiconify();
+                } this.top.lower();
+                this.top.lift();
+            } return this.io.maybesave();
+
+    }
+    } function close(){
+        reply = this.maybesave();
+        if str(reply) != "cancel"{
+            this._close();
+        } return reply;
+
+    }
+    function _close(){
+        if this.io.filename{
+            this.update_recent_files_list(new_file=this.io.filename);
+        } WindowList.unregister_callback(this.postwindowsmenu);
+        this.unload_extensions();
+        this.io.close();
+        this.io = nil;
+        this.undo = nil;
+        if this.color{
+            this.color.close(false);
+            this.color = nil;
+        } this.text = nil;
+        this.tkinter_vars = nil;
+        this.per.close();
+        this.per = nil;
+        this.top.destroy();
+        if this.close_hook{
+            # unless override: unregister from flist, terminate if last window
+            this.close_hook();
+
+    }
+    } function load_extensions(){
+        this.extensions = {};
+        this.load_standard_extensions();
+
+    }
+    function unload_extensions(){
+        for ins in this.extensions.values(){
+            if hasattr(ins, "close"){
+                ins.close();
+        } } this.extensions = {};
+
+    }
+    function load_standard_extensions(){
+        for name in this.get_standard_extension_names(){
+            try{
+                this.load_extension(name);
+            } except Exception{
+                print "Failed to load extension", repr(name);
+                import traceback;
+                traceback.print_exc();
+
+    }
+    } } function get_standard_extension_names(){
+        return idleConf.GetExtensions(editor_only=true);
+
+    }
+    function load_extension( name){
+        try{
+            mod = __import__(name, globals(), locals(), []);
+        } except ImportError{
+            print "\nFailed to import extension: ", name;
+            return;
+        } cls = getattr(mod, name);
+        keydefs = idleConf.GetExtensionBindings(name);
+        if hasattr(cls, "menudefs"){
+            this.fill_menus(cls.menudefs, keydefs);
+        } ins = cls(this);
+        this.extensions[name] = ins;
+        if keydefs{
+            this.apply_bindings(keydefs);
+            for vevent in keydefs.keys(){
+                methodname = vevent.replace("-", "_");
+                while methodname[:1] == '<'{
+                    methodname = methodname[1:];
+                } while methodname[-1:] == '>'{
+                    methodname = methodname[:-1];
+                } methodname = methodname + "_event";
+                if hasattr(ins, methodname){
+                    this.text.bind(vevent, getattr(ins, methodname));
+
+    }
+    } } } function apply_bindings( keydefs=nil){
+        if keydefs is nil{
+            keydefs = this.Bindings.default_keydefs;
+        } text = this.text;
+        text.keydefs = keydefs;
+        for event, keylist in keydefs.items(){
+            if keylist{
+                text.event_add(event, *keylist);
+
+    }
+    } } function fill_menus( menudefs=nil, keydefs=nil){
+        """Add appropriate entries to the menus and submenus
+
+        Menus that are absent or None in self.menudict are ignored.
+        """;
+        if menudefs is nil{
+            menudefs = this.Bindings.menudefs;
+        } if keydefs is nil{
+            keydefs = this.Bindings.default_keydefs;
+        } menudict = this.menudict;
+        text = this.text;
+        for mname, entrylist in menudefs{
+            menu = menudict.get(mname);
+            if not menu{
+                continue;
+            } for entry in entrylist{
+                if not entry{
+                    menu.add_separator();
+                } else{
+                    label, eventname = entry;
+                    checkbutton = (label[:1] == '!');
+                    if checkbutton{
+                        label = label[1:];
+                    } underline, label = prepstr(label);
+                    accelerator = get_accelerator(keydefs, eventname);
+                    function command(text=text, eventname=eventname){
+                        text.event_generate(eventname);
+                    } if checkbutton{
+                        var = this.get_var_obj(eventname, BooleanVar);
+                        menu.add_checkbutton(label=label, underline=underline,
+                            command=command, accelerator=accelerator,
+                            variable=var);
+                    } else{
+                        menu.add_command(label=label, underline=underline,
+                                         command=command,
+                                         accelerator=accelerator);
+
+    }
+    } } } } function getvar( name){
+        var = this.get_var_obj(name);
+        if var{
+            value = var.get();
+            return value;
+        } else{
+            raise NameError, name;
+
+    }
+    } function setvar( name, value, vartype=nil){
+        var = this.get_var_obj(name, vartype);
+        if var{
+            var.set(value);
+        } else{
+            raise NameError, name;
+
+    }
+    } function get_var_obj( name, vartype=nil){
+        var = this.tkinter_vars.get(name);
+        if not var and vartype{
+            # create a Tkinter variable object with self.text as master:
+            this.tkinter_vars[name] = var = vartype(this.text);
+        } return var;
+
+    # Tk implementations of "virtual text methods" -- each platform
+    # reusing IDLE's support code needs to define these for its GUI's
+    # flavor of widget.
+
+    # Is character at text_index in a Python string?  Return 0 for
+    # "guaranteed no", true for anything else.  This info is expensive
+    # to compute ab initio, but is probably already known by the
+    # platform's colorizer.
+
+    }
+    function is_char_in_string( text_index){
+        if this.color{
+            # Return true iff colorizer hasn't (re)gotten this far
+            # yet, or the character is tagged as being in a string
+            return this.text.tag_prevrange("TODO", text_index) or \
+                   "STRING" in this.text.tag_names(text_index);
+        } else{
+            # The colorizer is missing: assume the worst
+            return 1;
+
+    # If a selection is defined in the text widget, return (start,
+    # end) as Tkinter text indices, otherwise return (None, None)
+    }
+    } function get_selection_indices(){
+        try{
+            first = this.text.index("sel.first");
+            last = this.text.index("sel.last");
+            return first, last;
+        } except TclError{
+            return nil, nil;
+
+    # Return the text widget's current view of what a tab stop means
+    # (equivalent width in spaces).
+
+    }
+    } function get_tabwidth(){
+        current = this.text['tabs'] or TK_TABWIDTH_DEFAULT;
+        return int(current);
+
+    # Set the text widget's current view of what a tab stop means.
+
+    }
+    function set_tabwidth( newtabwidth){
+        text = this.text;
+        if this.get_tabwidth() != newtabwidth{
+            pixels = text.tk.call("font", "measure", text["font"],
+                                  "-displayof", text.master,
+                                  "n" * newtabwidth);
+            text.configure(tabs=pixels);
+
+    # If ispythonsource and guess are true, guess a good value for
+    # indentwidth based on file content (if possible), and if
+    # indentwidth != tabwidth set usetabs false.
+    # In any case, adjust the Text widget's view of what a tab
+    # character means.
+
+    }
+    } function set_indentation_params( ispythonsource, guess=true){
+        if guess and ispythonsource{
+            i = this.guess_indent();
+            if 2 <= i <= 8{
+                this.indentwidth = i;
+            } if this.indentwidth != this.tabwidth{
+                this.usetabs = false;
+        } } this.set_tabwidth(this.tabwidth);
+
+    }
+    function smart_backspace_event( event){
+        text = this.text;
+        first, last = this.get_selection_indices();
+        if first and last{
+            text.delete(first, last);
+            text.mark_set("insert", first);
+            return "break";
+        # Delete whitespace left, until hitting a real char or closest
+        # preceding virtual tab stop.
+        }
+        chars = text.get("insert linestart", "insert");
+        if chars == ''{
+            if text.compare("insert", ">", "1.0"){
+                # easy: delete preceding newline
+                text.delete("insert-1c");
+            } else{
+                text.bell();     # at start of buffer
+            } return "break";
+        } if  chars[-1] not in " \t"{
+            # easy: delete preceding real char
+            text.delete("insert-1c");
+            return "break";
+        # Ick.  It may require *inserting* spaces if we back up over a
+        # tab character!  This is written to be clear, not fast.
+        }
+        tabwidth = this.tabwidth;
+        have = len(chars.expandtabs(tabwidth));
+        assert have > 0;
+        want = ((have - 1) // this.indentwidth) * this.indentwidth;
+        # Debug prompt is multilined....
+        if this.context_use_ps1{
+            last_line_of_prompt = sys.ps1.split('\n')[-1];
+        } else{
+            last_line_of_prompt = '';
+        } ncharsdeleted = 0;
+        while 1{
+            if chars == last_line_of_prompt{
+                break;
+            } chars = chars[:-1];
+            ncharsdeleted = ncharsdeleted + 1;
+            have = len(chars.expandtabs(tabwidth));
+            if have <= want or chars[-1] not in " \t"{
+                break;
+        } } text.undo_block_start();
+        text.delete("insert-%dc" % ncharsdeleted, "insert");
+        if have < want{
+            text.insert("insert", ' ' * (want - have));
+        } text.undo_block_stop();
+        return "break";
+
+    }
+    function smart_indent_event( event){
+        # if intraline selection:
+        #     delete it
+        # elif multiline selection:
+        #     do indent-region
+        # else:
+        #     indent one level
+        text = this.text;
+        first, last = this.get_selection_indices();
+        text.undo_block_start();
+        try{
+            if first and last{
+                if index2line(first) != index2line(last){
+                    return this.indent_region_event(event);
+                } text.delete(first, last);
+                text.mark_set("insert", first);
+            } prefix = text.get("insert linestart", "insert");
+            raw, effective = classifyws(prefix, this.tabwidth);
+            if raw == len(prefix){
+                # only whitespace to the left
+                this.reindent_to(effective + this.indentwidth);
+            } else{
+                # tab to the next 'stop' within or to right of line's text:
+                if this.usetabs{
+                    pad = '\t';
+                } else{
+                    effective = len(prefix.expandtabs(this.tabwidth));
+                    n = this.indentwidth;
+                    pad = ' ' * (n - effective % n);
+                } text.insert("insert", pad);
+            } text.see("insert");
+            return "break";
+        } finally{
+            text.undo_block_stop();
+
+    }
+    } function newline_and_indent_event( event){
+        text = this.text;
+        first, last = this.get_selection_indices();
+        text.undo_block_start();
+        try{
+            if first and last{
+                text.delete(first, last);
+                text.mark_set("insert", first);
+            } line = text.get("insert linestart", "insert");
+            i, n = 0, len(line);
+            while i < n and line[i] in " \t"{
+                i = i+1;
+            } if i == n{
+                # the cursor is in or at leading indentation in a continuation
+                # line; just inject an empty line at the start
+                text.insert("insert linestart", '\n');
+                return "break";
+            } indent = line[:i];
+            # strip whitespace before insert point unless it's in the prompt
+            i = 0;
+            last_line_of_prompt = sys.ps1.split('\n')[-1];
+            while line and line[-1] in " \t" and line != last_line_of_prompt{
+                line = line[:-1];
+                i = i+1;
+            } if i{
+                text.delete("insert - %d chars" % i, "insert");
+            # strip whitespace after insert point
+            }
+            while text.get("insert") in " \t"{
+                text.delete("insert");
+            # start new line
+            }
+            text.insert("insert", '\n');
+
+            # adjust indentation for continuations and block
+            # open/close first need to find the last stmt
+            lno = index2line(text.index('insert'));
+            y = PyParse.Parser(this.indentwidth, this.tabwidth);
+            if not this.context_use_ps1{
+                for context in this.num_context_lines{
+                    startat = max(lno - context, 1);
+                    startatindex = repr(startat) + ".0";
+                    rawtext = text.get(startatindex, "insert");
+                    y.set_str(rawtext);
+                    bod = y.find_good_parse_start(
+                              this.context_use_ps1,
+                              this._build_char_in_string_func(startatindex));
+                    if bod is not nil or startat == 1{
+                        break;
+                } } y.set_lo(bod or 0);
+            } else{
+                r = text.tag_prevrange("console", "insert");
+                if r{
+                    startatindex = r[1];
+                } else{
+                    startatindex = "1.0";
+                } rawtext = text.get(startatindex, "insert");
+                y.set_str(rawtext);
+                y.set_lo(0);
+
+            }
+            c = y.get_continuation_type();
+            if c != PyParse.C_NONE{
+                # The current stmt hasn't ended yet.
+                if c == PyParse.C_STRING_FIRST_LINE{
+                    # after the first line of a string; do not indent at all
+                    pass;
+                } elif c == PyParse.C_STRING_NEXT_LINES{
+                    # inside a string which started before this line;
+                    # just mimic the current indent
+                    text.insert("insert", indent);
+                } elif c == PyParse.C_BRACKET{
+                    # line up with the first (if any) element of the
+                    # last open bracket structure; else indent one
+                    # level beyond the indent of the line with the
+                    # last open bracket
+                    this.reindent_to(y.compute_bracket_indent());
+                } elif c == PyParse.C_BACKSLASH{
+                    # if more than one line in this stmt already, just
+                    # mimic the current indent; else if initial line
+                    # has a start on an assignment stmt, indent to
+                    # beyond leftmost =; else to beyond first chunk of
+                    # non-whitespace on initial line
+                    if y.get_num_lines_in_stmt() > 1{
+                        text.insert("insert", indent);
+                    } else{
+                        this.reindent_to(y.compute_backslash_indent());
+                } } else{
+                    assert 0, "bogus continuation type %r" % (c,);
+                } return "break";
+
+            # This line starts a brand new stmt; indent relative to
+            # indentation of initial line of closest preceding
+            # interesting stmt.
+            }
+            indent = y.get_base_indent_string();
+            text.insert("insert", indent);
+            if y.is_block_opener(){
+                this.smart_indent_event(event);
+            } elif indent and y.is_block_closer(){
+                this.smart_backspace_event(event);
+            } return "break";
+        } finally{
+            text.see("insert");
+            text.undo_block_stop();
+
+    # Our editwin provides an is_char_in_string function that works
+    # with a Tk text index, but PyParse only knows about offsets into
+    # a string. This builds a function for PyParse that accepts an
+    # offset.
+
+    }
+    } function _build_char_in_string_func( startindex){
+        function inner(offset, _startindex=startindex,
+                  _icis=.is_char_in_string){
+            return _icis(_startindex + "+%dc" % offset);
+        } return inner;
+
+    }
+    function indent_region_event( event){
+        head, tail, chars, lines = this.get_region();
+        for pos in range(len(lines)){
+            line = lines[pos];
+            if line{
+                raw, effective = classifyws(line, this.tabwidth);
+                effective = effective + this.indentwidth;
+                lines[pos] = this._make_blanks(effective) + line[raw:];
+        } } this.set_region(head, tail, chars, lines);
+        return "break";
+
+    }
+    function dedent_region_event( event){
+        head, tail, chars, lines = this.get_region();
+        for pos in range(len(lines)){
+            line = lines[pos];
+            if line{
+                raw, effective = classifyws(line, this.tabwidth);
+                effective = max(effective - this.indentwidth, 0);
+                lines[pos] = this._make_blanks(effective) + line[raw:];
+        } } this.set_region(head, tail, chars, lines);
+        return "break";
+
+    }
+    function comment_region_event( event){
+        head, tail, chars, lines = this.get_region();
+        for pos in range(len(lines) - 1){
+            line = lines[pos];
+            lines[pos] = '##' + line;
+        } this.set_region(head, tail, chars, lines);
+
+    }
+    function uncomment_region_event( event){
+        head, tail, chars, lines = this.get_region();
+        for pos in range(len(lines)){
+            line = lines[pos];
+            if not line{
+                continue;
+            } if line[:2] == '##'{
+                line = line[2:];
+            } elif line[:1] == '#'{
+                line = line[1:];
+            } lines[pos] = line;
+        } this.set_region(head, tail, chars, lines);
+
+    }
+    function tabify_region_event( event){
+        head, tail, chars, lines = this.get_region();
+        tabwidth = this._asktabwidth();
+        if tabwidth is nil{ return;}
+        for pos in range(len(lines)){
+            line = lines[pos];
+            if line{
+                raw, effective = classifyws(line, tabwidth);
+                ntabs, nspaces = divmod(effective, tabwidth);
+                lines[pos] = '\t' * ntabs + ' ' * nspaces + line[raw:];
+        } } this.set_region(head, tail, chars, lines);
+
+    }
+    function untabify_region_event( event){
+        head, tail, chars, lines = this.get_region();
+        tabwidth = this._asktabwidth();
+        if tabwidth is nil{ return;}
+        for pos in range(len(lines)){
+            lines[pos] = lines[pos].expandtabs(tabwidth);
+        } this.set_region(head, tail, chars, lines);
+
+    }
+    function toggle_tabs_event( event){
+        if this.askyesno(
+              "Toggle tabs",
+              "Turn tabs " + ("on", "off")[this.usetabs] +
+              "?\nIndent width " +
+              ("will be", "remains at")[this.usetabs] + " 8." +
+              "\n Note: a tab is always 8 columns",
+              parent=this.text){
+            this.usetabs = not this.usetabs;
+            # Try to prevent inconsistent indentation.
+            # User must change indent width manually after using tabs.
+            this.indentwidth = 8;
+        } return "break";
+
+    # XXX this isn't bound to anything -- see tabwidth comments
+##     def change_tabwidth_event(self, event):
+##         new = self._asktabwidth()
+##         if new != self.tabwidth:
+##             self.tabwidth = new
+##             self.set_indentation_params(0, guess=0)
+##         return "break"
+
+    }
+    function change_indentwidth_event( event){
+        new = this.askinteger(
+                  "Indent width",
+                  "New indent width (2-16)\n(Always use 8 when using tabs)",
+                  parent=this.text,
+                  initialvalue=this.indentwidth,
+                  minvalue=2,
+                  maxvalue=16);
+        if new and new != this.indentwidth and not this.usetabs{
+            this.indentwidth = new;
+        } return "break";
+
+    }
+    function get_region(){
+        text = this.text;
+        first, last = this.get_selection_indices();
+        if first and last{
+            head = text.index(first + " linestart");
+            tail = text.index(last + "-1c lineend +1c");
+        } else{
+            head = text.index("insert linestart");
+            tail = text.index("insert lineend +1c");
+        } chars = text.get(head, tail);
+        lines = chars.split("\n");
+        return head, tail, chars, lines;
+
+    }
+    function set_region( head, tail, chars, lines){
+        text = this.text;
+        newchars = "\n".join(lines);
+        if newchars == chars{
+            text.bell();
+            return;
+        } text.tag_remove("sel", "1.0", "end");
+        text.mark_set("insert", head);
+        text.undo_block_start();
+        text.delete(head, tail);
+        text.insert(head, newchars);
+        text.undo_block_stop();
+        text.tag_add("sel", head, "insert");
+
+    # Make string that displays as n leading blanks.
+
+    }
+    function _make_blanks( n){
+        if this.usetabs{
+            ntabs, nspaces = divmod(n, this.tabwidth);
+            return '\t' * ntabs + ' ' * nspaces;
+        } else{
+            return ' ' * n;
+
+    # Delete from beginning of line to insert point, then reinsert
+    # column logical (meaning use tabs if appropriate) spaces.
+
+    }
+    } function reindent_to( column){
+        text = this.text;
+        text.undo_block_start();
+        if text.compare("insert linestart", "!=", "insert"){
+            text.delete("insert linestart", "insert");
+        } if column{
+            text.insert("insert", this._make_blanks(column));
+        } text.undo_block_stop();
+
+    }
+    function _asktabwidth(){
+        return this.askinteger(
+            "Tab width",
+            "Columns per tab? (2-16)",
+            parent=this.text,
+            initialvalue=this.indentwidth,
+            minvalue=2,
+            maxvalue=16);
+
+    # Guess indentwidth from text content.
+    # Return guessed indentwidth.  This should not be believed unless
+    # it's in a reasonable range (e.g., it will be 0 if no indented
+    # blocks are found).
+
+    }
+    function guess_indent(){
+        opener, indented = IndentSearcher(this.text, this.tabwidth).run();
+        if opener and indented{
+            raw, indentsmall = classifyws(opener, this.tabwidth);
+            raw, indentlarge = classifyws(indented, this.tabwidth);
+        } else{
+            indentsmall = indentlarge = 0;
+        } return indentlarge - indentsmall;
+
+# "line.col" -> line, as an int
+}
+} function index2line(index){
+    return int(float(index));
+
+# Look at the leading whitespace in s.
+# Return pair (# of leading ws characters,
+#              effective # of leading blanks after expanding
+#              tabs to width tabwidth)
+
+}
+function classifyws(s, tabwidth){
+    raw = effective = 0;
+    for ch in s{
+        if ch == ' '{
+            raw = raw + 1;
+            effective = effective + 1;
+        } elif ch == '\t'{
+            raw = raw + 1;
+            effective = (effective // tabwidth + 1) * tabwidth;
+        } else{
+            break;
+    } } return raw, effective;
+
+}
+import tokenize;
+_tokenize = tokenize;
+del tokenize;
+
+class IndentSearcher(object){
+
+    # .run() chews over the Text widget, looking for a block opener
+    # and the stmt following it.  Returns a pair,
+    #     (line containing block opener, line containing stmt)
+    # Either or both may be None.
+
+    function __init__( text, tabwidth){
+        this.text = text;
+        this.tabwidth = tabwidth;
+        this.i = this.finished = 0;
+        this.blkopenline = this.indentedline = nil;
+
+    }
+    function readline(){
+        if this.finished{
+            return "";
+        } i = this.i = this.i + 1;
+        mark = repr(i) + ".0";
+        if this.text.compare(mark, ">=", "end"){
+            return "";
+        } return this.text.get(mark, mark + " lineend+1c");
+
+    }
+    function tokeneater( type, token, start, end, line,
+                   INDENT=_tokenize.INDENT,
+                   NAME=_tokenize.NAME,
+                   OPENERS=('class', 'def', 'for', 'if', 'try', 'while')){
+        if this.finished{
+            pass;
+        } elif type == NAME and token in OPENERS{
+            this.blkopenline = line;
+        } elif type == INDENT and this.blkopenline{
+            this.indentedline = line;
+            this.finished = 1;
+
+    }
+    } function run(){
+        save_tabsize = _tokenize.tabsize;
+        _tokenize.tabsize = this.tabwidth;
+        try{
+            try{
+                _tokenize.tokenize(this.readline, this.tokeneater);
+            } except (_tokenize.TokenError, SyntaxError){
+                # since we cut off the tokenizer early, we can trigger
+                # spurious errors
+                pass;
+        } } finally{
+            _tokenize.tabsize = save_tabsize;
+        } return this.blkopenline, this.indentedline;
+
+### end autoindent code ###
+
+}
+} function prepstr(s){
+    # Helper to extract the underscore from a string, e.g.
+    # prepstr("Co_py") returns (2, "Copy").
+    i = s.find('_');
+    if i >= 0{
+        s = s[:i] + s[i+1:];
+    } return i, s;
+
+
+}
+keynames = {
+ 'bracketleft': '[',
+ 'bracketright': ']',
+ 'slash': '/',
+};
+
+function get_accelerator(keydefs, eventname){
+    keylist = keydefs.get(eventname);
+    # issue10940: temporary workaround to prevent hang with OS X Cocoa Tk 8.5
+    # if not keylist:
+    if (not keylist) or (macosxSupport.isCocoaTk() and eventname in {
+                            "<<open-module>>",
+                            "<<goto-line>>",
+                            "<<change-indentwidth>>"}){
+        return "";
+    } s = keylist[0];
+    s = re.sub(r"-[a-z]\b", lambda m{ m.group().upper()}, s);
+    s = re.sub(r"\b\w+\b", lambda m{ keynames.get(m.group(), m.group())}, s);
+    s = re.sub("Key-", "", s);
+    s = re.sub("Cancel","Ctrl-Break",s);   # dscherer@cmu.edu
+    s = re.sub("Control-", "Ctrl-", s);
+    s = re.sub("-", "+", s);
+    s = re.sub("><", " ", s);
+    s = re.sub("<", "", s);
+    s = re.sub(">", "", s);
+    return s;
+
+
+}
+function fixwordbreaks(root){
+    # Make sure that Tk's double-click and next/previous word
+    # operations use our definition of a word (i.e. an identifier)
+    tk = root.tk;
+    tk.call('tcl_wordBreakAfter', 'a b', 0); # make sure word.tcl is loaded
+    tk.call('set', 'tcl_wordchars', '[a-zA-Z0-9_]');
+    tk.call('set', 'tcl_nonwordchars', '[^a-zA-Z0-9_]');
+
+
+}
+function _editor_window(parent){  # htest #
+    # error if close master window first - timer event, after script
+    root = parent;
+    fixwordbreaks(root);
+    if sys.argv[1:]{
+        filename = sys.argv[1];
+    } else{
+        filename = nil;
+    } macosxSupport.setupApp(root, nil);
+    edit = EditorWindow(root=root, filename=filename);
+    edit.text.bind("<<close-all-windows>>", edit.close_event);
+    # Does not stop error, neither does following
+    # edit.text.bind("<<close-window>>", edit.close_event)
+
+
+}
+if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(_editor_window);
+
+}

@@ -1,0 +1,31 @@
+class Delegator{
+
+    # The cache is only used to be able to change delegates!
+
+    function __init__( delegate=nil){
+        this.delegate = delegate;
+        this.__cache = set();
+
+    }
+    function __getattr__( name){
+        attr = getattr(this.delegate, name); # May raise AttributeError
+        setattr(this, name, attr);
+        this.__cache.add(name);
+        return attr;
+
+    }
+    function resetcache(){
+        for key in this.__cache{
+            try{
+                delattr(this, key);
+            } except AttributeError{
+                pass;
+        } } this.__cache.clear();
+
+    }
+    function setdelegate( delegate){
+        this.resetcache();
+        this.delegate = delegate;
+
+}
+}

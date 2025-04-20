@@ -1,0 +1,240 @@
+from Tkinter import *;
+
+from idlelib import SearchEngine;
+from idlelib.SearchDialogBase import SearchDialogBase;
+import re;
+
+
+function replace(text){
+    root = text._root();
+    engine = SearchEngine.get(root);
+    if not hasattr(engine, "_replacedialog"){
+        engine._replacedialog = ReplaceDialog(root, engine);
+    } dialog = engine._replacedialog;
+    dialog.open(text);
+
+
+}
+class ReplaceDialog(SearchDialogBase){
+
+    title = "Replace Dialog";
+    icon = "Replace";
+
+    function __init__( root, engine){
+        SearchDialogBase.__init__(this, root, engine);
+        this.replvar = StringVar(root);
+
+    }
+    function open( text){
+        SearchDialogBase.open(this, text);
+        try{
+            first = text.index("sel.first");
+        } except TclError{
+            first = nil;
+        } try{
+            last = text.index("sel.last");
+        } except TclError{
+            last = nil;
+        } first = first or text.index("insert");
+        last = last or first;
+        this.show_hit(first, last);
+        this.ok = 1;
+
+    }
+    function create_entries(){
+        SearchDialogBase.create_entries(this);
+        this.replent = this.make_entry("Replace with:", this.replvar)[0];
+
+    }
+    function create_command_buttons(){
+        SearchDialogBase.create_command_buttons(this);
+        this.make_button("Find", this.find_it);
+        this.make_button("Replace", this.replace_it);
+        this.make_button("Replace+Find", this.default_command, 1);
+        this.make_button("Replace All", this.replace_all);
+
+    }
+    function find_it( event=nil){
+        this.do_find(0);
+
+    }
+    function replace_it( event=nil){
+        if this.do_find(this.ok){
+            this.do_replace();
+
+    }
+    } function default_command( event=nil){
+        if this.do_find(this.ok){
+            if this.do_replace(){   # Only find next match if replace succeeded.
+                                    # A bad re can cause it to fail.
+                this.do_find(0);
+
+    }
+    } } function _replace_expand( m, repl){
+        """ Helper function for expanding a regular expression
+            in the replace field, if needed. """;
+        if this.engine.isre(){
+            try{
+                new = m.expand(repl);
+            } except re.error{
+                this.engine.report_error(repl, 'Invalid Replace Expression');
+                new = nil;
+        } } else{
+            new = repl;
+        } return new;
+
+    }
+    function replace_all( event=nil){
+        prog = this.engine.getprog();
+        if not prog{
+            return;
+        } repl = this.replvar.get();
+        text = this.text;
+        res = this.engine.search_text(text, prog);
+        if not res{
+            text.bell();
+            return;
+        } text.tag_remove("sel", "1.0", "end");
+        text.tag_remove("hit", "1.0", "end");
+        line = res[0];
+        col = res[1].start();
+        if this.engine.iswrap(){
+            line = 1;
+            col = 0;
+        } ok = 1;
+        first = last = nil;
+        # XXX ought to replace circular instead of top-to-bottom when wrapping
+        text.undo_block_start();
+        while 1{
+            res = this.engine.search_forward(text, prog, line, col, 0, ok);
+            if not res{
+                break;
+            } line, m = res;
+            chars = text.get("%d.0" % line, "%d.0" % (line+1));
+            orig = m.group();
+            new = this._replace_expand(m, repl);
+            if new is nil{
+                break;
+            } i, j = m.span();
+            first = "%d.%d" % (line, i);
+            last = "%d.%d" % (line, j);
+            if new == orig{
+                text.mark_set("insert", last);
+            } else{
+                text.mark_set("insert", first);
+                if first != last{
+                    text.delete(first, last);
+                } if new{
+                    text.insert(first, new);
+            } } col = i + len(new);
+            ok = 0;
+        } text.undo_block_stop();
+        if first and last{
+            this.show_hit(first, last);
+        } this.close();
+
+    }
+    function do_find( ok=0){
+        if not this.engine.getprog(){
+            return false;
+        } text = this.text;
+        res = this.engine.search_text(text, nil, ok);
+        if not res{
+            text.bell();
+            return false;
+        } line, m = res;
+        i, j = m.span();
+        first = "%d.%d" % (line, i);
+        last = "%d.%d" % (line, j);
+        this.show_hit(first, last);
+        this.ok = 1;
+        return true;
+
+    }
+    function do_replace(){
+        prog = this.engine.getprog();
+        if not prog{
+            return false;
+        } text = this.text;
+        try{
+            first = pos = text.index("sel.first");
+            last = text.index("sel.last");
+        } except TclError{
+            pos = nil;
+        } if not pos{
+            first = last = pos = text.index("insert");
+        } line, col = SearchEngine.get_line_col(pos);
+        chars = text.get("%d.0" % line, "%d.0" % (line+1));
+        m = prog.match(chars, col);
+        if not prog{
+            return false;
+        } new = this._replace_expand(m, this.replvar.get());
+        if new is nil{
+            return false;
+        } text.mark_set("insert", first);
+        text.undo_block_start();
+        if m.group(){
+            text.delete(first, last);
+        } if new{
+            text.insert(first, new);
+        } text.undo_block_stop();
+        this.show_hit(first, text.index("insert"));
+        this.ok = 0;
+        return true;
+
+    }
+    function show_hit( first, last){
+        text = this.text;
+        text.mark_set("insert", first);
+        text.tag_remove("sel", "1.0", "end");
+        text.tag_add("sel", first, last);
+        text.tag_remove("hit", "1.0", "end");
+        if first == last{
+            text.tag_add("hit", first);
+        } else{
+            text.tag_add("hit", first, last);
+        } text.see("insert");
+        text.update_idletasks();
+
+    }
+    function close( event=nil){
+        SearchDialogBase.close(this, event);
+        this.text.tag_remove("hit", "1.0", "end");
+
+}
+} function _replace_dialog(parent){
+    root = Tk();
+    root.title("Test ReplaceDialog");
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())));
+    root.geometry("+%d+%d"%(x, y + 150));
+
+    # mock undo delegator methods
+    function undo_block_start(){
+        pass;
+
+    }
+    function undo_block_stop(){
+        pass;
+
+    }
+    text = Text(root);
+    text.undo_block_start = undo_block_start;
+    text.undo_block_stop = undo_block_stop;
+    text.pack();
+    text.insert("insert","This is a sample string.\n"*10);
+
+    function show_replace(){
+        text.tag_add(SEL, "1.0", END);
+        replace(text);
+        text.tag_remove(SEL, "1.0", END);
+
+    }
+    button = Button(root, text="Replace", command=show_replace);
+    button.pack();
+
+}
+if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(_replace_dialog);
+
+}

@@ -1,0 +1,287 @@
+"""Classes for manipulating audio devices (currently only for Sun and SGI)""";
+from warnings import warnpy3k;
+warnpy3k("the audiodev module has been removed in Python 3.0", stacklevel=2);
+del warnpy3k;
+
+__all__ = ["error","AudioDev"];
+
+class error(Exception){
+    pass;
+
+}
+class Play_Audio_sgi{
+    # Private instance variables
+##      if 0: access frameratelist, nchannelslist, sampwidthlist, oldparams, \
+##                params, config, inited_outrate, inited_width, \
+##                inited_nchannels, port, converter, classinited: private
+
+    classinited = 0;
+    frameratelist = nchannelslist = sampwidthlist = nil;
+
+    function initclass(){
+        import AL;
+        this.frameratelist = [
+                  (48000, AL.RATE_48000),
+                  (44100, AL.RATE_44100),
+                  (32000, AL.RATE_32000),
+                  (22050, AL.RATE_22050),
+                  (16000, AL.RATE_16000),
+                  (11025, AL.RATE_11025),
+                  ( 8000,  AL.RATE_8000),
+                  ];
+        this.nchannelslist = [
+                  (1, AL.MONO),
+                  (2, AL.STEREO),
+                  (4, AL.QUADRO),
+                  ];
+        this.sampwidthlist = [
+                  (1, AL.SAMPLE_8),
+                  (2, AL.SAMPLE_16),
+                  (3, AL.SAMPLE_24),
+                  ];
+        this.classinited = 1;
+
+    }
+    function __init__(){
+        import al, AL;
+        if not this.classinited{
+            this.initclass();
+        } this.oldparams = [];
+        this.params = [AL.OUTPUT_RATE, 0];
+        this.config = al.newconfig();
+        this.inited_outrate = 0;
+        this.inited_width = 0;
+        this.inited_nchannels = 0;
+        this.converter = nil;
+        this.port = nil;
+        return;
+
+    }
+    function __del__(){
+        if this.port{
+            this.stop();
+        } if this.oldparams{
+            import al, AL;
+            al.setparams(AL.DEFAULT_DEVICE, this.oldparams);
+            this.oldparams = [];
+
+    }
+    } function wait(){
+        if not this.port{
+            return;
+        } import time;
+        while this.port.getfilled() > 0{
+            time.sleep(0.1);
+        } this.stop();
+
+    }
+    function stop(){
+        if this.port{
+            this.port.closeport();
+            this.port = nil;
+        } if this.oldparams{
+            import al, AL;
+            al.setparams(AL.DEFAULT_DEVICE, this.oldparams);
+            this.oldparams = [];
+
+    }
+    } function setoutrate( rate){
+        for (raw, cooked) in this.frameratelist{
+            if rate == raw{
+                this.params[1] = cooked;
+                this.inited_outrate = 1;
+                break;
+        } } else{
+            raise error, 'bad output rate';
+
+    }
+    } function setsampwidth( width){
+        for (raw, cooked) in this.sampwidthlist{
+            if width == raw{
+                this.config.setwidth(cooked);
+                this.inited_width = 1;
+                break;
+        } } else{
+            if width == 0{
+                import AL;
+                this.inited_width = 0;
+                this.config.setwidth(AL.SAMPLE_16);
+                this.converter = this.ulaw2lin;
+            } else{
+                raise error, 'bad sample width';
+
+    }
+    } } function setnchannels( nchannels){
+        for (raw, cooked) in this.nchannelslist{
+            if nchannels == raw{
+                this.config.setchannels(cooked);
+                this.inited_nchannels = 1;
+                break;
+        } } else{
+            raise error, 'bad # of channels';
+
+    }
+    } function writeframes( data){
+        if not (this.inited_outrate and this.inited_nchannels){
+            raise error, 'params not specified';
+        } if not this.port{
+            import al, AL;
+            this.port = al.openport('Python', 'w', this.config);
+            this.oldparams = this.params[:];
+            al.getparams(AL.DEFAULT_DEVICE, this.oldparams);
+            al.setparams(AL.DEFAULT_DEVICE, this.params);
+        } if this.converter{
+            data = this.converter(data);
+        } this.port.writesamps(data);
+
+    }
+    function getfilled(){
+        if this.port{
+            return this.port.getfilled();
+        } else{
+            return 0;
+
+    }
+    } function getfillable(){
+        if this.port{
+            return this.port.getfillable();
+        } else{
+            return this.config.getqueuesize();
+
+    # private methods
+##      if 0: access *: private
+
+    }
+    } function ulaw2lin( data){
+        import audioop;
+        return audioop.ulaw2lin(data, 2);
+
+}
+} class Play_Audio_sun{
+##      if 0: access outrate, sampwidth, nchannels, inited_outrate, inited_width, \
+##                inited_nchannels, converter: private
+
+    function __init__(){
+        this.outrate = 0;
+        this.sampwidth = 0;
+        this.nchannels = 0;
+        this.inited_outrate = 0;
+        this.inited_width = 0;
+        this.inited_nchannels = 0;
+        this.converter = nil;
+        this.port = nil;
+        return;
+
+    }
+    function __del__(){
+        this.stop();
+
+    }
+    function setoutrate( rate){
+        this.outrate = rate;
+        this.inited_outrate = 1;
+
+    }
+    function setsampwidth( width){
+        this.sampwidth = width;
+        this.inited_width = 1;
+
+    }
+    function setnchannels( nchannels){
+        this.nchannels = nchannels;
+        this.inited_nchannels = 1;
+
+    }
+    function writeframes( data){
+        if not (this.inited_outrate and this.inited_width and this.inited_nchannels){
+            raise error, 'params not specified';
+        } if not this.port{
+            import sunaudiodev, SUNAUDIODEV;
+            this.port = sunaudiodev.open('w');
+            info = this.port.getinfo();
+            info.o_sample_rate = this.outrate;
+            info.o_channels = this.nchannels;
+            if this.sampwidth == 0{
+                info.o_precision = 8;
+                this.o_encoding = SUNAUDIODEV.ENCODING_ULAW;
+                # XXX Hack, hack -- leave defaults
+            }
+            else{
+                info.o_precision = 8 * this.sampwidth;
+                info.o_encoding = SUNAUDIODEV.ENCODING_LINEAR;
+                this.port.setinfo(info);
+        } } if this.converter{
+            data = this.converter(data);
+        } this.port.write(data);
+
+    }
+    function wait(){
+        if not this.port{
+            return;
+        } this.port.drain();
+        this.stop();
+
+    }
+    function stop(){
+        if this.port{
+            this.port.flush();
+            this.port.close();
+            this.port = nil;
+
+    }
+    } function getfilled(){
+        if this.port{
+            return this.port.obufcount();
+        } else{
+            return 0;
+
+##    # Nobody remembers what this method does, and it's broken. :-(
+##    def getfillable(self):
+##        return BUFFERSIZE - self.getfilled()
+
+}
+} } function AudioDev(){
+    # Dynamically try to import and use a platform specific module.
+    try{
+        import al;
+    } except ImportError{
+        try{
+            import sunaudiodev;
+            return Play_Audio_sun();
+        } except ImportError{
+            try{
+                import Audio_mac;
+            } except ImportError{
+                raise error, 'no audio device';
+            } else{
+                return Audio_mac.Play_Audio_mac();
+    } } } else{
+        return Play_Audio_sgi();
+
+}
+} function test(fn = nil){
+    import sys;
+    if sys.argv[1:]{
+        fn = sys.argv[1];
+    } else{
+        fn = 'f:just samples:just.aif';
+    } import aifc;
+    af = aifc.open(fn, 'r');
+    print fn, af.getparams();
+    p = AudioDev();
+    p.setoutrate(af.getframerate());
+    p.setsampwidth(af.getsampwidth());
+    p.setnchannels(af.getnchannels());
+    BUFSIZ = af.getframerate()/af.getsampwidth()/af.getnchannels();
+    while 1{
+        data = af.readframes(BUFSIZ);
+        if not data{ break;}
+        print len(data);
+        p.writeframes(data);
+    } p.wait();
+
+}
+if __name__ == '__main__'{
+    test();
+
+}

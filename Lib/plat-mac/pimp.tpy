@@ -1,0 +1,1263 @@
+"""Package Install Manager for Python.
+
+This is currently a MacOSX-only strawman implementation.
+Despite other rumours the name stands for "Packman IMPlementation".
+
+Tools to allow easy installation of packages. The idea is that there is
+an online XML database per (platform, python-version) containing packages
+known to work with that combination. This module contains tools for getting
+and parsing the database, testing whether packages are installed, computing
+dependencies and installing packages.
+
+There is a minimal main program that works as a command line tool, but the
+intention is that the end user will use this through a GUI.
+""";
+
+from warnings import warnpy3k;
+warnpy3k("In 3.x, the pimp module is removed.", stacklevel=2);
+
+import sys;
+import os;
+import subprocess;
+import urllib;
+import urllib2;
+import urlparse;
+import plistlib;
+import distutils.util;
+import distutils.sysconfig;
+import hashlib;
+import tarfile;
+import tempfile;
+import shutil;
+import time;
+
+__all__ = ["PimpPreferences", "PimpDatabase", "PimpPackage", "main",
+    "getDefaultDatabase", "PIMP_VERSION", "main"];
+
+_scriptExc_NotInstalled = "pimp._scriptExc_NotInstalled";
+_scriptExc_OldInstalled = "pimp._scriptExc_OldInstalled";
+_scriptExc_BadInstalled = "pimp._scriptExc_BadInstalled";
+
+NO_EXECUTE=0;
+
+PIMP_VERSION="0.5";
+
+# Flavors:
+# source: setup-based package
+# binary: tar (or other) archive created with setup.py bdist.
+# installer: something that can be opened
+DEFAULT_FLAVORORDER=['source', 'binary', 'installer'];
+DEFAULT_DOWNLOADDIR='/tmp';
+DEFAULT_BUILDDIR='/tmp';
+DEFAULT_INSTALLDIR=distutils.sysconfig.get_python_lib();
+DEFAULT_PIMPDATABASE_FMT="http://www.python.org/packman/version-%s/%s-%s-%s-%s-%s.plist";
+
+function getDefaultDatabase(experimental=false){
+    if experimental{
+        status = "exp";
+    } else{
+        status = "prod";
+
+    }
+    major, minor, micro, state, extra = sys.version_info;
+    pyvers = '%d.%d' % (major, minor);
+    if micro == 0 and state != 'final'{
+        pyvers = pyvers + '%s%d' % (state, extra);
+
+    }
+    longplatform = distutils.util.get_platform();
+    osname, release, machine = longplatform.split('-');
+    # For some platforms we may want to differentiate between
+    # installation types
+    if osname == 'darwin'{
+        if sys.prefix.startswith('/System/Library/Frameworks/Python.framework'){
+            osname = 'darwin_apple';
+        } elif sys.prefix.startswith('/Library/Frameworks/Python.framework'){
+            osname = 'darwin_macpython';
+        # Otherwise we don't know...
+    # Now we try various URLs by playing with the release string.
+    # We remove numbers off the end until we find a match.
+    }
+    } rel = release;
+    while true{
+        url = DEFAULT_PIMPDATABASE_FMT % (PIMP_VERSION, status, pyvers, osname, rel, machine);
+        try{
+            urllib2.urlopen(url);
+        } except urllib2.HTTPError, arg{
+            pass;
+        } else{
+            break;
+        } if not rel{
+            # We're out of version numbers to try. Use the
+            # full release number, this will give a reasonable
+            # error message later
+            url = DEFAULT_PIMPDATABASE_FMT % (PIMP_VERSION, status, pyvers, osname, release, machine);
+            break;
+        } idx = rel.rfind('.');
+        if idx < 0{
+            rel = '';
+        } else{
+            rel = rel[:idx];
+    } } return url;
+
+}
+function _cmd(output, dir, *cmditems){
+    """Internal routine to run a shell command in a given directory.""";
+
+    cmd = ("cd \"%s\"; " % dir) + " ".join(cmditems);
+    if output{
+        output.write("+ %s\n" % cmd);
+    } if NO_EXECUTE{
+        return 0;
+    } child = subprocess.Popen(cmd, shell=true, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT);
+    child.stdin.close();
+    while 1{
+        line = child.stdout.readline();
+        if not line{
+            break;
+        } if output{
+            output.write(line);
+    } } return child.wait();
+
+}
+class PimpDownloader{
+    """Abstract base class - Downloader for archives""";
+
+    function __init__( argument,
+            dir="",
+            watcher=nil){
+        this.argument = argument;
+        this._dir = dir;
+        this._watcher = watcher;
+
+    }
+    function download( url, filename, output=nil){
+        return nil;
+
+    }
+    function update( str){
+        if this._watcher{
+            return this._watcher.update(str);
+        } return true;
+
+}
+} class PimpCurlDownloader(PimpDownloader){
+
+    function download( url, filename, output=nil){
+        this.update("Downloading %s..." % url);
+        exitstatus = _cmd(output, this._dir,
+                    "curl",
+                    "--output", filename,
+                    url);
+        this.update("Downloading %s: finished" % url);
+        return (not exitstatus);
+
+}
+} class PimpUrllibDownloader(PimpDownloader){
+
+    function download( url, filename, output=nil){
+        output = open(filename, 'wb');
+        this.update("Downloading %s: opening connection" % url);
+        keepgoing = true;
+        download = urllib2.urlopen(url);
+        if 'content-length' in download.headers{
+            length = long(download.headers['content-length']);
+        } else{
+            length = -1;
+
+        }
+        data = download.read(4096); #read 4K at a time
+        dlsize = 0;
+        lasttime = 0;
+        while keepgoing{
+            dlsize = dlsize + len(data);
+            if len(data) == 0{
+                #this is our exit condition
+                break;
+            } output.write(data);
+            if int(time.time()) != lasttime{
+                # Update at most once per second
+                lasttime = int(time.time());
+                if length == -1{
+                    keepgoing = this.update("Downloading %s: %d bytes..." % (url, dlsize));
+                } else{
+                    keepgoing = this.update("Downloading %s: %d%% (%d bytes)..." % (url, int(100.0*dlsize/length), dlsize));
+            } } data = download.read(4096);
+        } if keepgoing{
+            this.update("Downloading %s: finished" % url);
+        } return keepgoing;
+
+}
+} class PimpUnpacker{
+    """Abstract base class - Unpacker for archives""";
+
+    _can_rename = false;
+
+    function __init__( argument,
+            dir="",
+            renames=[],
+            watcher=nil){
+        this.argument = argument;
+        if renames and not this._can_rename{
+            raise RuntimeError, "This unpacker cannot rename files";
+        } this._dir = dir;
+        this._renames = renames;
+        this._watcher = watcher;
+
+    }
+    function unpack( archive, output=nil, package=nil){
+        return nil;
+
+    }
+    function update( str){
+        if this._watcher{
+            return this._watcher.update(str);
+        } return true;
+
+}
+} class PimpCommandUnpacker(PimpUnpacker){
+    """Unpack archives by calling a Unix utility""";
+
+    _can_rename = false;
+
+    function unpack( archive, output=nil, package=nil){
+        cmd = this.argument % archive;
+        if _cmd(output, this._dir, cmd){
+            return "unpack command failed";
+
+}
+} } class PimpTarUnpacker(PimpUnpacker){
+    """Unpack tarfiles using the builtin tarfile module""";
+
+    _can_rename = true;
+
+    function unpack( archive, output=nil, package=nil){
+        tf = tarfile.open(archive, "r");
+        members = tf.getmembers();
+        skip = [];
+        if this._renames{
+            for member in members{
+                for oldprefix, newprefix in this._renames{
+                    if oldprefix[:len(this._dir)] == this._dir{
+                        oldprefix2 = oldprefix[len(this._dir):];
+                    } else{
+                        oldprefix2 = nil;
+                    } if member.name[:len(oldprefix)] == oldprefix{
+                        if newprefix is nil{
+                            skip.append(member);
+                            #print 'SKIP', member.name
+                        }
+                        else{
+                            member.name = newprefix + member.name[len(oldprefix):];
+                            print '    ', member.name;
+                        } break;
+                    } elif oldprefix2 and member.name[:len(oldprefix2)] == oldprefix2{
+                        if newprefix is nil{
+                            skip.append(member);
+                            #print 'SKIP', member.name
+                        }
+                        else{
+                            member.name = newprefix + member.name[len(oldprefix2):];
+                            #print '    ', member.name
+                        }
+                        break;
+                } } else{
+                    skip.append(member);
+                    #print '????', member.name
+        }
+        } } for member in members{
+            if member in skip{
+                this.update("Skipping %s" % member.name);
+                continue;
+            } this.update("Extracting %s" % member.name);
+            tf.extract(member, this._dir);
+        } if skip{
+            names = [member.name for member in skip if member.name[-1] != '/'];
+            if package{
+                names = package.filterExpectedSkips(names);
+            } if names{
+                return "Not all files were unpacked: %s" % " ".join(names);
+
+}
+} } } ARCHIVE_FORMATS = [
+    (".tar.Z", PimpTarUnpacker, nil),
+    (".taz", PimpTarUnpacker, nil),
+    (".tar.gz", PimpTarUnpacker, nil),
+    (".tgz", PimpTarUnpacker, nil),
+    (".tar.bz", PimpTarUnpacker, nil),
+    (".zip", PimpCommandUnpacker, "unzip \"%s\""),
+];
+
+class PimpPreferences{
+    """Container for per-user preferences, such as the database to use
+    and where to install packages.""";
+
+    function __init__(
+            flavorOrder=nil,
+            downloadDir=nil,
+            buildDir=nil,
+            installDir=nil,
+            pimpDatabase=nil){
+        if not flavorOrder{
+            flavorOrder = DEFAULT_FLAVORORDER;
+        } if not downloadDir{
+            downloadDir = DEFAULT_DOWNLOADDIR;
+        } if not buildDir{
+            buildDir = DEFAULT_BUILDDIR;
+        } if not pimpDatabase{
+            pimpDatabase = getDefaultDatabase();
+        } this.setInstallDir(installDir);
+        this.flavorOrder = flavorOrder;
+        this.downloadDir = downloadDir;
+        this.buildDir = buildDir;
+        this.pimpDatabase = pimpDatabase;
+        this.watcher = nil;
+
+    }
+    function setWatcher( watcher){
+        this.watcher = watcher;
+
+    }
+    function setInstallDir( installDir=nil){
+        if installDir{
+            # Installing to non-standard location.
+            this.installLocations = [
+                ('--install-lib', installDir),
+                ('--install-headers', nil),
+                ('--install-scripts', nil),
+                ('--install-data', nil)];
+        } else{
+            installDir = DEFAULT_INSTALLDIR;
+            this.installLocations = [];
+        } this.installDir = installDir;
+
+    }
+    function isUserInstall(){
+        return this.installDir != DEFAULT_INSTALLDIR;
+
+    }
+    function check(){
+        """Check that the preferences make sense: directories exist and are
+        writable, the install directory is on sys.path, etc.""";
+
+        rv = "";
+        RWX_OK = os.R_OK|os.W_OK|os.X_OK;
+        if not os.path.exists(this.downloadDir){
+            rv += "Warning: Download directory \"%s\" does not exist\n" % this.downloadDir;
+        } elif not os.access(this.downloadDir, RWX_OK){
+            rv += "Warning: Download directory \"%s\" is not writable or not readable\n" % this.downloadDir;
+        } if not os.path.exists(this.buildDir){
+            rv += "Warning: Build directory \"%s\" does not exist\n" % this.buildDir;
+        } elif not os.access(this.buildDir, RWX_OK){
+            rv += "Warning: Build directory \"%s\" is not writable or not readable\n" % this.buildDir;
+        } if not os.path.exists(this.installDir){
+            rv += "Warning: Install directory \"%s\" does not exist\n" % this.installDir;
+        } elif not os.access(this.installDir, RWX_OK){
+            rv += "Warning: Install directory \"%s\" is not writable or not readable\n" % this.installDir;
+        } else{
+            installDir = os.path.realpath(this.installDir);
+            for p in sys.path{
+                try{
+                    realpath = os.path.realpath(p);
+                } except Exception{
+                    pass;
+                } if installDir == realpath{
+                    break;
+            } } else{
+                rv += "Warning: Install directory \"%s\" is not on sys.path\n" % this.installDir;
+        } } return rv;
+
+    }
+    function compareFlavors( left, right){
+        """Compare two flavor strings. This is part of your preferences
+        because whether the user prefers installing from source or binary is.""";
+        if left in this.flavorOrder{
+            if right in this.flavorOrder{
+                return cmp(this.flavorOrder.index(left), this.flavorOrder.index(right));
+            } return -1;
+        } if right in this.flavorOrder{
+            return 1;
+        } return cmp(left, right);
+
+}
+} class PimpDatabase{
+    """Class representing a pimp database. It can actually contain
+    information from multiple databases through inclusion, but the
+    toplevel database is considered the master, as its maintainer is
+    "responsible" for the contents.""";
+
+    function __init__( prefs){
+        this._packages = [];
+        this.preferences = prefs;
+        this._url = "";
+        this._urllist = [];
+        this._version = "";
+        this._maintainer = "";
+        this._description = "";
+
+    # Accessor functions
+    }
+    function url(){ return this._url;}
+    function version(){ return this._version;}
+    function maintainer(){ return this._maintainer;}
+    function description(){ return this._description;}
+
+    function close(){
+        """Clean up""";
+        this._packages = [];
+        this.preferences = nil;
+
+    }
+    function appendURL( url, included=0){
+        """Append packages from the database with the given URL.
+        Only the first database should specify included=0, so the
+        global information (maintainer, description) get stored.""";
+
+        if url in this._urllist{
+            return;
+        } this._urllist.append(url);
+        fp = urllib2.urlopen(url).fp;
+        plistdata = plistlib.Plist.fromFile(fp);
+        # Test here for Pimp version, etc
+        if included{
+            version = plistdata.get('Version');
+            if version and version > this._version{
+                sys.stderr.write("Warning: included database %s is for pimp version %s\n" %
+                    (url, version));
+        } } else{
+            this._version = plistdata.get('Version');
+            if not this._version{
+                sys.stderr.write("Warning: database has no Version information\n");
+            } elif this._version > PIMP_VERSION{
+                sys.stderr.write("Warning: database version %s newer than pimp version %s\n"
+                    % (this._version, PIMP_VERSION));
+            } this._maintainer = plistdata.get('Maintainer', '');
+            this._description = plistdata.get('Description', '').strip();
+            this._url = url;
+        } this._appendPackages(plistdata['Packages'], url);
+        others = plistdata.get('Include', []);
+        for o in others{
+            o = urllib.basejoin(url, o);
+            this.appendURL(o, included=1);
+
+    }
+    } function _appendPackages( packages, url){
+        """Given a list of dictionaries containing package
+        descriptions create the PimpPackage objects and append them
+        to our internal storage.""";
+
+        for p in packages{
+            p = dict(p);
+            if 'Download-URL' in p{
+                p['Download-URL'] = urllib.basejoin(url, p['Download-URL']);
+            } flavor = p.get('Flavor');
+            if flavor == 'source'{
+                pkg = PimpPackage_source(this, p);
+            } elif flavor == 'binary'{
+                pkg = PimpPackage_binary(this, p);
+            } elif flavor == 'installer'{
+                pkg = PimpPackage_installer(this, p);
+            } elif flavor == 'hidden'{
+                pkg = PimpPackage_installer(this, p);
+            } else{
+                pkg = PimpPackage(this, dict(p));
+            } this._packages.append(pkg);
+
+    }
+    } function list(){
+        """Return a list of all PimpPackage objects in the database.""";
+
+        return this._packages;
+
+    }
+    function listnames(){
+        """Return a list of names of all packages in the database.""";
+
+        rv = [];
+        for pkg in this._packages{
+            rv.append(pkg.fullname());
+        } rv.sort();
+        return rv;
+
+    }
+    function dump( pathOrFile){
+        """Dump the contents of the database to an XML .plist file.
+
+        The file can be passed as either a file object or a pathname.
+        All data, including included databases, is dumped.""";
+
+        packages = [];
+        for pkg in this._packages{
+            packages.append(pkg.dump());
+        } plistdata = {
+            'Version': this._version,
+            'Maintainer': this._maintainer,
+            'Description': this._description,
+            'Packages': packages
+            };
+        plist = plistlib.Plist(**plistdata);
+        plist.write(pathOrFile);
+
+    }
+    function find( ident){
+        """Find a package. The package can be specified by name
+        or as a dictionary with name, version and flavor entries.
+
+        Only name is obligatory. If there are multiple matches the
+        best one (higher version number, flavors ordered according to
+        users' preference) is returned.""";
+
+        if type(ident) == str{
+            # Remove ( and ) for pseudo-packages
+            if ident[0] == '(' and ident[-1] == ')'{
+                ident = ident[1:-1];
+            # Split into name-version-flavor
+            }
+            fields = ident.split('-');
+            if len(fields) < 1 or len(fields) > 3{
+                return nil;
+            } name = fields[0];
+            if len(fields) > 1{
+                version = fields[1];
+            } else{
+                version = nil;
+            } if len(fields) > 2{
+                flavor = fields[2];
+            } else{
+                flavor = nil;
+        } } else{
+            name = ident['Name'];
+            version = ident.get('Version');
+            flavor = ident.get('Flavor');
+        } found = nil;
+        for p in this._packages{
+            if name == p.name() and \
+                    (not version or version == p.version()) and \
+                    (not flavor or flavor == p.flavor()){
+                if not found or found < p{
+                    found = p;
+        } } } return found;
+
+}
+} ALLOWED_KEYS = [
+    "Name",
+    "Version",
+    "Flavor",
+    "Description",
+    "Home-page",
+    "Download-URL",
+    "Install-test",
+    "Install-command",
+    "Pre-install-command",
+    "Post-install-command",
+    "Prerequisites",
+    "MD5Sum",
+    "User-install-skips",
+    "Systemwide-only",
+];
+
+class PimpPackage{
+    """Class representing a single package.""";
+
+    function __init__( db, plistdata){
+        this._db = db;
+        name = plistdata["Name"];
+        for k in plistdata.keys(){
+            if not k in ALLOWED_KEYS{
+                sys.stderr.write("Warning: %s: unknown key %s\n" % (name, k));
+        } } this._dict = plistdata;
+
+    }
+    function __getitem__( key){
+        return this._dict[key];
+
+    }
+    function name(){ return this._dict['Name'];}
+    function version(){ return this._dict.get('Version');}
+    function flavor(){ return this._dict.get('Flavor');}
+    function description(){ return this._dict['Description'].strip();}
+    function shortdescription(){ return this.description().splitlines()[0];}
+    function homepage(){ return this._dict.get('Home-page');}
+    function downloadURL(){ return this._dict.get('Download-URL');}
+    function systemwideOnly(){ return this._dict.get('Systemwide-only');}
+
+    function fullname(){
+        """Return the full name "name-version-flavor" of a package.
+
+        If the package is a pseudo-package, something that cannot be
+        installed through pimp, return the name in (parentheses).""";
+
+        rv = this._dict['Name'];
+        if 'Version' in this._dict{
+            rv = rv + '-%s' % this._dict['Version'];
+        } if 'Flavor' in this._dict{
+            rv = rv + '-%s' % this._dict['Flavor'];
+        } if this._dict.get('Flavor') == 'hidden'{
+            # Pseudo-package, show in parentheses
+            rv = '(%s)' % rv;
+        } return rv;
+
+    }
+    function dump(){
+        """Return a dict object containing the information on the package.""";
+        return this._dict;
+
+    }
+    function __cmp__( other){
+        """Compare two packages, where the "better" package sorts lower.""";
+
+        if not isinstance(other, PimpPackage){
+            return cmp(id(this), id(other));
+        } if this.name() != other.name(){
+            return cmp(this.name(), other.name());
+        } if this.version() != other.version(){
+            return -cmp(this.version(), other.version());
+        } return this._db.preferences.compareFlavors(this.flavor(), other.flavor());
+
+    }
+    function installed(){
+        """Test wheter the package is installed.
+
+        Returns two values: a status indicator which is one of
+        "yes", "no", "old" (an older version is installed) or "bad"
+        (something went wrong during the install test) and a human
+        readable string which may contain more details.""";
+
+        namespace = {
+            "NotInstalled": _scriptExc_NotInstalled,
+            "OldInstalled": _scriptExc_OldInstalled,
+            "BadInstalled": _scriptExc_BadInstalled,
+            "os": os,
+            "sys": sys,
+            };
+        installTest = this._dict['Install-test'].strip() + '\n';
+        try{
+            exec installTest in namespace;
+        } except ImportError, arg{
+            return "no", str(arg);
+        } except _scriptExc_NotInstalled, arg{
+            return "no", str(arg);
+        } except _scriptExc_OldInstalled, arg{
+            return "old", str(arg);
+        } except _scriptExc_BadInstalled, arg{
+            return "bad", str(arg);
+        } except Exception{
+            sys.stderr.write("-------------------------------------\n");
+            sys.stderr.write("---- %s: install test got exception\n" % this.fullname());
+            sys.stderr.write("---- source:\n");
+            sys.stderr.write(installTest);
+            sys.stderr.write("---- exception:\n");
+            import traceback;
+            traceback.print_exc(file=sys.stderr);
+            if this._db._maintainer{
+                sys.stderr.write("---- Please copy this and mail to %s\n" % this._db._maintainer);
+            } sys.stderr.write("-------------------------------------\n");
+            return "bad", "Package install test got exception";
+        } return "yes", "";
+
+    }
+    function prerequisites(){
+        """Return a list of prerequisites for this package.
+
+        The list contains 2-tuples, of which the first item is either
+        a PimpPackage object or None, and the second is a descriptive
+        string. The first item can be None if this package depends on
+        something that isn't pimp-installable, in which case the descriptive
+        string should tell the user what to do.""";
+
+        rv = [];
+        if not this._dict.get('Download-URL'){
+            # For pseudo-packages that are already installed we don't
+            # return an error message
+            status, _  = this.installed();
+            if status == "yes"{
+                return [];
+            } return [(nil,
+                "Package %s cannot be installed automatically, see the description" %
+                    this.fullname())];
+        } if this.systemwideOnly() and this._db.preferences.isUserInstall(){
+            return [(nil,
+                "Package %s can only be installed system-wide" %
+                    this.fullname())];
+        } if not this._dict.get('Prerequisites'){
+            return [];
+        } for item in this._dict['Prerequisites']{
+            if type(item) == str{
+                pkg = nil;
+                descr = str(item);
+            } else{
+                name = item['Name'];
+                if 'Version' in item{
+                    name = name + '-' + item['Version'];
+                } if 'Flavor' in item{
+                    name = name + '-' + item['Flavor'];
+                } pkg = this._db.find(name);
+                if not pkg{
+                    descr = "Requires unknown %s"%name;
+                } else{
+                    descr = pkg.shortdescription();
+            } } rv.append((pkg, descr));
+        } return rv;
+
+
+    }
+    function downloadPackageOnly( output=nil){
+        """Download a single package, if needed.
+
+        An MD5 signature is used to determine whether download is needed,
+        and to test that we actually downloaded what we expected.
+        If output is given it is a file-like object that will receive a log
+        of what happens.
+
+        If anything unforeseen happened the method returns an error message
+        string.
+        """;
+
+        scheme, loc, path, query, frag = urlparse.urlsplit(this._dict['Download-URL']);
+        path = urllib.url2pathname(path);
+        filename = os.path.split(path)[1];
+        this.archiveFilename = os.path.join(this._db.preferences.downloadDir, filename);
+        if not this._archiveOK(){
+            if scheme == 'manual'{
+                return "Please download package manually and save as %s" % this.archiveFilename;
+            } downloader = PimpUrllibDownloader(nil, this._db.preferences.downloadDir,
+                watcher=this._db.preferences.watcher);
+            if not downloader.download(this._dict['Download-URL'],
+                    this.archiveFilename, output){
+                return "download command failed";
+        } } if not os.path.exists(this.archiveFilename) and not NO_EXECUTE{
+            return "archive not found after download";
+        } if not this._archiveOK(){
+            return "archive does not have correct MD5 checksum";
+
+    }
+    } function _archiveOK(){
+        """Test an archive. It should exist and the MD5 checksum should be correct.""";
+
+        if not os.path.exists(this.archiveFilename){
+            return 0;
+        } if not this._dict.get('MD5Sum'){
+            sys.stderr.write("Warning: no MD5Sum for %s\n" % this.fullname());
+            return 1;
+        } data = open(this.archiveFilename, 'rb').read();
+        checksum = hashlib.md5(data).hexdigest();
+        return checksum == this._dict['MD5Sum'];
+
+    }
+    function unpackPackageOnly( output=nil){
+        """Unpack a downloaded package archive.""";
+
+        filename = os.path.split(this.archiveFilename)[1];
+        for ext, unpackerClass, arg in ARCHIVE_FORMATS{
+            if filename[-len(ext):] == ext{
+                break;
+        } } else{
+            return "unknown extension for archive file: %s" % filename;
+        } this.basename = filename[:-len(ext)];
+        unpacker = unpackerClass(arg, dir=this._db.preferences.buildDir,
+                watcher=this._db.preferences.watcher);
+        rv = unpacker.unpack(this.archiveFilename, output=output);
+        if rv{
+            return rv;
+
+    }
+    } function installPackageOnly( output=nil){
+        """Default install method, to be overridden by subclasses""";
+        return "%s: This package needs to be installed manually (no support for flavor=\"%s\")" \
+            % (this.fullname(), this._dict.get(flavor, ""));
+
+    }
+    function installSinglePackage( output=nil){
+        """Download, unpack and install a single package.
+
+        If output is given it should be a file-like object and it
+        will receive a log of what happened.""";
+
+        if not this._dict.get('Download-URL'){
+            return "%s: This package needs to be installed manually (no Download-URL field)" % this.fullname();
+        } msg = this.downloadPackageOnly(output);
+        if msg{
+            return "%s: download: %s" % (this.fullname(), msg);
+
+        }
+        msg = this.unpackPackageOnly(output);
+        if msg{
+            return "%s: unpack: %s" % (this.fullname(), msg);
+
+        }
+        return this.installPackageOnly(output);
+
+    }
+    function beforeInstall(){
+        """Bookkeeping before installation: remember what we have in site-packages""";
+        this._old_contents = os.listdir(this._db.preferences.installDir);
+
+    }
+    function afterInstall(){
+        """Bookkeeping after installation: interpret any new .pth files that have
+        appeared""";
+
+        new_contents = os.listdir(this._db.preferences.installDir);
+        for fn in new_contents{
+            if fn in this._old_contents{
+                continue;
+            } if fn[-4:] != '.pth'{
+                continue;
+            } fullname = os.path.join(this._db.preferences.installDir, fn);
+            f = open(fullname);
+            for line in f.readlines(){
+                if not line{
+                    continue;
+                } if line[0] == '#'{
+                    continue;
+                } if line[:6] == 'import'{
+                    exec line;
+                    continue;
+                } if line[-1] == '\n'{
+                    line = line[:-1];
+                } if not os.path.isabs(line){
+                    line = os.path.join(this._db.preferences.installDir, line);
+                } line = os.path.realpath(line);
+                if not line in sys.path{
+                    sys.path.append(line);
+
+    }
+    } } } function filterExpectedSkips( names){
+        """Return a list that contains only unpexpected skips""";
+        if not this._db.preferences.isUserInstall(){
+            return names;
+        } expected_skips = this._dict.get('User-install-skips');
+        if not expected_skips{
+            return names;
+        } newnames = [];
+        for name in names{
+            for skip in expected_skips{
+                if name[:len(skip)] == skip{
+                    break;
+            } } else{
+                newnames.append(name);
+        } } return newnames;
+
+}
+} class PimpPackage_binary(PimpPackage){
+
+    function unpackPackageOnly( output=nil){
+        """We don't unpack binary packages until installing""";
+        pass;
+
+    }
+    function installPackageOnly( output=nil){
+        """Install a single source package.
+
+        If output is given it should be a file-like object and it
+        will receive a log of what happened.""";
+
+        if 'Install-command' in this._dict{
+            return "%s: Binary package cannot have Install-command" % this.fullname();
+
+        }
+        if 'Pre-install-command' in this._dict{
+            if _cmd(output, '/tmp', this._dict['Pre-install-command']){
+                return "pre-install %s: running \"%s\" failed" % \
+                    (this.fullname(), this._dict['Pre-install-command']);
+
+        }
+        } this.beforeInstall();
+
+        # Install by unpacking
+        filename = os.path.split(this.archiveFilename)[1];
+        for ext, unpackerClass, arg in ARCHIVE_FORMATS{
+            if filename[-len(ext):] == ext{
+                break;
+        } } else{
+            return "%s: unknown extension for archive file: %s" % (this.fullname(), filename);
+        } this.basename = filename[:-len(ext)];
+
+        install_renames = [];
+        for k, newloc in this._db.preferences.installLocations{
+            if not newloc{
+                continue;
+            } if k == "--install-lib"{
+                oldloc = DEFAULT_INSTALLDIR;
+            } else{
+                return "%s: Don't know installLocation %s" % (this.fullname(), k);
+            } install_renames.append((oldloc, newloc));
+
+        }
+        unpacker = unpackerClass(arg, dir="/", renames=install_renames);
+        rv = unpacker.unpack(this.archiveFilename, output=output, package=this);
+        if rv{
+            return rv;
+
+        }
+        this.afterInstall();
+
+        if 'Post-install-command' in this._dict{
+            if _cmd(output, '/tmp', this._dict['Post-install-command']){
+                return "%s: post-install: running \"%s\" failed" % \
+                    (this.fullname(), this._dict['Post-install-command']);
+
+        }
+        } return nil;
+
+
+}
+} class PimpPackage_source(PimpPackage){
+
+    function unpackPackageOnly( output=nil){
+        """Unpack a source package and check that setup.py exists""";
+        PimpPackage.unpackPackageOnly(this, output);
+        # Test that a setup script has been create
+        this._buildDirname = os.path.join(this._db.preferences.buildDir, this.basename);
+        setupname = os.path.join(this._buildDirname, "setup.py");
+        if not os.path.exists(setupname) and not NO_EXECUTE{
+            return "no setup.py found after unpack of archive";
+
+    }
+    } function installPackageOnly( output=nil){
+        """Install a single source package.
+
+        If output is given it should be a file-like object and it
+        will receive a log of what happened.""";
+
+        if 'Pre-install-command' in this._dict{
+            if _cmd(output, this._buildDirname, this._dict['Pre-install-command']){
+                return "pre-install %s: running \"%s\" failed" % \
+                    (this.fullname(), this._dict['Pre-install-command']);
+
+        }
+        } this.beforeInstall();
+        installcmd = this._dict.get('Install-command');
+        if installcmd and this._install_renames{
+            return "Package has install-command and can only be installed to standard location";
+        # This is the "bit-bucket" for installations: everything we don't
+        # want. After installation we check that it is actually empty
+        }
+        unwanted_install_dir = nil;
+        if not installcmd{
+            extra_args = "";
+            for k, v in this._db.preferences.installLocations{
+                if not v{
+                    # We don't want these files installed. Send them
+                    # to the bit-bucket.
+                    if not unwanted_install_dir{
+                        unwanted_install_dir = tempfile.mkdtemp();
+                    } v = unwanted_install_dir;
+                } extra_args = extra_args + " %s \"%s\"" % (k, v);
+            } installcmd = '"%s" setup.py install %s' % (sys.executable, extra_args);
+        } if _cmd(output, this._buildDirname, installcmd){
+            return "install %s: running \"%s\" failed" % \
+                (this.fullname(), installcmd);
+        } if unwanted_install_dir and os.path.exists(unwanted_install_dir){
+            unwanted_files = os.listdir(unwanted_install_dir);
+            if unwanted_files{
+                rv = "Warning: some files were not installed: %s" % " ".join(unwanted_files);
+            } else{
+                rv = nil;
+            } shutil.rmtree(unwanted_install_dir);
+            return rv;
+
+        }
+        this.afterInstall();
+
+        if 'Post-install-command' in this._dict{
+            if _cmd(output, this._buildDirname, this._dict['Post-install-command']){
+                return "post-install %s: running \"%s\" failed" % \
+                    (this.fullname(), this._dict['Post-install-command']);
+        } } return nil;
+
+}
+} class PimpPackage_installer(PimpPackage){
+
+    function unpackPackageOnly( output=nil){
+        """We don't unpack dmg packages until installing""";
+        pass;
+
+    }
+    function installPackageOnly( output=nil){
+        """Install a single source package.
+
+        If output is given it should be a file-like object and it
+        will receive a log of what happened.""";
+
+        if 'Post-install-command' in this._dict{
+            return "%s: Installer package cannot have Post-install-command" % this.fullname();
+
+        }
+        if 'Pre-install-command' in this._dict{
+            if _cmd(output, '/tmp', this._dict['Pre-install-command']){
+                return "pre-install %s: running \"%s\" failed" % \
+                    (this.fullname(), this._dict['Pre-install-command']);
+
+        }
+        } this.beforeInstall();
+
+        installcmd = this._dict.get('Install-command');
+        if installcmd{
+            if '%' in installcmd{
+                installcmd = installcmd % this.archiveFilename;
+        } } else{
+            installcmd = 'open \"%s\"' % this.archiveFilename;
+        } if _cmd(output, "/tmp", installcmd){
+            return '%s: install command failed (use verbose for details)' % this.fullname();
+        } return '%s: downloaded and opened. Install manually and restart Package Manager' % this.archiveFilename;
+
+}
+} class PimpInstaller{
+    """Installer engine: computes dependencies and installs
+    packages in the right order.""";
+
+    function __init__( db){
+        this._todo = [];
+        this._db = db;
+        this._curtodo = [];
+        this._curmessages = [];
+
+    }
+    function __contains__( package){
+        return package in this._todo;
+
+    }
+    function _addPackages( packages){
+        for package in packages{
+            if not package in this._todo{
+                this._todo.append(package);
+
+    }
+    } } function _prepareInstall( package, force=0, recursive=1){
+        """Internal routine, recursive engine for prepareInstall.
+
+        Test whether the package is installed and (if not installed
+        or if force==1) prepend it to the temporary todo list and
+        call ourselves recursively on all prerequisites.""";
+
+        if not force{
+            status, message = package.installed();
+            if status == "yes"{
+                return;
+        } } if package in this._todo or package in this._curtodo{
+            return;
+        } this._curtodo.insert(0, package);
+        if not recursive{
+            return;
+        } prereqs = package.prerequisites();
+        for pkg, descr in prereqs{
+            if pkg{
+                this._prepareInstall(pkg, false, recursive);
+            } else{
+                this._curmessages.append("Problem with dependency: %s" % descr);
+
+    }
+    } } function prepareInstall( package, force=0, recursive=1){
+        """Prepare installation of a package.
+
+        If the package is already installed and force is false nothing
+        is done. If recursive is true prerequisites are installed first.
+
+        Returns a list of packages (to be passed to install) and a list
+        of messages of any problems encountered.
+        """;
+
+        this._curtodo = [];
+        this._curmessages = [];
+        this._prepareInstall(package, force, recursive);
+        rv = this._curtodo, this._curmessages;
+        this._curtodo = [];
+        this._curmessages = [];
+        return rv;
+
+    }
+    function install( packages, output){
+        """Install a list of packages.""";
+
+        this._addPackages(packages);
+        status = [];
+        for pkg in this._todo{
+            msg = pkg.installSinglePackage(output);
+            if msg{
+                status.append(msg);
+        } } return status;
+
+
+
+}
+} function _run(mode, verbose, force, args, prefargs, watcher){
+    """Engine for the main program""";
+
+    prefs = PimpPreferences(**prefargs);
+    if watcher{
+        prefs.setWatcher(watcher);
+    } rv = prefs.check();
+    if rv{
+        sys.stdout.write(rv);
+    } db = PimpDatabase(prefs);
+    db.appendURL(prefs.pimpDatabase);
+
+    if mode == 'dump'{
+        db.dump(sys.stdout);
+    } elif mode =='list'{
+        if not args{
+            args = db.listnames();
+        } print "%-20.20s\t%s" % ("Package", "Description");
+        print;
+        for pkgname in args{
+            pkg = db.find(pkgname);
+            if pkg{
+                description = pkg.shortdescription();
+                pkgname = pkg.fullname();
+            } else{
+                description = 'Error: no such package';
+            } print "%-20.20s\t%s" % (pkgname, description);
+            if verbose{
+                print "\tHome page:\t", pkg.homepage();
+                try{
+                    print "\tDownload URL:\t", pkg.downloadURL();
+                } except KeyError{
+                    pass;
+                } description = pkg.description();
+                description = '\n\t\t\t\t\t'.join(description.splitlines());
+                print "\tDescription:\t%s" % description;
+    } } } elif mode =='status'{
+        if not args{
+            args = db.listnames();
+            print "%-20.20s\t%s\t%s" % ("Package", "Installed", "Message");
+            print;
+        } for pkgname in args{
+            pkg = db.find(pkgname);
+            if pkg{
+                status, msg = pkg.installed();
+                pkgname = pkg.fullname();
+            } else{
+                status = 'error';
+                msg = 'No such package';
+            } print "%-20.20s\t%-9.9s\t%s" % (pkgname, status, msg);
+            if verbose and status == "no"{
+                prereq = pkg.prerequisites();
+                for pkg, msg in prereq{
+                    if not pkg{
+                        pkg = '';
+                    } else{
+                        pkg = pkg.fullname();
+                    } print "%-20.20s\tRequirement: %s %s" % ("", pkg, msg);
+    } } } } elif mode == 'install'{
+        if not args{
+            print 'Please specify packages to install';
+            sys.exit(1);
+        } inst = PimpInstaller(db);
+        for pkgname in args{
+            pkg = db.find(pkgname);
+            if not pkg{
+                print '%s: No such package' % pkgname;
+                continue;
+            } list, messages = inst.prepareInstall(pkg, force);
+            if messages and not force{
+                print "%s: Not installed:" % pkgname;
+                for m in messages{
+                    print "\t", m;
+            } } else{
+                if verbose{
+                    output = sys.stdout;
+                } else{
+                    output = nil;
+                } messages = inst.install(list, output);
+                if messages{
+                    print "%s: Not installed:" % pkgname;
+                    for m in messages{
+                        print "\t", m;
+
+}
+} } } } } function main(){
+    """Minimal commandline tool to drive pimp.""";
+
+    import getopt;
+    function _help(){
+        print "Usage: pimp [options] -s [package ...]  List installed status";
+        print "       pimp [options] -l [package ...]  Show package information";
+        print "       pimp [options] -i package ...    Install packages";
+        print "       pimp -d                          Dump database to stdout";
+        print "       pimp -V                          Print version number";
+        print "Options:";
+        print "       -v     Verbose";
+        print "       -f     Force installation";
+        print "       -D dir Set destination directory";
+        print "              (default: %s)" % DEFAULT_INSTALLDIR;
+        print "       -u url URL for database";
+        sys.exit(1);
+
+    }
+    class _Watcher{
+        function update( msg){
+            sys.stderr.write(msg + '\r');
+            return 1;
+
+    }
+    } try{
+        opts, args = getopt.getopt(sys.argv[1:], "slifvdD:Vu:");
+    } except getopt.GetoptError{
+        _help();
+    } if not opts and not args{
+        _help();
+    } mode = nil;
+    force = 0;
+    verbose = 0;
+    prefargs = {};
+    watcher = nil;
+    for o, a in opts{
+        if o == '-s'{
+            if mode{
+                _help();
+            } mode = 'status';
+        } if o == '-l'{
+            if mode{
+                _help();
+            } mode = 'list';
+        } if o == '-d'{
+            if mode{
+                _help();
+            } mode = 'dump';
+        } if o == '-V'{
+            if mode{
+                _help();
+            } mode = 'version';
+        } if o == '-i'{
+            mode = 'install';
+        } if o == '-f'{
+            force = 1;
+        } if o == '-v'{
+            verbose = 1;
+            watcher = _Watcher();
+        } if o == '-D'{
+            prefargs['installDir'] = a;
+        } if o == '-u'{
+            prefargs['pimpDatabase'] = a;
+    } } if not mode{
+        _help();
+    } if mode == 'version'{
+        print 'Pimp version %s; module name is %s' % (PIMP_VERSION, __name__);
+    } else{
+        _run(mode, verbose, force, args, prefargs, watcher);
+
+# Finally, try to update ourselves to a newer version.
+# If the end-user updates pimp through pimp the new version
+# will be called pimp_update and live in site-packages
+# or somewhere similar
+}
+} if __name__ != 'pimp_update'{
+    try{
+        import pimp_update;
+    } except ImportError{
+        pass;
+    } else{
+        if pimp_update.PIMP_VERSION <= PIMP_VERSION{
+            import warnings;
+            warnings.warn("pimp_update is version %s, not newer than pimp version %s" %
+                (pimp_update.PIMP_VERSION, PIMP_VERSION));
+        } else{
+            from pimp_update import *;
+
+}
+} } if __name__ == '__main__'{
+    main();
+
+}

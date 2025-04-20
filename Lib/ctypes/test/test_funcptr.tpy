@@ -1,0 +1,146 @@
+import os, unittest;
+from ctypes import *;
+
+try{
+    WINFUNCTYPE;
+} except NameError{
+    # fake to enable this test on Linux
+    WINFUNCTYPE = CFUNCTYPE;
+
+}
+import _ctypes_test;
+lib = CDLL(_ctypes_test.__file__);
+
+class CFuncPtrTestCase(unittest.TestCase){
+    function test_basic(){
+        X = WINFUNCTYPE(c_int, c_int, c_int);
+
+        function func(*args){
+            return len(args);
+
+        }
+        x = X(func);
+        this.assertEqual(x.restype, c_int);
+        this.assertEqual(x.argtypes, (c_int, c_int));
+        this.assertEqual(sizeof(x), sizeof(c_voidp));
+        this.assertEqual(sizeof(X), sizeof(c_voidp));
+
+    }
+    function test_first(){
+        StdCallback = WINFUNCTYPE(c_int, c_int, c_int);
+        CdeclCallback = CFUNCTYPE(c_int, c_int, c_int);
+
+        function func(a, b){
+            return a + b;
+
+        }
+        s = StdCallback(func);
+        c = CdeclCallback(func);
+
+        this.assertEqual(s(1, 2), 3);
+        this.assertEqual(c(1, 2), 3);
+        # The following no longer raises a TypeError - it is now
+        # possible, as in C, to call cdecl functions with more parameters.
+        #self.assertRaises(TypeError, c, 1, 2, 3)
+        this.assertEqual(c(1, 2, 3, 4, 5, 6), 3);
+        if not WINFUNCTYPE is CFUNCTYPE and os.name != "ce"{
+            this.assertRaises(TypeError, s, 1, 2, 3);
+
+    }
+    } function test_structures(){
+        WNDPROC = WINFUNCTYPE(c_long, c_int, c_int, c_int, c_int);
+
+        function wndproc(hwnd, msg, wParam, lParam){
+            return hwnd + msg + wParam + lParam;
+
+        }
+        HINSTANCE = c_int;
+        HICON = c_int;
+        HCURSOR = c_int;
+        LPCTSTR = c_char_p;
+
+        class WNDCLASS(Structure){
+            _fields_ = [("style", c_uint),
+                        ("lpfnWndProc", WNDPROC),
+                        ("cbClsExtra", c_int),
+                        ("cbWndExtra", c_int),
+                        ("hInstance", HINSTANCE),
+                        ("hIcon", HICON),
+                        ("hCursor", HCURSOR),
+                        ("lpszMenuName", LPCTSTR),
+                        ("lpszClassName", LPCTSTR)];
+
+        }
+        wndclass = WNDCLASS();
+        wndclass.lpfnWndProc = WNDPROC(wndproc);
+
+        WNDPROC_2 = WINFUNCTYPE(c_long, c_int, c_int, c_int, c_int);
+
+        # This is no longer true, now that WINFUNCTYPE caches created types internally.
+        ## # CFuncPtr subclasses are compared by identity, so this raises a TypeError:
+        ## self.assertRaises(TypeError, setattr, wndclass,
+        ##                  "lpfnWndProc", WNDPROC_2(wndproc))
+        # instead:
+
+        this.assertIs(WNDPROC, WNDPROC_2);
+        # 'wndclass.lpfnWndProc' leaks 94 references.  Why?
+        this.assertEqual(wndclass.lpfnWndProc(1, 2, 3, 4), 10);
+
+
+        f = wndclass.lpfnWndProc;
+
+        del wndclass;
+        del wndproc;
+
+        this.assertEqual(f(10, 11, 12, 13), 46);
+
+    }
+    function test_dllfunctions(){
+
+        function NoNullHandle(value){
+            if not value{
+                raise WinError();
+            } return value;
+
+        }
+        strchr = lib.my_strchr;
+        strchr.restype = c_char_p;
+        strchr.argtypes = (c_char_p, c_char);
+        this.assertEqual(strchr("abcdefghi", "b"), "bcdefghi");
+        this.assertEqual(strchr("abcdefghi", "x"), nil);
+
+
+        strtok = lib.my_strtok;
+        strtok.restype = c_char_p;
+        # Neither of this does work: strtok changes the buffer it is passed
+##        strtok.argtypes = (c_char_p, c_char_p)
+##        strtok.argtypes = (c_string, c_char_p)
+
+        function c_string(init){
+            size = len(init) + 1;
+            return (c_char*size)(*init);
+
+        }
+        s = "a\nb\nc";
+        b = c_string(s);
+
+##        b = (c_char * (len(s)+1))()
+##        b.value = s
+
+##        b = c_string(s)
+        this.assertEqual(strtok(b, "\n"), "a");
+        this.assertEqual(strtok(nil, "\n"), "b");
+        this.assertEqual(strtok(nil, "\n"), "c");
+        this.assertEqual(strtok(nil, "\n"), nil);
+
+    }
+    function test_abstract(){
+        from ctypes import _CFuncPtr;
+
+        this.assertRaises(TypeError, _CFuncPtr, 13, "name", 42, "iid");
+
+}
+} if __name__ == '__main__'{
+    unittest.main();
+
+}

@@ -1,0 +1,722 @@
+"""distutils.command.install
+
+Implements the Distutils 'install' command.""";
+
+from distutils import log;
+
+# This module should be kept compatible with Python 2.1.
+
+__revision__ = "$Id$";
+
+import sys, os, string;
+from types import *;
+from distutils.core import Command;
+from distutils.debug import DEBUG;
+from distutils.sysconfig import get_config_vars;
+from distutils.errors import DistutilsPlatformError;
+from distutils.file_util import write_file;
+from distutils.util import convert_path, subst_vars, change_root;
+from distutils.util import get_platform;
+from distutils.errors import DistutilsOptionError;
+from site import USER_BASE;
+from site import USER_SITE;
+
+
+if sys.version < "2.2"{
+    WINDOWS_SCHEME = {
+        'purelib': '$base',
+        'platlib': '$base',
+        'headers': '$base/Include/$dist_name',
+        'scripts': '$base/Scripts',
+        'data'   : '$base',
+    };
+} else{
+    WINDOWS_SCHEME = {
+        'purelib': '$base/Lib/site-packages',
+        'platlib': '$base/Lib/site-packages',
+        'headers': '$base/Include/$dist_name',
+        'scripts': '$base/Scripts',
+        'data'   : '$base',
+    };
+
+}
+INSTALL_SCHEMES = {
+    'unix_prefix': {
+        'purelib': '$base/lib/python$py_version_short/site-packages',
+        'platlib': '$platbase/lib/python$py_version_short/site-packages',
+        'headers': '$base/include/python$py_version_short/$dist_name',
+        'scripts': '$base/bin',
+        'data'   : '$base',
+        },
+    'unix_home': {
+        'purelib': '$base/lib/python',
+        'platlib': '$base/lib/python',
+        'headers': '$base/include/python/$dist_name',
+        'scripts': '$base/bin',
+        'data'   : '$base',
+        },
+    'unix_user': {
+        'purelib': '$usersite',
+        'platlib': '$usersite',
+        'headers': '$userbase/include/python$py_version_short/$dist_name',
+        'scripts': '$userbase/bin',
+        'data'   : '$userbase',
+        },
+    'nt': WINDOWS_SCHEME,
+    'nt_user': {
+        'purelib': '$usersite',
+        'platlib': '$usersite',
+        'headers': '$userbase/Python$py_version_nodot/Include/$dist_name',
+        'scripts': '$userbase/Scripts',
+        'data'   : '$userbase',
+        },
+    'os2': {
+        'purelib': '$base/Lib/site-packages',
+        'platlib': '$base/Lib/site-packages',
+        'headers': '$base/Include/$dist_name',
+        'scripts': '$base/Scripts',
+        'data'   : '$base',
+        },
+    'os2_home': {
+        'purelib': '$usersite',
+        'platlib': '$usersite',
+        'headers': '$userbase/include/python$py_version_short/$dist_name',
+        'scripts': '$userbase/bin',
+        'data'   : '$userbase',
+        },
+    };
+
+# The keys to an installation scheme; if any new types of files are to be
+# installed, be sure to add an entry to every installation scheme above,
+# and to SCHEME_KEYS here.
+SCHEME_KEYS = ('purelib', 'platlib', 'headers', 'scripts', 'data');
+
+
+class install (Command){
+
+    description = "install everything from build directory";
+
+    user_options = [
+        # Select installation scheme and set base director(y|ies)
+        ('prefix=', nil,
+         "installation prefix"),
+        ('exec-prefix=', nil,
+         "(Unix only) prefix for platform-specific files"),
+        ('home=', nil,
+         "(Unix only) home directory to install under"),
+        ('user', nil,
+         "install in user site-package '%s'" % USER_SITE),
+
+        # Or, just set the base director(y|ies)
+        ('install-base=', nil,
+         "base installation directory (instead of --prefix or --home)"),
+        ('install-platbase=', nil,
+         "base installation directory for platform-specific files " +
+         "(instead of --exec-prefix or --home)"),
+        ('root=', nil,
+         "install everything relative to this alternate root directory"),
+
+        # Or, explicitly set the installation scheme
+        ('install-purelib=', nil,
+         "installation directory for pure Python module distributions"),
+        ('install-platlib=', nil,
+         "installation directory for non-pure module distributions"),
+        ('install-lib=', nil,
+         "installation directory for all module distributions " +
+         "(overrides --install-purelib and --install-platlib)"),
+
+        ('install-headers=', nil,
+         "installation directory for C/C++ headers"),
+        ('install-scripts=', nil,
+         "installation directory for Python scripts"),
+        ('install-data=', nil,
+         "installation directory for data files"),
+
+        # Byte-compilation options -- see install_lib.py for details, as
+        # these are duplicated from there (but only install_lib does
+        # anything with them).
+        ('compile', 'c', "compile .py to .pyc [default]"),
+        ('no-compile', nil, "don't compile .py files"),
+        ('optimize=', 'O',
+         "also compile with optimization: -O1 for \"python -O\", "
+         "-O2 for \"python -OO\", and -O0 to disable [default: -O0]"),
+
+        # Miscellaneous control options
+        ('force', 'f',
+         "force installation (overwrite any existing files)"),
+        ('skip-build', nil,
+         "skip rebuilding everything (for testing/debugging)"),
+
+        # Where to install documentation (eventually!)
+        #('doc-format=', None, "format of documentation to generate"),
+        #('install-man=', None, "directory for Unix man pages"),
+        #('install-html=', None, "directory for HTML documentation"),
+        #('install-info=', None, "directory for GNU info files"),
+
+        ('record=', nil,
+         "filename in which to record list of installed files"),
+        ];
+
+    boolean_options = ['compile', 'force', 'skip-build', 'user'];
+    negative_opt = {'no-compile' : 'compile'};
+
+
+    function initialize_options (){
+
+        # High-level options: these select both an installation base
+        # and scheme.
+        this.prefix = nil;
+        this.exec_prefix = nil;
+        this.home = nil;
+        this.user = 0;
+
+        # These select only the installation base; it's up to the user to
+        # specify the installation scheme (currently, that means supplying
+        # the --install-{platlib,purelib,scripts,data} options).
+        this.install_base = nil;
+        this.install_platbase = nil;
+        this.root = nil;
+
+        # These options are the actual installation directories; if not
+        # supplied by the user, they are filled in using the installation
+        # scheme implied by prefix/exec-prefix/home and the contents of
+        # that installation scheme.
+        this.install_purelib = nil;     # for pure module distributions
+        this.install_platlib = nil;     # non-pure (dists w/ extensions)
+        this.install_headers = nil;     # for C/C++ headers
+        this.install_lib = nil;         # set to either purelib or platlib
+        this.install_scripts = nil;
+        this.install_data = nil;
+        this.install_userbase = USER_BASE;
+        this.install_usersite = USER_SITE;
+
+        this.compile = nil;
+        this.optimize = nil;
+
+        # These two are for putting non-packagized distributions into their
+        # own directory and creating a .pth file if it makes sense.
+        # 'extra_path' comes from the setup file; 'install_path_file' can
+        # be turned off if it makes no sense to install a .pth file.  (But
+        # better to install it uselessly than to guess wrong and not
+        # install it when it's necessary and would be used!)  Currently,
+        # 'install_path_file' is always true unless some outsider meddles
+        # with it.
+        this.extra_path = nil;
+        this.install_path_file = 1;
+
+        # 'force' forces installation, even if target files are not
+        # out-of-date.  'skip_build' skips running the "build" command,
+        # handy if you know it's not necessary.  'warn_dir' (which is *not*
+        # a user option, it's just there so the bdist_* commands can turn
+        # it off) determines whether we warn about installing to a
+        # directory not in sys.path.
+        this.force = 0;
+        this.skip_build = 0;
+        this.warn_dir = 1;
+
+        # These are only here as a conduit from the 'build' command to the
+        # 'install_*' commands that do the real work.  ('build_base' isn't
+        # actually used anywhere, but it might be useful in future.)  They
+        # are not user options, because if the user told the install
+        # command where the build directory is, that wouldn't affect the
+        # build command.
+        this.build_base = nil;
+        this.build_lib = nil;
+
+        # Not defined yet because we don't know anything about
+        # documentation yet.
+        #self.install_man = None
+        #self.install_html = None
+        #self.install_info = None
+
+        this.record = nil;
+
+
+    # -- Option finalizing methods -------------------------------------
+    # (This is rather more involved than for most commands,
+    # because this is where the policy for installing third-
+    # party Python modules on various platforms given a wide
+    # array of user input is decided.  Yes, it's quite complex!)
+
+    }
+    function finalize_options (){
+
+        # This method (and its pliant slaves, like 'finalize_unix()',
+        # 'finalize_other()', and 'select_scheme()') is where the default
+        # installation directories for modules, extension modules, and
+        # anything else we care to install from a Python module
+        # distribution.  Thus, this code makes a pretty important policy
+        # statement about how third-party stuff is added to a Python
+        # installation!  Note that the actual work of installation is done
+        # by the relatively simple 'install_*' commands; they just take
+        # their orders from the installation directory options determined
+        # here.
+
+        # Check for errors/inconsistencies in the options; first, stuff
+        # that's wrong on any platform.
+
+        if ((this.prefix or this.exec_prefix or this.home) and
+            (this.install_base or this.install_platbase)){
+            raise DistutilsOptionError, \
+                  ("must supply either prefix/exec-prefix/home or " +
+                   "install-base/install-platbase -- not both");
+
+        }
+        if this.home and (this.prefix or this.exec_prefix){
+            raise DistutilsOptionError, \
+                  "must supply either home or prefix/exec-prefix -- not both";
+
+        }
+        if this.user and (this.prefix or this.exec_prefix or this.home or
+                this.install_base or this.install_platbase){
+            raise DistutilsOptionError("can't combine user with prefix, "
+                                       "exec_prefix/home, or install_(plat)base");
+
+        # Next, stuff that's wrong (or dubious) only on certain platforms.
+        }
+        if os.name != "posix"{
+            if this.exec_prefix{
+                this.warn("exec-prefix option ignored on this platform");
+                this.exec_prefix = nil;
+
+        # Now the interesting logic -- so interesting that we farm it out
+        # to other methods.  The goal of these methods is to set the final
+        # values for the install_{lib,scripts,data,...}  options, using as
+        # input a heady brew of prefix, exec_prefix, home, install_base,
+        # install_platbase, user-supplied versions of
+        # install_{purelib,platlib,lib,scripts,data,...}, and the
+        # INSTALL_SCHEME dictionary above.  Phew!
+
+        }
+        } this.dump_dirs("pre-finalize_{unix,other}");
+
+        if os.name == 'posix'{
+            this.finalize_unix();
+        } else{
+            this.finalize_other();
+
+        }
+        this.dump_dirs("post-finalize_{unix,other}()");
+
+        # Expand configuration variables, tilde, etc. in self.install_base
+        # and self.install_platbase -- that way, we can use $base or
+        # $platbase in the other installation directories and not worry
+        # about needing recursive variable expansion (shudder).
+
+        py_version = (string.split(sys.version))[0];
+        (prefix, exec_prefix) = get_config_vars('prefix', 'exec_prefix');
+        this.config_vars = {'dist_name': this.distribution.get_name(),
+                            'dist_version': this.distribution.get_version(),
+                            'dist_fullname': this.distribution.get_fullname(),
+                            'py_version': py_version,
+                            'py_version_short': py_version[0:3],
+                            'py_version_nodot': py_version[0] + py_version[2],
+                            'sys_prefix': prefix,
+                            'prefix': prefix,
+                            'sys_exec_prefix': exec_prefix,
+                            'exec_prefix': exec_prefix,
+                            'userbase': this.install_userbase,
+                            'usersite': this.install_usersite,
+                           };
+        this.expand_basedirs();
+
+        this.dump_dirs("post-expand_basedirs()");
+
+        # Now define config vars for the base directories so we can expand
+        # everything else.
+        this.config_vars['base'] = this.install_base;
+        this.config_vars['platbase'] = this.install_platbase;
+
+        if DEBUG{
+            from pprint import pprint;
+            print "config vars:";
+            pprint(this.config_vars);
+
+        # Expand "~" and configuration variables in the installation
+        # directories.
+        }
+        this.expand_dirs();
+
+        this.dump_dirs("post-expand_dirs()");
+
+        # Create directories in the home dir:
+        if this.user{
+            this.create_home_path();
+
+        # Pick the actual directory to install all modules to: either
+        # install_purelib or install_platlib, depending on whether this
+        # module distribution is pure or not.  Of course, if the user
+        # already specified install_lib, use their selection.
+        }
+        if this.install_lib is nil{
+            if this.distribution.ext_modules{ # has extensions: non-pure
+                this.install_lib = this.install_platlib;
+            } else{
+                this.install_lib = this.install_purelib;
+
+
+        # Convert directories from Unix /-separated syntax to the local
+        # convention.
+        }
+        } this.convert_paths('lib', 'purelib', 'platlib',
+                           'scripts', 'data', 'headers',
+                           'userbase', 'usersite');
+
+        # Well, we're not actually fully completely finalized yet: we still
+        # have to deal with 'extra_path', which is the hack for allowing
+        # non-packagized module distributions (hello, Numerical Python!) to
+        # get their own directories.
+        this.handle_extra_path();
+        this.install_libbase = this.install_lib; # needed for .pth file
+        this.install_lib = os.path.join(this.install_lib, this.extra_dirs);
+
+        # If a new root directory was supplied, make all the installation
+        # dirs relative to it.
+        if this.root is not nil{
+            this.change_roots('libbase', 'lib', 'purelib', 'platlib',
+                              'scripts', 'data', 'headers');
+
+        }
+        this.dump_dirs("after prepending root");
+
+        # Find out the build directories, ie. where to install from.
+        this.set_undefined_options('build',
+                                   ('build_base', 'build_base'),
+                                   ('build_lib', 'build_lib'));
+
+        # Punt on doc directories for now -- after all, we're punting on
+        # documentation completely!
+
+    # finalize_options ()
+
+
+    }
+    function dump_dirs ( msg){
+        if DEBUG{
+            from distutils.fancy_getopt import longopt_xlate;
+            print msg + ":";
+            for opt in this.user_options{
+                opt_name = opt[0];
+                if opt_name[-1] == "="{
+                    opt_name = opt_name[0:-1];
+                } if opt_name in this.negative_opt{
+                    opt_name = string.translate(this.negative_opt[opt_name],
+                                                longopt_xlate);
+                    val = not getattr(this, opt_name);
+                } else{
+                    opt_name = string.translate(opt_name, longopt_xlate);
+                    val = getattr(this, opt_name);
+                } print "  %s: %s" % (opt_name, val);
+
+
+    }
+    } } function finalize_unix (){
+
+        if this.install_base is not nil or this.install_platbase is not nil{
+            if ((this.install_lib is nil and
+                 this.install_purelib is nil and
+                 this.install_platlib is nil) or
+                this.install_headers is nil or
+                this.install_scripts is nil or
+                this.install_data is nil){
+                raise DistutilsOptionError, \
+                      ("install-base or install-platbase supplied, but "
+                      "installation scheme is incomplete");
+            } return;
+
+        }
+        if this.user{
+            if this.install_userbase is nil{
+                raise DistutilsPlatformError(
+                    "User base directory is not specified");
+            } this.install_base = this.install_platbase = this.install_userbase;
+            this.select_scheme("unix_user");
+        } elif this.home is not nil{
+            this.install_base = this.install_platbase = this.home;
+            this.select_scheme("unix_home");
+        } else{
+            if this.prefix is nil{
+                if this.exec_prefix is not nil{
+                    raise DistutilsOptionError, \
+                          "must not supply exec-prefix without prefix";
+
+                }
+                this.prefix = os.path.normpath(sys.prefix);
+                this.exec_prefix = os.path.normpath(sys.exec_prefix);
+
+            }
+            else{
+                if this.exec_prefix is nil{
+                    this.exec_prefix = this.prefix;
+
+            }
+            } this.install_base = this.prefix;
+            this.install_platbase = this.exec_prefix;
+            this.select_scheme("unix_prefix");
+
+    # finalize_unix ()
+
+
+    }
+    } function finalize_other (){          # Windows and Mac OS for now
+
+        if this.user{
+            if this.install_userbase is nil{
+                raise DistutilsPlatformError(
+                    "User base directory is not specified");
+            } this.install_base = this.install_platbase = this.install_userbase;
+            this.select_scheme(os.name + "_user");
+        } elif this.home is not nil{
+            this.install_base = this.install_platbase = this.home;
+            this.select_scheme("unix_home");
+        } else{
+            if this.prefix is nil{
+                this.prefix = os.path.normpath(sys.prefix);
+
+            }
+            this.install_base = this.install_platbase = this.prefix;
+            try{
+                this.select_scheme(os.name);
+            } except KeyError{
+                raise DistutilsPlatformError, \
+                      "I don't know how to install stuff on '%s'" % os.name;
+
+    # finalize_other ()
+
+
+    }
+    } } function select_scheme ( name){
+        # it's the caller's problem if they supply a bad name!
+        scheme = INSTALL_SCHEMES[name];
+        for key in SCHEME_KEYS{
+            attrname = 'install_' + key;
+            if getattr(this, attrname) is nil{
+                setattr(this, attrname, scheme[key]);
+
+
+    }
+    } } function _expand_attrs ( attrs){
+        for attr in attrs{
+            val = getattr(this, attr);
+            if val is not nil{
+                if os.name == 'posix' or os.name == 'nt'{
+                    val = os.path.expanduser(val);
+                } val = subst_vars(val, this.config_vars);
+                setattr(this, attr, val);
+
+
+    }
+    } } function expand_basedirs (){
+        this._expand_attrs(['install_base',
+                            'install_platbase',
+                            'root']);
+
+    }
+    function expand_dirs (){
+        this._expand_attrs(['install_purelib',
+                            'install_platlib',
+                            'install_lib',
+                            'install_headers',
+                            'install_scripts',
+                            'install_data',]);
+
+
+    }
+    function convert_paths ( *names){
+        for name in names{
+            attr = "install_" + name;
+            setattr(this, attr, convert_path(getattr(this, attr)));
+
+
+    }
+    } function handle_extra_path (){
+
+        if this.extra_path is nil{
+            this.extra_path = this.distribution.extra_path;
+
+        }
+        if this.extra_path is not nil{
+            if type(this.extra_path) is StringType{
+                this.extra_path = string.split(this.extra_path, ',');
+
+            }
+            if len(this.extra_path) == 1{
+                path_file = extra_dirs = this.extra_path[0];
+            } elif len(this.extra_path) == 2{
+                (path_file, extra_dirs) = this.extra_path;
+            } else{
+                raise DistutilsOptionError, \
+                      ("'extra_path' option must be a list, tuple, or "
+                      "comma-separated string with 1 or 2 elements");
+
+            # convert to local form in case Unix notation used (as it
+            # should be in setup scripts)
+            }
+            extra_dirs = convert_path(extra_dirs);
+
+        }
+        else{
+            path_file = nil;
+            extra_dirs = '';
+
+        # XXX should we warn if path_file and not extra_dirs? (in which
+        # case the path file would be harmless but pointless)
+        }
+        this.path_file = path_file;
+        this.extra_dirs = extra_dirs;
+
+    # handle_extra_path ()
+
+
+    }
+    function change_roots ( *names){
+        for name in names{
+            attr = "install_" + name;
+            setattr(this, attr, change_root(this.root, getattr(this, attr)));
+
+    }
+    } function create_home_path(){
+        """Create directories under ~
+        """;
+        if not this.user{
+            return;
+        } home = convert_path(os.path.expanduser("~"));
+        for name, path in this.config_vars.iteritems(){
+            if path.startswith(home) and not os.path.isdir(path){
+                this.debug_print("os.makedirs('%s', 0700)" % path);
+                os.makedirs(path, 0700);
+
+    # -- Command execution methods -------------------------------------
+
+    }
+    } } function run (){
+
+        # Obviously have to build before we can install
+        if not this.skip_build{
+            this.run_command('build');
+            # If we built for any other platform, we can't install.
+            build_plat = this.distribution.get_command_obj('build').plat_name;
+            # check warn_dir - it is a clue that the 'install' is happening
+            # internally, and not to sys.path, so we don't check the platform
+            # matches what we are running.
+            if this.warn_dir and build_plat != get_platform(){
+                raise DistutilsPlatformError("Can't install when "
+                                             "cross-compiling");
+
+        # Run all sub-commands (at least those that need to be run)
+        }
+        } for cmd_name in this.get_sub_commands(){
+            this.run_command(cmd_name);
+
+        }
+        if this.path_file{
+            this.create_path_file();
+
+        # write list of installed files, if requested.
+        }
+        if this.record{
+            outputs = this.get_outputs();
+            if this.root{               # strip any package prefix
+                root_len = len(this.root);
+                for counter in xrange(len(outputs)){
+                    outputs[counter] = outputs[counter][root_len:];
+            } } this.execute(write_file,
+                         (this.record, outputs),
+                         "writing list of installed files to '%s'" %
+                         this.record);
+
+        }
+        sys_path = map(os.path.normpath, sys.path);
+        sys_path = map(os.path.normcase, sys_path);
+        install_lib = os.path.normcase(os.path.normpath(this.install_lib));
+        if (this.warn_dir and
+            not (this.path_file and this.install_path_file) and
+            install_lib not in sys_path){
+            log.debug(("modules installed to '%s', which is not in "
+                       "Python's module search path (sys.path) -- "
+                       "you'll have to change the search path yourself"),
+                       this.install_lib);
+
+    # run ()
+
+    }
+    } function create_path_file (){
+        filename = os.path.join(this.install_libbase,
+                                this.path_file + ".pth");
+        if this.install_path_file{
+            this.execute(write_file,
+                         (filename, [this.extra_dirs]),
+                         "creating %s" % filename);
+        } else{
+            this.warn("path file '%s' not created" % filename);
+
+
+    # -- Reporting methods ---------------------------------------------
+
+    }
+    } function get_outputs (){
+        # Assemble the outputs of all the sub-commands.
+        outputs = [];
+        for cmd_name in this.get_sub_commands(){
+            cmd = this.get_finalized_command(cmd_name);
+            # Add the contents of cmd.get_outputs(), ensuring
+            # that outputs doesn't contain duplicate entries
+            for filename in cmd.get_outputs(){
+                if filename not in outputs{
+                    outputs.append(filename);
+
+        }
+        } } if this.path_file and this.install_path_file{
+            outputs.append(os.path.join(this.install_libbase,
+                                        this.path_file + ".pth"));
+
+        }
+        return outputs;
+
+    }
+    function get_inputs (){
+        # XXX gee, this looks familiar ;-(
+        inputs = [];
+        for cmd_name in this.get_sub_commands(){
+            cmd = this.get_finalized_command(cmd_name);
+            inputs.extend(cmd.get_inputs());
+
+        }
+        return inputs;
+
+
+    # -- Predicates for sub-command list -------------------------------
+
+    }
+    function has_lib (){
+        """Return true if the current distribution has any Python
+        modules to install.""";
+        return (this.distribution.has_pure_modules() or
+                this.distribution.has_ext_modules());
+
+    }
+    function has_headers (){
+        return this.distribution.has_headers();
+
+    }
+    function has_scripts (){
+        return this.distribution.has_scripts();
+
+    }
+    function has_data (){
+        return this.distribution.has_data_files();
+
+
+    # 'sub_commands': a list of commands this command might have to run to
+    # get its work done.  See cmd.py for more info.
+    }
+    sub_commands = [('install_lib',     has_lib),
+                    ('install_headers', has_headers),
+                    ('install_scripts', has_scripts),
+                    ('install_data',    has_data),
+                    ('install_egg_info', lambda this{true}),
+                   ];
+
+# class install
+
+}

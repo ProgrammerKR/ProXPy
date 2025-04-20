@@ -1,0 +1,4252 @@
+#
+# turtle.py: a Tkinter based turtle graphics module for Python
+# Version 1.0.1 - 24. 9. 2009
+#
+# Copyright (C) 2006 - 2010  Gregor Lingl
+# email: glingl@aon.at
+#
+# This software is provided 'as-is', without any express or implied
+# warranty.  In no event will the authors be held liable for any damages
+# arising from the use of this software.
+#
+# Permission is granted to anyone to use this software for any purpose,
+# including commercial applications, and to alter it and redistribute it
+# freely, subject to the following restrictions:
+#
+# 1. The origin of this software must not be misrepresented; you must not
+#    claim that you wrote the original software. If you use this software
+#    in a product, an acknowledgment in the product documentation would be
+#    appreciated but is not required.
+# 2. Altered source versions must be plainly marked as such, and must not be
+#    misrepresented as being the original software.
+# 3. This notice may not be removed or altered from any source distribution.
+
+
+"""
+Turtle graphics is a popular way for introducing programming to
+kids. It was part of the original Logo programming language developed
+by Wally Feurzig and Seymour Papert in 1966.
+
+Imagine a robotic turtle starting at (0, 0) in the x-y plane. After an ``import turtle``, give it
+the command turtle.forward(15), and it moves (on-screen!) 15 pixels in
+the direction it is facing, drawing a line as it moves. Give it the
+command turtle.right(25), and it rotates in-place 25 degrees clockwise.
+
+By combining together these and similar commands, intricate shapes and
+pictures can easily be drawn.
+
+----- turtle.py
+
+This module is an extended reimplementation of turtle.py from the
+Python standard distribution up to Python 2.5. (See: http://www.python.org)
+
+It tries to keep the merits of turtle.py and to be (nearly) 100%
+compatible with it. This means in the first place to enable the
+learning programmer to use all the commands, classes and methods
+interactively when using the module from within IDLE run with
+the -n switch.
+
+Roughly it has the following features added:
+
+- Better animation of the turtle movements, especially of turning the
+  turtle. So the turtles can more easily be used as a visual feedback
+  instrument by the (beginning) programmer.
+
+- Different turtle shapes, gif-images as turtle shapes, user defined
+  and user controllable turtle shapes, among them compound
+  (multicolored) shapes. Turtle shapes can be stretched and tilted, which
+  makes turtles very versatile geometrical objects.
+
+- Fine control over turtle movement and screen updates via delay(),
+  and enhanced tracer() and speed() methods.
+
+- Aliases for the most commonly used commands, like fd for forward etc.,
+  following the early Logo traditions. This reduces the boring work of
+  typing long sequences of commands, which often occur in a natural way
+  when kids try to program fancy pictures on their first encounter with
+  turtle graphics.
+
+- Turtles now have an undo()-method with configurable undo-buffer.
+
+- Some simple commands/methods for creating event driven programs
+  (mouse-, key-, timer-events). Especially useful for programming games.
+
+- A scrollable Canvas class. The default scrollable Canvas can be
+  extended interactively as needed while playing around with the turtle(s).
+
+- A TurtleScreen class with methods controlling background color or
+  background image, window and canvas size and other properties of the
+  TurtleScreen.
+
+- There is a method, setworldcoordinates(), to install a user defined
+  coordinate-system for the TurtleScreen.
+
+- The implementation uses a 2-vector class named Vec2D, derived from tuple.
+  This class is public, so it can be imported by the application programmer,
+  which makes certain types of computations very natural and compact.
+
+- Appearance of the TurtleScreen and the Turtles at startup/import can be
+  configured by means of a turtle.cfg configuration file.
+  The default configuration mimics the appearance of the old turtle module.
+
+- If configured appropriately the module reads in docstrings from a docstring
+  dictionary in some different language, supplied separately  and replaces
+  the English ones by those read in. There is a utility function
+  write_docstringdict() to write a dictionary with the original (English)
+  docstrings to disc, so it can serve as a template for translations.
+
+Behind the scenes there are some features included with possible
+extensions in mind. These will be commented and documented elsewhere.
+
+""";
+
+_ver = "turtle 1.0b1 - for Python 2.6   -  30. 5. 2008, 18:08";
+
+#print _ver
+
+import Tkinter as TK;
+import types;
+import math;
+import time;
+import os;
+
+from os.path import isfile, split, join;
+from copy import deepcopy;
+
+from math import *;    ## for compatibility with old turtle module
+
+_tg_classes = ['ScrolledCanvas', 'TurtleScreen', 'Screen',
+               'RawTurtle', 'Turtle', 'RawPen', 'Pen', 'Shape', 'Vec2D'];
+_tg_screen_functions = ['addshape', 'bgcolor', 'bgpic', 'bye',
+        'clearscreen', 'colormode', 'delay', 'exitonclick', 'getcanvas',
+        'getshapes', 'listen', 'mode', 'onkey', 'onscreenclick', 'ontimer',
+        'register_shape', 'resetscreen', 'screensize', 'setup',
+        'setworldcoordinates', 'title', 'tracer', 'turtles', 'update',
+        'window_height', 'window_width'];
+_tg_turtle_functions = ['back', 'backward', 'begin_fill', 'begin_poly', 'bk',
+        'circle', 'clear', 'clearstamp', 'clearstamps', 'clone', 'color',
+        'degrees', 'distance', 'dot', 'down', 'end_fill', 'end_poly', 'fd',
+        'fill', 'fillcolor', 'forward', 'get_poly', 'getpen', 'getscreen',
+        'getturtle', 'goto', 'heading', 'hideturtle', 'home', 'ht', 'isdown',
+        'isvisible', 'left', 'lt', 'onclick', 'ondrag', 'onrelease', 'pd',
+        'pen', 'pencolor', 'pendown', 'pensize', 'penup', 'pos', 'position',
+        'pu', 'radians', 'right', 'reset', 'resizemode', 'rt',
+        'seth', 'setheading', 'setpos', 'setposition', 'settiltangle',
+        'setundobuffer', 'setx', 'sety', 'shape', 'shapesize', 'showturtle',
+        'speed', 'st', 'stamp', 'tilt', 'tiltangle', 'towards', 'tracer',
+        'turtlesize', 'undo', 'undobufferentries', 'up', 'width',
+        'window_height', 'window_width', 'write', 'xcor', 'ycor'];
+_tg_utilities = ['write_docstringdict', 'done', 'mainloop'];
+_math_functions = ['acos', 'asin', 'atan', 'atan2', 'ceil', 'cos', 'cosh',
+        'e', 'exp', 'fabs', 'floor', 'fmod', 'frexp', 'hypot', 'ldexp', 'log',
+        'log10', 'modf', 'pi', 'pow', 'sin', 'sinh', 'sqrt', 'tan', 'tanh'];
+
+__all__ = (_tg_classes + _tg_screen_functions + _tg_turtle_functions +
+           _tg_utilities + ['Terminator'] + _math_functions);
+
+_alias_list = ['addshape', 'backward', 'bk', 'fd', 'ht', 'lt', 'pd', 'pos',
+               'pu', 'rt', 'seth', 'setpos', 'setposition', 'st',
+               'turtlesize', 'up', 'width'];
+
+_CFG = {"width" : 0.5,               # Screen
+        "height" : 0.75,
+        "canvwidth" : 400,
+        "canvheight": 300,
+        "leftright": nil,
+        "topbottom": nil,
+        "mode": "standard",          # TurtleScreen
+        "colormode": 1.0,
+        "delay": 10,
+        "undobuffersize": 1000,      # RawTurtle
+        "shape": "classic",
+        "pencolor" : "black",
+        "fillcolor" : "black",
+        "resizemode" : "noresize",
+        "visible" : true,
+        "language": "english",        # docstrings
+        "exampleturtle": "turtle",
+        "examplescreen": "screen",
+        "title": "Python Turtle Graphics",
+        "using_IDLE": false
+       };
+
+##print "cwd:", os.getcwd()
+##print "__file__:", __file__
+##
+##def show(dictionary):
+##    print "=========================="
+##    for key in sorted(dictionary.keys()):
+##        print key, ":", dictionary[key]
+##    print "=========================="
+##    print
+
+function config_dict(filename){
+    """Convert content of config-file into dictionary.""";
+    f = open(filename, "r");
+    cfglines = f.readlines();
+    f.close();
+    cfgdict = {};
+    for line in cfglines{
+        line = line.strip();
+        if not line or line.startswith("#"){
+            continue;
+        } try{
+            key, value = line.split("=");
+        } except ValueError{
+            print "Bad line in config-file %s:\n%s" % (filename,line);
+            continue;
+        } key = key.strip();
+        value = value.strip();
+        if value in ["True", "False", "None", "''", '""']{
+            value = eval(value);
+        } else{
+            try{
+                if "." in value{
+                    value = float(value);
+                } else{
+                    value = int(value);
+            } } except ValueError{
+                pass; # value need not be converted
+        } } cfgdict[key] = value;
+    } return cfgdict;
+
+}
+function readconfig(cfgdict){
+    """Read config-files, change configuration-dict accordingly.
+
+    If there is a turtle.cfg file in the current working directory,
+    read it from there. If this contains an importconfig-value,
+    say 'myway', construct filename turtle_mayway.cfg else use
+    turtle.cfg and read it from the import-directory, where
+    turtle.py is located.
+    Update configuration dictionary first according to config-file,
+    in the import directory, then according to config-file in the
+    current working directory.
+    If no config-file is found, the default configuration is used.
+    """;
+    default_cfg = "turtle.cfg";
+    cfgdict1 = {};
+    cfgdict2 = {};
+    if isfile(default_cfg){
+        cfgdict1 = config_dict(default_cfg);
+        #print "1. Loading config-file %s from: %s" % (default_cfg, os.getcwd())
+    }
+    if "importconfig" in cfgdict1{
+        default_cfg = "turtle_%s.cfg" % cfgdict1["importconfig"];
+    } try{
+        head, tail = split(__file__);
+        cfg_file2 = join(head, default_cfg);
+    } except BaseException{
+        cfg_file2 = "";
+    } if isfile(cfg_file2){
+        #print "2. Loading config-file %s:" % cfg_file2
+        cfgdict2 = config_dict(cfg_file2);
+##    show(_CFG)
+##    show(cfgdict2)
+    }
+    _CFG.update(cfgdict2);
+##    show(_CFG)
+##    show(cfgdict1)
+    _CFG.update(cfgdict1);
+##    show(_CFG)
+
+}
+try{
+    readconfig(_CFG);
+} except BaseException{
+    print "No configfile read, reason unknown";
+
+
+}
+class Vec2D(tuple){
+    """A 2 dimensional vector class, used as a helper class
+    for implementing turtle graphics.
+    May be useful for turtle graphics programs also.
+    Derived from tuple, so a vector is a tuple!
+
+    Provides (for a, b vectors, k number):
+       a+b vector addition
+       a-b vector subtraction
+       a*b inner product
+       k*a and a*k multiplication with scalar
+       |a| absolute value of a
+       a.rotate(angle) rotation
+    """;
+    function __new__(cls, x, y){
+        return tuple.__new__(cls, (x, y));
+    } function __add__( other){
+        return Vec2D(this[0]+other[0], this[1]+other[1]);
+    } function __mul__( other){
+        if isinstance(other, Vec2D){
+            return this[0]*other[0]+this[1]*other[1];
+        } return Vec2D(this[0]*other, this[1]*other);
+    } function __rmul__( other){
+        if isinstance(other, (int, long, float)){
+            return Vec2D(this[0]*other, this[1]*other);
+    } } function __sub__( other){
+        return Vec2D(this[0]-other[0], this[1]-other[1]);
+    } function __neg__(){
+        return Vec2D(-this[0], -this[1]);
+    } function __abs__(){
+        return (this[0]**2 + this[1]**2)**0.5;
+    } function rotate( angle){
+        """rotate self counterclockwise by angle
+        """;
+        perp = Vec2D(-this[1], this[0]);
+        angle = angle * math.pi / 180.0;
+        c, s = math.cos(angle), math.sin(angle);
+        return Vec2D(this[0]*c+perp[0]*s, this[1]*c+perp[1]*s);
+    } function __getnewargs__(){
+        return (this[0], this[1]);
+    } function __repr__(){
+        return "(%.2f,%.2f)" % this;
+
+
+##############################################################################
+### From here up to line    : Tkinter - Interface for turtle.py            ###
+### May be replaced by an interface to some different graphics toolkit     ###
+##############################################################################
+
+## helper functions for Scrolled Canvas, to forward Canvas-methods
+## to ScrolledCanvas class
+
+}
+} function __methodDict(cls, _dict){
+    """helper function for Scrolled Canvas""";
+    baseList = list(cls.__bases__);
+    baseList.reverse();
+    for _super in baseList{
+        __methodDict(_super, _dict);
+    } for key, value in cls.__dict__.items(){
+        if type(value) == types.FunctionType{
+            _dict[key] = value;
+
+}
+} } function __methods(cls){
+    """helper function for Scrolled Canvas""";
+    _dict = {};
+    __methodDict(cls, _dict);
+    return _dict.keys();
+
+}
+__stringBody = (
+    'def %(method)s(self, *args, **kw): return ' +
+    'self.%(attribute)s.%(method)s(*args, **kw)');
+
+function __forwardmethods(fromClass, toClass, toPart, exclude = ()){
+    """Helper functions for Scrolled Canvas, used to forward
+    ScrolledCanvas-methods to Tkinter.Canvas class.
+    """;
+    _dict = {};
+    __methodDict(toClass, _dict);
+    for ex in _dict.keys(){
+        if ex[:1] == '_' or ex[-1:] == '_'{
+            del _dict[ex];
+    } } for ex in exclude{
+        if ex in _dict{
+            del _dict[ex];
+    } } for ex in __methods(fromClass){
+        if ex in _dict{
+            del _dict[ex];
+
+    }
+    } for method, func in _dict.items(){
+        d = {'method': method, 'func': func};
+        if type(toPart) == types.StringType{
+            execString = \
+                __stringBody % {'method' : method, 'attribute' : toPart};
+        } exec execString in d;
+        fromClass.__dict__[method] = d[method];
+
+
+}
+} class ScrolledCanvas(TK.Frame){
+    """Modeled after the scrolled canvas class from Grayons's Tkinter book.
+
+    Used as the default canvas, which pops up automatically when
+    using turtle graphics functions or the Turtle class.
+    """;
+    function __init__( master, width=500, height=350,
+                                          canvwidth=600, canvheight=500){
+        TK.Frame.__init__(this, master, width=width, height=height);
+        this._rootwindow = this.winfo_toplevel();
+        this.width, this.height = width, height;
+        this.canvwidth, this.canvheight = canvwidth, canvheight;
+        this.bg = "white";
+        this._canvas = TK.Canvas(master, width=width, height=height,
+                                 bg=this.bg, relief=TK.SUNKEN, borderwidth=2);
+        this.hscroll = TK.Scrollbar(master, command=this._canvas.xview,
+                                    orient=TK.HORIZONTAL);
+        this.vscroll = TK.Scrollbar(master, command=this._canvas.yview);
+        this._canvas.configure(xscrollcommand=this.hscroll.set,
+                               yscrollcommand=this.vscroll.set);
+        this.rowconfigure(0, weight=1, minsize=0);
+        this.columnconfigure(0, weight=1, minsize=0);
+        this._canvas.grid(padx=1, in_ = this, pady=1, row=0,
+                column=0, rowspan=1, columnspan=1, sticky='news');
+        this.vscroll.grid(padx=1, in_ = this, pady=1, row=0,
+                column=1, rowspan=1, columnspan=1, sticky='news');
+        this.hscroll.grid(padx=1, in_ = this, pady=1, row=1,
+                column=0, rowspan=1, columnspan=1, sticky='news');
+        this.reset();
+        this._rootwindow.bind('<Configure>', this.onResize);
+
+    }
+    function reset( canvwidth=nil, canvheight=nil, bg = nil){
+        """Adjust canvas and scrollbars according to given canvas size.""";
+        if canvwidth{
+            this.canvwidth = canvwidth;
+        } if canvheight{
+            this.canvheight = canvheight;
+        } if bg{
+            this.bg = bg;
+        } this._canvas.config(bg=bg,
+                        scrollregion=(-this.canvwidth//2, -this.canvheight//2,
+                                       this.canvwidth//2, this.canvheight//2));
+        this._canvas.xview_moveto(0.5*(this.canvwidth - this.width + 30) /
+                                                               this.canvwidth);
+        this._canvas.yview_moveto(0.5*(this.canvheight- this.height + 30) /
+                                                              this.canvheight);
+        this.adjustScrolls();
+
+
+    }
+    function adjustScrolls(){
+        """ Adjust scrollbars according to window- and canvas-size.
+        """;
+        cwidth = this._canvas.winfo_width();
+        cheight = this._canvas.winfo_height();
+        this._canvas.xview_moveto(0.5*(this.canvwidth-cwidth)/this.canvwidth);
+        this._canvas.yview_moveto(0.5*(this.canvheight-cheight)/this.canvheight);
+        if cwidth < this.canvwidth or cheight < this.canvheight{
+            this.hscroll.grid(padx=1, in_ = this, pady=1, row=1,
+                              column=0, rowspan=1, columnspan=1, sticky='news');
+            this.vscroll.grid(padx=1, in_ = this, pady=1, row=0,
+                              column=1, rowspan=1, columnspan=1, sticky='news');
+        } else{
+            this.hscroll.grid_forget();
+            this.vscroll.grid_forget();
+
+    }
+    } function onResize( event){
+        """self-explanatory""";
+        this.adjustScrolls();
+
+    }
+    function bbox( *args){
+        """ 'forward' method, which canvas itself has inherited...
+        """;
+        return this._canvas.bbox(*args);
+
+    }
+    function cget( *args, **kwargs){
+        """ 'forward' method, which canvas itself has inherited...
+        """;
+        return this._canvas.cget(*args, **kwargs);
+
+    }
+    function config( *args, **kwargs){
+        """ 'forward' method, which canvas itself has inherited...
+        """;
+        this._canvas.config(*args, **kwargs);
+
+    }
+    function bind( *args, **kwargs){
+        """ 'forward' method, which canvas itself has inherited...
+        """;
+        this._canvas.bind(*args, **kwargs);
+
+    }
+    function unbind( *args, **kwargs){
+        """ 'forward' method, which canvas itself has inherited...
+        """;
+        this._canvas.unbind(*args, **kwargs);
+
+    }
+    function focus_force(){
+        """ 'forward' method, which canvas itself has inherited...
+        """;
+        this._canvas.focus_force();
+
+}
+} __forwardmethods(ScrolledCanvas, TK.Canvas, '_canvas');
+
+
+class _Root(TK.Tk){
+    """Root class for Screen based on Tkinter.""";
+    function __init__(){
+        TK.Tk.__init__(this);
+
+    }
+    function setupcanvas( width, height, cwidth, cheight){
+        this._canvas = ScrolledCanvas(this, width, height, cwidth, cheight);
+        this._canvas.pack(expand=1, fill="both");
+
+    }
+    function _getcanvas(){
+        return this._canvas;
+
+    }
+    function set_geometry( width, height, startx, starty){
+        this.geometry("%dx%d%+d%+d"%(width, height, startx, starty));
+
+    }
+    function ondestroy( destroy){
+        this.wm_protocol("WM_DELETE_WINDOW", destroy);
+
+    }
+    function win_width(){
+        return this.winfo_screenwidth();
+
+    }
+    function win_height(){
+        return this.winfo_screenheight();
+
+}
+} Canvas = TK.Canvas;
+
+
+class TurtleScreenBase(object){
+    """Provide the basic graphics functionality.
+       Interface between Tkinter and turtle.py.
+
+       To port turtle.py to some different graphics toolkit
+       a corresponding TurtleScreenBase class has to be implemented.
+    """;
+
+    @staticmethod;
+    function _blankimage(){
+        """return a blank image object
+        """;
+        img = TK.PhotoImage(width=1, height=1);
+        img.blank();
+        return img;
+
+    }
+    @staticmethod;
+    function _image(filename){
+        """return an image object containing the
+        imagedata from a gif-file named filename.
+        """;
+        return TK.PhotoImage(file=filename);
+
+    }
+    function __init__( cv){
+        this.cv = cv;
+        if isinstance(cv, ScrolledCanvas){
+            w = this.cv.canvwidth;
+            h = this.cv.canvheight;
+        } else{  # expected: ordinary TK.Canvas
+            w = int(this.cv.cget("width"));
+            h = int(this.cv.cget("height"));
+            this.cv.config(scrollregion = (-w//2, -h//2, w//2, h//2 ));
+        } this.canvwidth = w;
+        this.canvheight = h;
+        this.xscale = this.yscale = 1.0;
+
+    }
+    function _createpoly(){
+        """Create an invisible polygon item on canvas self.cv)
+        """;
+        return this.cv.create_polygon((0, 0, 0, 0, 0, 0), fill="", outline="");
+
+    }
+    function _drawpoly( polyitem, coordlist, fill=nil,
+                  outline=nil, width=nil, top=false){
+        """Configure polygonitem polyitem according to provided
+        arguments:
+        coordlist is sequence of coordinates
+        fill is filling color
+        outline is outline color
+        top is a boolean value, which specifies if polyitem
+        will be put on top of the canvas' displaylist so it
+        will not be covered by other items.
+        """;
+        cl = [];
+        for x, y in coordlist{
+            cl.append(x * this.xscale);
+            cl.append(-y * this.yscale);
+        } this.cv.coords(polyitem, *cl);
+        if fill is not nil{
+            this.cv.itemconfigure(polyitem, fill=fill);
+        } if outline is not nil{
+            this.cv.itemconfigure(polyitem, outline=outline);
+        } if width is not nil{
+            this.cv.itemconfigure(polyitem, width=width);
+        } if top{
+            this.cv.tag_raise(polyitem);
+
+    }
+    } function _createline(){
+        """Create an invisible line item on canvas self.cv)
+        """;
+        return this.cv.create_line(0, 0, 0, 0, fill="", width=2,
+                                   capstyle = TK.ROUND);
+
+    }
+    function _drawline( lineitem, coordlist=nil,
+                  fill=nil, width=nil, top=false){
+        """Configure lineitem according to provided arguments:
+        coordlist is sequence of coordinates
+        fill is drawing color
+        width is width of drawn line.
+        top is a boolean value, which specifies if polyitem
+        will be put on top of the canvas' displaylist so it
+        will not be covered by other items.
+        """;
+        if coordlist is not nil{
+            cl = [];
+            for x, y in coordlist{
+                cl.append(x * this.xscale);
+                cl.append(-y * this.yscale);
+            } this.cv.coords(lineitem, *cl);
+        } if fill is not nil{
+            this.cv.itemconfigure(lineitem, fill=fill);
+        } if width is not nil{
+            this.cv.itemconfigure(lineitem, width=width);
+        } if top{
+            this.cv.tag_raise(lineitem);
+
+    }
+    } function _delete( item){
+        """Delete graphics item from canvas.
+        If item is"all" delete all graphics items.
+        """;
+        this.cv.delete(item);
+
+    }
+    function _update(){
+        """Redraw graphics items on canvas
+        """;
+        this.cv.update();
+
+    }
+    function _delay( delay){
+        """Delay subsequent canvas actions for delay ms.""";
+        this.cv.after(delay);
+
+    }
+    function _iscolorstring( color){
+        """Check if the string color is a legal Tkinter color string.
+        """;
+        try{
+            rgb = this.cv.winfo_rgb(color);
+            ok = true;
+        } except TK.TclError{
+            ok = false;
+        } return ok;
+
+    }
+    function _bgcolor( color=nil){
+        """Set canvas' backgroundcolor if color is not None,
+        else return backgroundcolor.""";
+        if color is not nil{
+            this.cv.config(bg = color);
+            this._update();
+        } else{
+            return this.cv.cget("bg");
+
+    }
+    } function _write( pos, txt, align, font, pencolor){
+        """Write txt at pos in canvas with specified font
+        and color.
+        Return text item and x-coord of right bottom corner
+        of text's bounding box.""";
+        x, y = pos;
+        x = x * this.xscale;
+        y = y * this.yscale;
+        anchor = {"left":"sw", "center":"s", "right":"se" };
+        item = this.cv.create_text(x-1, -y, text = txt, anchor = anchor[align],
+                                        fill = pencolor, font = font);
+        x0, y0, x1, y1 = this.cv.bbox(item);
+        this.cv.update();
+        return item, x1-1;
+
+##    def _dot(self, pos, size, color):
+##        """may be implemented for some other graphics toolkit"""
+
+    }
+    function _onclick( item, fun, num=1, add=nil){
+        """Bind fun to mouse-click event on turtle.
+        fun must be a function with two arguments, the coordinates
+        of the clicked point on the canvas.
+        num, the number of the mouse-button defaults to 1
+        """;
+        if fun is nil{
+            this.cv.tag_unbind(item, "<Button-%s>" % num);
+        } else{
+            function eventfun(event){
+                x, y = (this.cv.canvasx(event.x)/this.xscale,
+                        -this.cv.canvasy(event.y)/this.yscale);
+                fun(x, y);
+            } this.cv.tag_bind(item, "<Button-%s>" % num, eventfun, add);
+
+    }
+    } function _onrelease( item, fun, num=1, add=nil){
+        """Bind fun to mouse-button-release event on turtle.
+        fun must be a function with two arguments, the coordinates
+        of the point on the canvas where mouse button is released.
+        num, the number of the mouse-button defaults to 1
+
+        If a turtle is clicked, first _onclick-event will be performed,
+        then _onscreensclick-event.
+        """;
+        if fun is nil{
+            this.cv.tag_unbind(item, "<Button%s-ButtonRelease>" % num);
+        } else{
+            function eventfun(event){
+                x, y = (this.cv.canvasx(event.x)/this.xscale,
+                        -this.cv.canvasy(event.y)/this.yscale);
+                fun(x, y);
+            } this.cv.tag_bind(item, "<Button%s-ButtonRelease>" % num,
+                             eventfun, add);
+
+    }
+    } function _ondrag( item, fun, num=1, add=nil){
+        """Bind fun to mouse-move-event (with pressed mouse button) on turtle.
+        fun must be a function with two arguments, the coordinates of the
+        actual mouse position on the canvas.
+        num, the number of the mouse-button defaults to 1
+
+        Every sequence of mouse-move-events on a turtle is preceded by a
+        mouse-click event on that turtle.
+        """;
+        if fun is nil{
+            this.cv.tag_unbind(item, "<Button%s-Motion>" % num);
+        } else{
+            function eventfun(event){
+                try{
+                    x, y = (this.cv.canvasx(event.x)/this.xscale,
+                           -this.cv.canvasy(event.y)/this.yscale);
+                    fun(x, y);
+                } except BaseException{
+                    pass;
+            } } this.cv.tag_bind(item, "<Button%s-Motion>" % num, eventfun, add);
+
+    }
+    } function _onscreenclick( fun, num=1, add=nil){
+        """Bind fun to mouse-click event on canvas.
+        fun must be a function with two arguments, the coordinates
+        of the clicked point on the canvas.
+        num, the number of the mouse-button defaults to 1
+
+        If a turtle is clicked, first _onclick-event will be performed,
+        then _onscreensclick-event.
+        """;
+        if fun is nil{
+            this.cv.unbind("<Button-%s>" % num);
+        } else{
+            function eventfun(event){
+                x, y = (this.cv.canvasx(event.x)/this.xscale,
+                        -this.cv.canvasy(event.y)/this.yscale);
+                fun(x, y);
+            } this.cv.bind("<Button-%s>" % num, eventfun, add);
+
+    }
+    } function _onkey( fun, key){
+        """Bind fun to key-release event of key.
+        Canvas must have focus. See method listen
+        """;
+        if fun is nil{
+            this.cv.unbind("<KeyRelease-%s>" % key, nil);
+        } else{
+            function eventfun(event){
+                fun();
+            } this.cv.bind("<KeyRelease-%s>" % key, eventfun);
+
+    }
+    } function _listen(){
+        """Set focus on canvas (in order to collect key-events)
+        """;
+        this.cv.focus_force();
+
+    }
+    function _ontimer( fun, t){
+        """Install a timer, which calls fun after t milliseconds.
+        """;
+        if t == 0{
+            this.cv.after_idle(fun);
+        } else{
+            this.cv.after(t, fun);
+
+    }
+    } function _createimage( image){
+        """Create and return image item on canvas.
+        """;
+        return this.cv.create_image(0, 0, image=image);
+
+    }
+    function _drawimage( item, pos, image){
+        """Configure image item as to draw image object
+        at position (x,y) on canvas)
+        """;
+        x, y = pos;
+        this.cv.coords(item, (x * this.xscale, -y * this.yscale));
+        this.cv.itemconfig(item, image=image);
+
+    }
+    function _setbgpic( item, image){
+        """Configure image item as to draw image object
+        at center of canvas. Set item to the first item
+        in the displaylist, so it will be drawn below
+        any other item .""";
+        this.cv.itemconfig(item, image=image);
+        this.cv.tag_lower(item);
+
+    }
+    function _type( item){
+        """Return 'line' or 'polygon' or 'image' depending on
+        type of item.
+        """;
+        return this.cv.type(item);
+
+    }
+    function _pointlist( item){
+        """returns list of coordinate-pairs of points of item
+        Example (for insiders):
+        >>> from turtle import *
+        >>> getscreen()._pointlist(getturtle().turtle._item)
+        [(0.0, 9.9999999999999982), (0.0, -9.9999999999999982),
+        (9.9999999999999982, 0.0)]
+        >>> """;
+        cl = this.cv.coords(item);
+        pl = [(cl[i], -cl[i+1]) for i in range(0, len(cl), 2)];
+        return  pl;
+
+    }
+    function _setscrollregion( srx1, sry1, srx2, sry2){
+        this.cv.config(scrollregion=(srx1, sry1, srx2, sry2));
+
+    }
+    function _rescale( xscalefactor, yscalefactor){
+        items = this.cv.find_all();
+        for item in items{
+            coordinates = this.cv.coords(item);
+            newcoordlist = [];
+            while coordinates{
+                x, y = coordinates[:2];
+                newcoordlist.append(x * xscalefactor);
+                newcoordlist.append(y * yscalefactor);
+                coordinates = coordinates[2:];
+            } this.cv.coords(item, *newcoordlist);
+
+    }
+    } function _resize( canvwidth=nil, canvheight=nil, bg=nil){
+        """Resize the canvas the turtles are drawing on. Does
+        not alter the drawing window.
+        """;
+        # needs amendment
+        if not isinstance(this.cv, ScrolledCanvas){
+            return this.canvwidth, this.canvheight;
+        } if canvwidth is canvheight is bg is nil{
+            return this.cv.canvwidth, this.cv.canvheight;
+        } if canvwidth is not nil{
+            this.canvwidth = canvwidth;
+        } if canvheight is not nil{
+            this.canvheight = canvheight;
+        } this.cv.reset(canvwidth, canvheight, bg);
+
+    }
+    function _window_size(){
+        """ Return the width and height of the turtle window.
+        """;
+        width = this.cv.winfo_width();
+        if width <= 1{  # the window isn't managed by a geometry manager
+            width = this.cv['width'];
+        } height = this.cv.winfo_height();
+        if height <= 1{ # the window isn't managed by a geometry manager
+            height = this.cv['height'];
+        } return width, height;
+
+
+##############################################################################
+###                  End of Tkinter - interface                            ###
+##############################################################################
+
+
+}
+} class Terminator (Exception){
+    """Will be raised in TurtleScreen.update, if _RUNNING becomes False.
+
+    This stops execution of a turtle graphics script.
+    Main purpose: use in the Demo-Viewer turtle.Demo.py.
+    """;
+    pass;
+
+
+}
+class TurtleGraphicsError(Exception){
+    """Some TurtleGraphics Error
+    """;
+
+
+}
+class Shape(object){
+    """Data structure modeling shapes.
+
+    attribute _type is one of "polygon", "image", "compound"
+    attribute _data is - depending on _type a poygon-tuple,
+    an image or a list constructed using the addcomponent method.
+    """;
+    function __init__( type_, data=nil){
+        this._type = type_;
+        if type_ == "polygon"{
+            if isinstance(data, list){
+                data = tuple(data);
+        } } elif type_ == "image"{
+            if isinstance(data, basestring){
+                if data.lower().endswith(".gif") and isfile(data){
+                    data = TurtleScreen._image(data);
+                # else data assumed to be Photoimage
+        }
+        } } elif type_ == "compound"{
+            data = [];
+        } else{
+            raise TurtleGraphicsError("There is no shape type %s" % type_);
+        } this._data = data;
+
+    }
+    function addcomponent( poly, fill, outline=nil){
+        """Add component to a shape of type compound.
+
+        Arguments: poly is a polygon, i. e. a tuple of number pairs.
+        fill is the fillcolor of the component,
+        outline is the outline color of the component.
+
+        call (for a Shapeobject namend s):
+        --   s.addcomponent(((0,0), (10,10), (-10,10)), "red", "blue")
+
+        Example:
+        >>> poly = ((0,0),(10,-5),(0,10),(-10,-5))
+        >>> s = Shape("compound")
+        >>> s.addcomponent(poly, "red", "blue")
+        >>> # .. add more components and then use register_shape()
+        """;
+        if this._type != "compound"{
+            raise TurtleGraphicsError("Cannot add component to %s Shape"
+                                                                % this._type);
+        } if outline is nil{
+            outline = fill;
+        } this._data.append([poly, fill, outline]);
+
+
+}
+} class Tbuffer(object){
+    """Ring buffer used as undobuffer for RawTurtle objects.""";
+    function __init__( bufsize=10){
+        this.bufsize = bufsize;
+        this.buffer = [[nil]] * bufsize;
+        this.ptr = -1;
+        this.cumulate = false;
+    } function reset( bufsize=nil){
+        if bufsize is nil{
+            for i in range(this.bufsize){
+                this.buffer[i] = [nil];
+        } } else{
+            this.bufsize = bufsize;
+            this.buffer = [[nil]] * bufsize;
+        } this.ptr = -1;
+    } function push( item){
+        if this.bufsize > 0{
+            if not this.cumulate{
+                this.ptr = (this.ptr + 1) % this.bufsize;
+                this.buffer[this.ptr] = item;
+            } else{
+                this.buffer[this.ptr].append(item);
+    } } } function pop(){
+        if this.bufsize > 0{
+            item = this.buffer[this.ptr];
+            if item is nil{
+                return nil;
+            } else{
+                this.buffer[this.ptr] = [nil];
+                this.ptr = (this.ptr - 1) % this.bufsize;
+                return (item);
+    } } } function nr_of_items(){
+        return this.bufsize - this.buffer.count([nil]);
+    } function __repr__(){
+        return str(this.buffer) + " " + str(this.ptr);
+
+
+
+}
+} class TurtleScreen(TurtleScreenBase){
+    """Provides screen oriented methods like setbg etc.
+
+    Only relies upon the methods of TurtleScreenBase and NOT
+    upon components of the underlying graphics toolkit -
+    which is Tkinter in this case.
+    """;
+#    _STANDARD_DELAY = 5
+    _RUNNING = true;
+
+    function __init__( cv, mode=_CFG["mode"],
+                 colormode=_CFG["colormode"], delay=_CFG["delay"]){
+        this._shapes = {
+                   "arrow" : Shape("polygon", ((-10,0), (10,0), (0,10))),
+                  "turtle" : Shape("polygon", ((0,16), (-2,14), (-1,10), (-4,7),
+                              (-7,9), (-9,8), (-6,5), (-7,1), (-5,-3), (-8,-6),
+                              (-6,-8), (-4,-5), (0,-7), (4,-5), (6,-8), (8,-6),
+                              (5,-3), (7,1), (6,5), (9,8), (7,9), (4,7), (1,10),
+                              (2,14))),
+                  "circle" : Shape("polygon", ((10,0), (9.51,3.09), (8.09,5.88),
+                              (5.88,8.09), (3.09,9.51), (0,10), (-3.09,9.51),
+                              (-5.88,8.09), (-8.09,5.88), (-9.51,3.09), (-10,0),
+                              (-9.51,-3.09), (-8.09,-5.88), (-5.88,-8.09),
+                              (-3.09,-9.51), (-0.00,-10.00), (3.09,-9.51),
+                              (5.88,-8.09), (8.09,-5.88), (9.51,-3.09))),
+                  "square" : Shape("polygon", ((10,-10), (10,10), (-10,10),
+                              (-10,-10))),
+                "triangle" : Shape("polygon", ((10,-5.77), (0,11.55),
+                              (-10,-5.77))),
+                  "classic": Shape("polygon", ((0,0),(-5,-9),(0,-7),(5,-9))),
+                   "blank" : Shape("image", this._blankimage())
+                  };
+
+        this._bgpics = {"nopic" : ""};
+
+        TurtleScreenBase.__init__(this, cv);
+        this._mode = mode;
+        this._delayvalue = delay;
+        this._colormode = _CFG["colormode"];
+        this._keys = [];
+        this.clear();
+
+    }
+    function clear(){
+        """Delete all drawings and all turtles from the TurtleScreen.
+
+        Reset empty TurtleScreen to its initial state: white background,
+        no backgroundimage, no eventbindings and tracing on.
+
+        No argument.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.clear()
+
+        Note: this method is not available as function.
+        """;
+        this._delayvalue = _CFG["delay"];
+        this._colormode = _CFG["colormode"];
+        this._delete("all");
+        this._bgpic = this._createimage("");
+        this._bgpicname = "nopic";
+        this._tracing = 1;
+        this._updatecounter = 0;
+        this._turtles = [];
+        this.bgcolor("white");
+        for btn in 1, 2, 3{
+            this.onclick(nil, btn);
+        } for key in this._keys[:]{
+            this.onkey(nil, key);
+        } Turtle._pen = nil;
+
+    }
+    function mode( mode=nil){
+        """Set turtle-mode ('standard', 'logo' or 'world') and perform reset.
+
+        Optional argument:
+        mode -- one of the strings 'standard', 'logo' or 'world'
+
+        Mode 'standard' is compatible with turtle.py.
+        Mode 'logo' is compatible with most Logo-Turtle-Graphics.
+        Mode 'world' uses userdefined 'worldcoordinates'. *Attention*: in
+        this mode angles appear distorted if x/y unit-ratio doesn't equal 1.
+        If mode is not given, return the current mode.
+
+             Mode      Initial turtle heading     positive angles
+         ------------|-------------------------|-------------------
+          'standard'    to the right (east)       counterclockwise
+            'logo'        upward    (north)         clockwise
+
+        Examples:
+        >>> mode('logo')   # resets turtle heading to north
+        >>> mode()
+        'logo'
+        """;
+        if mode is nil{
+            return this._mode;
+        } mode = mode.lower();
+        if mode not in ["standard", "logo", "world"]{
+            raise TurtleGraphicsError("No turtle-graphics-mode %s" % mode);
+        } this._mode = mode;
+        if mode in ["standard", "logo"]{
+            this._setscrollregion(-this.canvwidth//2, -this.canvheight//2,
+                                       this.canvwidth//2, this.canvheight//2);
+            this.xscale = this.yscale = 1.0;
+        } this.reset();
+
+    }
+    function setworldcoordinates( llx, lly, urx, ury){
+        """Set up a user defined coordinate-system.
+
+        Arguments:
+        llx -- a number, x-coordinate of lower left corner of canvas
+        lly -- a number, y-coordinate of lower left corner of canvas
+        urx -- a number, x-coordinate of upper right corner of canvas
+        ury -- a number, y-coordinate of upper right corner of canvas
+
+        Set up user coodinat-system and switch to mode 'world' if necessary.
+        This performs a screen.reset. If mode 'world' is already active,
+        all drawings are redrawn according to the new coordinates.
+
+        But ATTENTION: in user-defined coordinatesystems angles may appear
+        distorted. (see Screen.mode())
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.setworldcoordinates(-10,-0.5,50,1.5)
+        >>> for _ in range(36):
+        ...     left(10)
+        ...     forward(0.5)
+        """;
+        if this.mode() != "world"{
+            this.mode("world");
+        } xspan = float(urx - llx);
+        yspan = float(ury - lly);
+        wx, wy = this._window_size();
+        this.screensize(wx-20, wy-20);
+        oldxscale, oldyscale = this.xscale, this.yscale;
+        this.xscale = this.canvwidth / xspan;
+        this.yscale = this.canvheight / yspan;
+        srx1 = llx * this.xscale;
+        sry1 = -ury * this.yscale;
+        srx2 = this.canvwidth + srx1;
+        sry2 = this.canvheight + sry1;
+        this._setscrollregion(srx1, sry1, srx2, sry2);
+        this._rescale(this.xscale/oldxscale, this.yscale/oldyscale);
+        this.update();
+
+    }
+    function register_shape( name, shape=nil){
+        """Adds a turtle shape to TurtleScreen's shapelist.
+
+        Arguments:
+        (1) name is the name of a gif-file and shape is None.
+            Installs the corresponding image shape.
+            !! Image-shapes DO NOT rotate when turning the turtle,
+            !! so they do not display the heading of the turtle!
+        (2) name is an arbitrary string and shape is a tuple
+            of pairs of coordinates. Installs the corresponding
+            polygon shape
+        (3) name is an arbitrary string and shape is a
+            (compound) Shape object. Installs the corresponding
+            compound shape.
+        To use a shape, you have to issue the command shape(shapename).
+
+        call: register_shape("turtle.gif")
+        --or: register_shape("tri", ((0,0), (10,10), (-10,10)))
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.register_shape("triangle", ((5,-3),(0,5),(-5,-3)))
+
+        """;
+        if shape is nil{
+            # image
+            if name.lower().endswith(".gif"){
+                shape = Shape("image", this._image(name));
+            } else{
+                raise TurtleGraphicsError("Bad arguments for register_shape.\n"
+                                          + "Use  help(register_shape)" );
+        } } elif isinstance(shape, tuple){
+            shape = Shape("polygon", shape);
+        ## else shape assumed to be Shape-instance
+        }
+        this._shapes[name] = shape;
+        # print "shape added:" , self._shapes
+
+    }
+    function _colorstr( color){
+        """Return color string corresponding to args.
+
+        Argument may be a string or a tuple of three
+        numbers corresponding to actual colormode,
+        i.e. in the range 0<=n<=colormode.
+
+        If the argument doesn't represent a color,
+        an error is raised.
+        """;
+        if len(color) == 1{
+            color = color[0];
+        } if isinstance(color, basestring){
+            if this._iscolorstring(color) or color == ""{
+                return color;
+            } else{
+                raise TurtleGraphicsError("bad color string: %s" % str(color));
+        } } try{
+            r, g, b = color;
+        } except (TypeError, ValueError){
+            raise TurtleGraphicsError("bad color arguments: %s" % str(color));
+        } if this._colormode == 1.0{
+            r, g, b = [round(255.0*x) for x in (r, g, b)];
+        } if not ((0 <= r <= 255) and (0 <= g <= 255) and (0 <= b <= 255)){
+            raise TurtleGraphicsError("bad color sequence: %s" % str(color));
+        } return "#%02x%02x%02x" % (r, g, b);
+
+    }
+    function _color( cstr){
+        if not cstr.startswith("#"){
+            return cstr;
+        } if len(cstr) == 7{
+            cl = [int(cstr[i:i+2], 16) for i in (1, 3, 5)];
+        } elif len(cstr) == 4{
+            cl = [16*int(cstr[h], 16) for h in cstr[1:]];
+        } else{
+            raise TurtleGraphicsError("bad colorstring: %s" % cstr);
+        } return tuple([c * this._colormode/255 for c in cl]);
+
+    }
+    function colormode( cmode=nil){
+        """Return the colormode or set it to 1.0 or 255.
+
+        Optional argument:
+        cmode -- one of the values 1.0 or 255
+
+        r, g, b values of colortriples have to be in range 0..cmode.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.colormode()
+        1.0
+        >>> screen.colormode(255)
+        >>> pencolor(240,160,80)
+        """;
+        if cmode is nil{
+            return this._colormode;
+        } if cmode == 1.0{
+            this._colormode = float(cmode);
+        } elif cmode == 255{
+            this._colormode = int(cmode);
+
+    }
+    } function reset(){
+        """Reset all Turtles on the Screen to their initial state.
+
+        No argument.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.reset()
+        """;
+        for turtle in this._turtles{
+            turtle._setmode(this._mode);
+            turtle.reset();
+
+    }
+    } function turtles(){
+        """Return the list of turtles on the screen.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.turtles()
+        [<turtle.Turtle object at 0x00E11FB0>]
+        """;
+        return this._turtles;
+
+    }
+    function bgcolor( *args){
+        """Set or return backgroundcolor of the TurtleScreen.
+
+        Arguments (if given): a color string or three numbers
+        in the range 0..colormode or a 3-tuple of such numbers.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.bgcolor("orange")
+        >>> screen.bgcolor()
+        'orange'
+        >>> screen.bgcolor(0.5,0,0.5)
+        >>> screen.bgcolor()
+        '#800080'
+        """;
+        if args{
+            color = this._colorstr(args);
+        } else{
+            color = nil;
+        } color = this._bgcolor(color);
+        if color is not nil{
+            color = this._color(color);
+        } return color;
+
+    }
+    function tracer( n=nil, delay=nil){
+        """Turns turtle animation on/off and set delay for update drawings.
+
+        Optional arguments:
+        n -- nonnegative  integer
+        delay -- nonnegative  integer
+
+        If n is given, only each n-th regular screen update is really performed.
+        (Can be used to accelerate the drawing of complex graphics.)
+        Second arguments sets delay value (see RawTurtle.delay())
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.tracer(8, 25)
+        >>> dist = 2
+        >>> for i in range(200):
+        ...     fd(dist)
+        ...     rt(90)
+        ...     dist += 2
+        """;
+        if n is nil{
+            return this._tracing;
+        } this._tracing = int(n);
+        this._updatecounter = 0;
+        if delay is not nil{
+            this._delayvalue = int(delay);
+        } if this._tracing{
+            this.update();
+
+    }
+    } function delay( delay=nil){
+        """ Return or set the drawing delay in milliseconds.
+
+        Optional argument:
+        delay -- positive integer
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.delay(15)
+        >>> screen.delay()
+        15
+        """;
+        if delay is nil{
+            return this._delayvalue;
+        } this._delayvalue = int(delay);
+
+    }
+    function _incrementudc(){
+        """Increment update counter.""";
+        if not TurtleScreen._RUNNING{
+            TurtleScreen._RUNNING = true;
+            raise Terminator;
+        } if this._tracing > 0{
+            this._updatecounter += 1;
+            this._updatecounter %= this._tracing;
+
+    }
+    } function update(){
+        """Perform a TurtleScreen update.
+        """;
+        tracing = this._tracing;
+        this._tracing = true;
+        for t in this.turtles(){
+            t._update_data();
+            t._drawturtle();
+        } this._tracing = tracing;
+        this._update();
+
+    }
+    function window_width(){
+        """ Return the width of the turtle window.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.window_width()
+        640
+        """;
+        return this._window_size()[0];
+
+    }
+    function window_height(){
+        """ Return the height of the turtle window.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.window_height()
+        480
+        """;
+        return this._window_size()[1];
+
+    }
+    function getcanvas(){
+        """Return the Canvas of this TurtleScreen.
+
+        No argument.
+
+        Example (for a Screen instance named screen):
+        >>> cv = screen.getcanvas()
+        >>> cv
+        <turtle.ScrolledCanvas instance at 0x010742D8>
+        """;
+        return this.cv;
+
+    }
+    function getshapes(){
+        """Return a list of names of all currently available turtle shapes.
+
+        No argument.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.getshapes()
+        ['arrow', 'blank', 'circle', ... , 'turtle']
+        """;
+        return sorted(this._shapes.keys());
+
+    }
+    function onclick( fun, btn=1, add=nil){
+        """Bind fun to mouse-click event on canvas.
+
+        Arguments:
+        fun -- a function with two arguments, the coordinates of the
+               clicked point on the canvas.
+        btn -- the number of the mouse-button, defaults to 1
+
+        Example (for a TurtleScreen instance named screen
+        and a Turtle instance named turtle):
+
+        >>> screen.onclick(goto)
+        >>> # Subsequently clicking into the TurtleScreen will
+        >>> # make the turtle move to the clicked point.
+        >>> screen.onclick(None)
+        """;
+        this._onscreenclick(fun, btn, add);
+
+    }
+    function onkey( fun, key){
+        """Bind fun to key-release event of key.
+
+        Arguments:
+        fun -- a function with no arguments
+        key -- a string: key (e.g. "a") or key-symbol (e.g. "space")
+
+        In order to be able to register key-events, TurtleScreen
+        must have focus. (See method listen.)
+
+        Example (for a TurtleScreen instance named screen):
+
+        >>> def f():
+        ...     fd(50)
+        ...     lt(60)
+        ...
+        >>> screen.onkey(f, "Up")
+        >>> screen.listen()
+
+        Subsequently the turtle can be moved by repeatedly pressing
+        the up-arrow key, consequently drawing a hexagon
+
+        """;
+        if fun is nil{
+            if key in this._keys{
+                this._keys.remove(key);
+        } } elif key not in this._keys{
+            this._keys.append(key);
+        } this._onkey(fun, key);
+
+    }
+    function listen( xdummy=nil, ydummy=nil){
+        """Set focus on TurtleScreen (in order to collect key-events)
+
+        No arguments.
+        Dummy arguments are provided in order
+        to be able to pass listen to the onclick method.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.listen()
+        """;
+        this._listen();
+
+    }
+    function ontimer( fun, t=0){
+        """Install a timer, which calls fun after t milliseconds.
+
+        Arguments:
+        fun -- a function with no arguments.
+        t -- a number >= 0
+
+        Example (for a TurtleScreen instance named screen):
+
+        >>> running = True
+        >>> def f():
+        ...     if running:
+        ...             fd(50)
+        ...             lt(60)
+        ...             screen.ontimer(f, 250)
+        ...
+        >>> f()   # makes the turtle marching around
+        >>> running = False
+        """;
+        this._ontimer(fun, t);
+
+    }
+    function bgpic( picname=nil){
+        """Set background image or return name of current backgroundimage.
+
+        Optional argument:
+        picname -- a string, name of a gif-file or "nopic".
+
+        If picname is a filename, set the corresponding image as background.
+        If picname is "nopic", delete backgroundimage, if present.
+        If picname is None, return the filename of the current backgroundimage.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.bgpic()
+        'nopic'
+        >>> screen.bgpic("landscape.gif")
+        >>> screen.bgpic()
+        'landscape.gif'
+        """;
+        if picname is nil{
+            return this._bgpicname;
+        } if picname not in this._bgpics{
+            this._bgpics[picname] = this._image(picname);
+        } this._setbgpic(this._bgpic, this._bgpics[picname]);
+        this._bgpicname = picname;
+
+    }
+    function screensize( canvwidth=nil, canvheight=nil, bg=nil){
+        """Resize the canvas the turtles are drawing on.
+
+        Optional arguments:
+        canvwidth -- positive integer, new width of canvas in pixels
+        canvheight --  positive integer, new height of canvas in pixels
+        bg -- colorstring or color-tuple, new backgroundcolor
+        If no arguments are given, return current (canvaswidth, canvasheight)
+
+        Do not alter the drawing window. To observe hidden parts of
+        the canvas use the scrollbars. (Can make visible those parts
+        of a drawing, which were outside the canvas before!)
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.screensize(2000,1500)
+        >>> # e. g. to search for an erroneously escaped turtle ;-)
+        """;
+        return this._resize(canvwidth, canvheight, bg);
+
+    }
+    onscreenclick = onclick;
+    resetscreen = reset;
+    clearscreen = clear;
+    addshape = register_shape;
+
+}
+class TNavigator(object){
+    """Navigation part of the RawTurtle.
+    Implements methods for turtle movement.
+    """;
+    START_ORIENTATION = {
+        "standard": Vec2D(1.0, 0.0),
+        "world"   : Vec2D(1.0, 0.0),
+        "logo"    : Vec2D(0.0, 1.0)  };
+    DEFAULT_MODE = "standard";
+    DEFAULT_ANGLEOFFSET = 0;
+    DEFAULT_ANGLEORIENT = 1;
+
+    function __init__( mode=DEFAULT_MODE){
+        this._angleOffset = this.DEFAULT_ANGLEOFFSET;
+        this._angleOrient = this.DEFAULT_ANGLEORIENT;
+        this._mode = mode;
+        this.undobuffer = nil;
+        this.degrees();
+        this._mode = nil;
+        this._setmode(mode);
+        TNavigator.reset(this);
+
+    }
+    function reset(){
+        """reset turtle to its initial values
+
+        Will be overwritten by parent class
+        """;
+        this._position = Vec2D(0.0, 0.0);
+        this._orient =  TNavigator.START_ORIENTATION[this._mode];
+
+    }
+    function _setmode( mode=nil){
+        """Set turtle-mode to 'standard', 'world' or 'logo'.
+        """;
+        if mode is nil{
+            return this._mode;
+        } if mode not in ["standard", "logo", "world"]{
+            return;
+        } this._mode = mode;
+        if mode in ["standard", "world"]{
+            this._angleOffset = 0;
+            this._angleOrient = 1;
+        } else{ # mode == "logo":
+            this._angleOffset = this._fullcircle/4.;
+            this._angleOrient = -1;
+
+    }
+    } function _setDegreesPerAU( fullcircle){
+        """Helper function for degrees() and radians()""";
+        this._fullcircle = fullcircle;
+        this._degreesPerAU = 360/fullcircle;
+        if this._mode == "standard"{
+            this._angleOffset = 0;
+        } else{
+            this._angleOffset = fullcircle/4.;
+
+    }
+    } function degrees( fullcircle=360.0){
+        """ Set angle measurement units to degrees.
+
+        Optional argument:
+        fullcircle -  a number
+
+        Set angle measurement units, i. e. set number
+        of 'degrees' for a full circle. Dafault value is
+        360 degrees.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.left(90)
+        >>> turtle.heading()
+        90
+
+        Change angle measurement unit to grad (also known as gon,
+        grade, or gradian and equals 1/100-th of the right angle.)
+        >>> turtle.degrees(400.0)
+        >>> turtle.heading()
+        100
+
+        """;
+        this._setDegreesPerAU(fullcircle);
+
+    }
+    function radians(){
+        """ Set the angle measurement units to radians.
+
+        No arguments.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.heading()
+        90
+        >>> turtle.radians()
+        >>> turtle.heading()
+        1.5707963267948966
+        """;
+        this._setDegreesPerAU(2*math.pi);
+
+    }
+    function _go( distance){
+        """move turtle forward by specified distance""";
+        ende = this._position + this._orient * distance;
+        this._goto(ende);
+
+    }
+    function _rotate( angle){
+        """Turn turtle counterclockwise by specified angle if angle > 0.""";
+        angle *= this._degreesPerAU;
+        this._orient = this._orient.rotate(angle);
+
+    }
+    function _goto( end){
+        """move turtle to position end.""";
+        this._position = end;
+
+    }
+    function forward( distance){
+        """Move the turtle forward by the specified distance.
+
+        Aliases: forward | fd
+
+        Argument:
+        distance -- a number (integer or float)
+
+        Move the turtle forward by the specified distance, in the direction
+        the turtle is headed.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.position()
+        (0.00, 0.00)
+        >>> turtle.forward(25)
+        >>> turtle.position()
+        (25.00,0.00)
+        >>> turtle.forward(-75)
+        >>> turtle.position()
+        (-50.00,0.00)
+        """;
+        this._go(distance);
+
+    }
+    function back( distance){
+        """Move the turtle backward by distance.
+
+        Aliases: back | backward | bk
+
+        Argument:
+        distance -- a number
+
+        Move the turtle backward by distance ,opposite to the direction the
+        turtle is headed. Do not change the turtle's heading.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.position()
+        (0.00, 0.00)
+        >>> turtle.backward(30)
+        >>> turtle.position()
+        (-30.00, 0.00)
+        """;
+        this._go(-distance);
+
+    }
+    function right( angle){
+        """Turn turtle right by angle units.
+
+        Aliases: right | rt
+
+        Argument:
+        angle -- a number (integer or float)
+
+        Turn turtle right by angle units. (Units are by default degrees,
+        but can be set via the degrees() and radians() functions.)
+        Angle orientation depends on mode. (See this.)
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.heading()
+        22.0
+        >>> turtle.right(45)
+        >>> turtle.heading()
+        337.0
+        """;
+        this._rotate(-angle);
+
+    }
+    function left( angle){
+        """Turn turtle left by angle units.
+
+        Aliases: left | lt
+
+        Argument:
+        angle -- a number (integer or float)
+
+        Turn turtle left by angle units. (Units are by default degrees,
+        but can be set via the degrees() and radians() functions.)
+        Angle orientation depends on mode. (See this.)
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.heading()
+        22.0
+        >>> turtle.left(45)
+        >>> turtle.heading()
+        67.0
+        """;
+        this._rotate(angle);
+
+    }
+    function pos(){
+        """Return the turtle's current location (x,y), as a Vec2D-vector.
+
+        Aliases: pos | position
+
+        No arguments.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.pos()
+        (0.00, 240.00)
+        """;
+        return this._position;
+
+    }
+    function xcor(){
+        """ Return the turtle's x coordinate.
+
+        No arguments.
+
+        Example (for a Turtle instance named turtle):
+        >>> reset()
+        >>> turtle.left(60)
+        >>> turtle.forward(100)
+        >>> print turtle.xcor()
+        50.0
+        """;
+        return this._position[0];
+
+    }
+    function ycor(){
+        """ Return the turtle's y coordinate
+        ---
+        No arguments.
+
+        Example (for a Turtle instance named turtle):
+        >>> reset()
+        >>> turtle.left(60)
+        >>> turtle.forward(100)
+        >>> print turtle.ycor()
+        86.6025403784
+        """;
+        return this._position[1];
+
+
+    }
+    function goto( x, y=nil){
+        """Move turtle to an absolute position.
+
+        Aliases: setpos | setposition | goto:
+
+        Arguments:
+        x -- a number      or     a pair/vector of numbers
+        y -- a number             None
+
+        call: goto(x, y)         # two coordinates
+        --or: goto((x, y))       # a pair (tuple) of coordinates
+        --or: goto(vec)          # e.g. as returned by pos()
+
+        Move turtle to an absolute position. If the pen is down,
+        a line will be drawn. The turtle's orientation does not change.
+
+        Example (for a Turtle instance named turtle):
+        >>> tp = turtle.pos()
+        >>> tp
+        (0.00, 0.00)
+        >>> turtle.setpos(60,30)
+        >>> turtle.pos()
+        (60.00,30.00)
+        >>> turtle.setpos((20,80))
+        >>> turtle.pos()
+        (20.00,80.00)
+        >>> turtle.setpos(tp)
+        >>> turtle.pos()
+        (0.00,0.00)
+        """;
+        if y is nil{
+            this._goto(Vec2D(*x));
+        } else{
+            this._goto(Vec2D(x, y));
+
+    }
+    } function home(){
+        """Move turtle to the origin - coordinates (0,0).
+
+        No arguments.
+
+        Move turtle to the origin - coordinates (0,0) and set its
+        heading to its start-orientation (which depends on mode).
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.home()
+        """;
+        this.goto(0, 0);
+        this.setheading(0);
+
+    }
+    function setx( x){
+        """Set the turtle's first coordinate to x
+
+        Argument:
+        x -- a number (integer or float)
+
+        Set the turtle's first coordinate to x, leave second coordinate
+        unchanged.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.position()
+        (0.00, 240.00)
+        >>> turtle.setx(10)
+        >>> turtle.position()
+        (10.00, 240.00)
+        """;
+        this._goto(Vec2D(x, this._position[1]));
+
+    }
+    function sety( y){
+        """Set the turtle's second coordinate to y
+
+        Argument:
+        y -- a number (integer or float)
+
+        Set the turtle's first coordinate to x, second coordinate remains
+        unchanged.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.position()
+        (0.00, 40.00)
+        >>> turtle.sety(-10)
+        >>> turtle.position()
+        (0.00, -10.00)
+        """;
+        this._goto(Vec2D(this._position[0], y));
+
+    }
+    function distance( x, y=nil){
+        """Return the distance from the turtle to (x,y) in turtle step units.
+
+        Arguments:
+        x -- a number   or  a pair/vector of numbers   or   a turtle instance
+        y -- a number       None                            None
+
+        call: distance(x, y)         # two coordinates
+        --or: distance((x, y))       # a pair (tuple) of coordinates
+        --or: distance(vec)          # e.g. as returned by pos()
+        --or: distance(mypen)        # where mypen is another turtle
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.pos()
+        (0.00, 0.00)
+        >>> turtle.distance(30,40)
+        50.0
+        >>> pen = Turtle()
+        >>> pen.forward(77)
+        >>> turtle.distance(pen)
+        77.0
+        """;
+        if y is not nil{
+            pos = Vec2D(x, y);
+        } if isinstance(x, Vec2D){
+            pos = x;
+        } elif isinstance(x, tuple){
+            pos = Vec2D(*x);
+        } elif isinstance(x, TNavigator){
+            pos = x._position;
+        } return abs(pos - this._position);
+
+    }
+    function towards( x, y=nil){
+        """Return the angle of the line from the turtle's position to (x, y).
+
+        Arguments:
+        x -- a number   or  a pair/vector of numbers   or   a turtle instance
+        y -- a number       None                            None
+
+        call: distance(x, y)         # two coordinates
+        --or: distance((x, y))       # a pair (tuple) of coordinates
+        --or: distance(vec)          # e.g. as returned by pos()
+        --or: distance(mypen)        # where mypen is another turtle
+
+        Return the angle, between the line from turtle-position to position
+        specified by x, y and the turtle's start orientation. (Depends on
+        modes - "standard" or "logo")
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.pos()
+        (10.00, 10.00)
+        >>> turtle.towards(0,0)
+        225.0
+        """;
+        if y is not nil{
+            pos = Vec2D(x, y);
+        } if isinstance(x, Vec2D){
+            pos = x;
+        } elif isinstance(x, tuple){
+            pos = Vec2D(*x);
+        } elif isinstance(x, TNavigator){
+            pos = x._position;
+        } x, y = pos - this._position;
+        result = round(math.atan2(y, x)*180.0/math.pi, 10) % 360.0;
+        result /= this._degreesPerAU;
+        return (this._angleOffset + this._angleOrient*result) % this._fullcircle;
+
+    }
+    function heading(){
+        """ Return the turtle's current heading.
+
+        No arguments.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.left(67)
+        >>> turtle.heading()
+        67.0
+        """;
+        x, y = this._orient;
+        result = round(math.atan2(y, x)*180.0/math.pi, 10) % 360.0;
+        result /= this._degreesPerAU;
+        return (this._angleOffset + this._angleOrient*result) % this._fullcircle;
+
+    }
+    function setheading( to_angle){
+        """Set the orientation of the turtle to to_angle.
+
+        Aliases:  setheading | seth
+
+        Argument:
+        to_angle -- a number (integer or float)
+
+        Set the orientation of the turtle to to_angle.
+        Here are some common directions in degrees:
+
+         standard - mode:          logo-mode:
+        -------------------|--------------------
+           0 - east                0 - north
+          90 - north              90 - east
+         180 - west              180 - south
+         270 - south             270 - west
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.setheading(90)
+        >>> turtle.heading()
+        90
+        """;
+        angle = (to_angle - this.heading())*this._angleOrient;
+        full = this._fullcircle;
+        angle = (angle+full/2.)%full - full/2.;
+        this._rotate(angle);
+
+    }
+    function circle( radius, extent = nil, steps = nil){
+        """ Draw a circle with given radius.
+
+        Arguments:
+        radius -- a number
+        extent (optional) -- a number
+        steps (optional) -- an integer
+
+        Draw a circle with given radius. The center is radius units left
+        of the turtle; extent - an angle - determines which part of the
+        circle is drawn. If extent is not given, draw the entire circle.
+        If extent is not a full circle, one endpoint of the arc is the
+        current pen position. Draw the arc in counterclockwise direction
+        if radius is positive, otherwise in clockwise direction. Finally
+        the direction of the turtle is changed by the amount of extent.
+
+        As the circle is approximated by an inscribed regular polygon,
+        steps determines the number of steps to use. If not given,
+        it will be calculated automatically. Maybe used to draw regular
+        polygons.
+
+        call: circle(radius)                  # full circle
+        --or: circle(radius, extent)          # arc
+        --or: circle(radius, extent, steps)
+        --or: circle(radius, steps=6)         # 6-sided polygon
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.circle(50)
+        >>> turtle.circle(120, 180)  # semicircle
+        """;
+        if this.undobuffer{
+            this.undobuffer.push(["seq"]);
+            this.undobuffer.cumulate = true;
+        } speed = this.speed();
+        if extent is nil{
+            extent = this._fullcircle;
+        } if steps is nil{
+            frac = abs(extent)/this._fullcircle;
+            steps = 1+int(min(11+abs(radius)/6.0, 59.0)*frac);
+        } w = 1.0 * extent / steps;
+        w2 = 0.5 * w;
+        l = 2.0 * radius * math.sin(w2*math.pi/180.0*this._degreesPerAU);
+        if radius < 0{
+            l, w, w2 = -l, -w, -w2;
+        } tr = this.tracer();
+        dl = this._delay();
+        if speed == 0{
+            this.tracer(0, 0);
+        } else{
+            this.speed(0);
+        } this._rotate(w2);
+        for i in range(steps){
+            this.speed(speed);
+            this._go(l);
+            this.speed(0);
+            this._rotate(w);
+        } this._rotate(-w2);
+        if speed == 0{
+            this.tracer(tr, dl);
+        } this.speed(speed);
+        if this.undobuffer{
+            this.undobuffer.cumulate = false;
+
+## three dummy methods to be implemented by child class:
+
+    }
+    } function speed( s=0){
+        """dummy method - to be overwritten by child class""";
+    } function tracer( a=nil, b=nil){
+        """dummy method - to be overwritten by child class""";
+    } function _delay( n=nil){
+        """dummy method - to be overwritten by child class""";
+
+    }
+    fd = forward;
+    bk = back;
+    backward = back;
+    rt = right;
+    lt = left;
+    position = pos;
+    setpos = goto;
+    setposition = goto;
+    seth = setheading;
+
+
+}
+class TPen(object){
+    """Drawing part of the RawTurtle.
+    Implements drawing properties.
+    """;
+    function __init__( resizemode=_CFG["resizemode"]){
+        this._resizemode = resizemode; # or "user" or "noresize"
+        this.undobuffer = nil;
+        TPen._reset(this);
+
+    }
+    function _reset( pencolor=_CFG["pencolor"],
+                     fillcolor=_CFG["fillcolor"]){
+        this._pensize = 1;
+        this._shown = true;
+        this._pencolor = pencolor;
+        this._fillcolor = fillcolor;
+        this._drawing = true;
+        this._speed = 3;
+        this._stretchfactor = (1, 1);
+        this._tilt = 0;
+        this._outlinewidth = 1;
+        ### self.screen = None  # to override by child class
+
+    }
+    function resizemode( rmode=nil){
+        """Set resizemode to one of the values: "auto", "user", "noresize".
+
+        (Optional) Argument:
+        rmode -- one of the strings "auto", "user", "noresize"
+
+        Different resizemodes have the following effects:
+          - "auto" adapts the appearance of the turtle
+                   corresponding to the value of pensize.
+          - "user" adapts the appearance of the turtle according to the
+                   values of stretchfactor and outlinewidth (outline),
+                   which are set by shapesize()
+          - "noresize" no adaption of the turtle's appearance takes place.
+        If no argument is given, return current resizemode.
+        resizemode("user") is called by a call of shapesize with arguments.
+
+
+        Examples (for a Turtle instance named turtle):
+        >>> turtle.resizemode("noresize")
+        >>> turtle.resizemode()
+        'noresize'
+        """;
+        if rmode is nil{
+            return this._resizemode;
+        } rmode = rmode.lower();
+        if rmode in ["auto", "user", "noresize"]{
+            this.pen(resizemode=rmode);
+
+    }
+    } function pensize( width=nil){
+        """Set or return the line thickness.
+
+        Aliases:  pensize | width
+
+        Argument:
+        width -- positive number
+
+        Set the line thickness to width or return it. If resizemode is set
+        to "auto" and turtleshape is a polygon, that polygon is drawn with
+        the same line thickness. If no argument is given, current pensize
+        is returned.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.pensize()
+        1
+        >>> turtle.pensize(10)   # from here on lines of width 10 are drawn
+        """;
+        if width is nil{
+            return this._pensize;
+        } this.pen(pensize=width);
+
+
+    }
+    function penup(){
+        """Pull the pen up -- no drawing when moving.
+
+        Aliases: penup | pu | up
+
+        No argument
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.penup()
+        """;
+        if not this._drawing{
+            return;
+        } this.pen(pendown=false);
+
+    }
+    function pendown(){
+        """Pull the pen down -- drawing when moving.
+
+        Aliases: pendown | pd | down
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.pendown()
+        """;
+        if this._drawing{
+            return;
+        } this.pen(pendown=true);
+
+    }
+    function isdown(){
+        """Return True if pen is down, False if it's up.
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.penup()
+        >>> turtle.isdown()
+        False
+        >>> turtle.pendown()
+        >>> turtle.isdown()
+        True
+        """;
+        return this._drawing;
+
+    }
+    function speed( speed=nil){
+        """ Return or set the turtle's speed.
+
+        Optional argument:
+        speed -- an integer in the range 0..10 or a speedstring (see below)
+
+        Set the turtle's speed to an integer value in the range 0 .. 10.
+        If no argument is given: return current speed.
+
+        If input is a number greater than 10 or smaller than 0.5,
+        speed is set to 0.
+        Speedstrings  are mapped to speedvalues in the following way:
+            'fastest' :  0
+            'fast'    :  10
+            'normal'  :  6
+            'slow'    :  3
+            'slowest' :  1
+        speeds from 1 to 10 enforce increasingly faster animation of
+        line drawing and turtle turning.
+
+        Attention:
+        speed = 0 : *no* animation takes place. forward/back makes turtle jump
+        and likewise left/right make the turtle turn instantly.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.speed(3)
+        """;
+        speeds = {'fastest':0, 'fast':10, 'normal':6, 'slow':3, 'slowest':1 };
+        if speed is nil{
+            return this._speed;
+        } if speed in speeds{
+            speed = speeds[speed];
+        } elif 0.5 < speed < 10.5{
+            speed = int(round(speed));
+        } else{
+            speed = 0;
+        } this.pen(speed=speed);
+
+    }
+    function color( *args){
+        """Return or set the pencolor and fillcolor.
+
+        Arguments:
+        Several input formats are allowed.
+        They use 0, 1, 2, or 3 arguments as follows:
+
+        color()
+            Return the current pencolor and the current fillcolor
+            as a pair of color specification strings as are returned
+            by pencolor and fillcolor.
+        color(colorstring), color((r,g,b)), color(r,g,b)
+            inputs as in pencolor, set both, fillcolor and pencolor,
+            to the given value.
+        color(colorstring1, colorstring2),
+        color((r1,g1,b1), (r2,g2,b2))
+            equivalent to pencolor(colorstring1) and fillcolor(colorstring2)
+            and analogously, if the other input format is used.
+
+        If turtleshape is a polygon, outline and interior of that polygon
+        is drawn with the newly set colors.
+        For mor info see: pencolor, fillcolor
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.color('red', 'green')
+        >>> turtle.color()
+        ('red', 'green')
+        >>> colormode(255)
+        >>> color((40, 80, 120), (160, 200, 240))
+        >>> color()
+        ('#285078', '#a0c8f0')
+        """;
+        if args{
+            l = len(args);
+            if l == 1{
+                pcolor = fcolor = args[0];
+            } elif l == 2{
+                pcolor, fcolor = args;
+            } elif l == 3{
+                pcolor = fcolor = args;
+            } pcolor = this._colorstr(pcolor);
+            fcolor = this._colorstr(fcolor);
+            this.pen(pencolor=pcolor, fillcolor=fcolor);
+        } else{
+            return this._color(this._pencolor), this._color(this._fillcolor);
+
+    }
+    } function pencolor( *args){
+        """ Return or set the pencolor.
+
+        Arguments:
+        Four input formats are allowed:
+          - pencolor()
+            Return the current pencolor as color specification string,
+            possibly in hex-number format (see example).
+            May be used as input to another color/pencolor/fillcolor call.
+          - pencolor(colorstring)
+            s is a Tk color specification string, such as "red" or "yellow"
+          - pencolor((r, g, b))
+            *a tuple* of r, g, and b, which represent, an RGB color,
+            and each of r, g, and b are in the range 0..colormode,
+            where colormode is either 1.0 or 255
+          - pencolor(r, g, b)
+            r, g, and b represent an RGB color, and each of r, g, and b
+            are in the range 0..colormode
+
+        If turtleshape is a polygon, the outline of that polygon is drawn
+        with the newly set pencolor.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.pencolor('brown')
+        >>> tup = (0.2, 0.8, 0.55)
+        >>> turtle.pencolor(tup)
+        >>> turtle.pencolor()
+        '#33cc8c'
+        """;
+        if args{
+            color = this._colorstr(args);
+            if color == this._pencolor{
+                return;
+            } this.pen(pencolor=color);
+        } else{
+            return this._color(this._pencolor);
+
+    }
+    } function fillcolor( *args){
+        """ Return or set the fillcolor.
+
+        Arguments:
+        Four input formats are allowed:
+          - fillcolor()
+            Return the current fillcolor as color specification string,
+            possibly in hex-number format (see example).
+            May be used as input to another color/pencolor/fillcolor call.
+          - fillcolor(colorstring)
+            s is a Tk color specification string, such as "red" or "yellow"
+          - fillcolor((r, g, b))
+            *a tuple* of r, g, and b, which represent, an RGB color,
+            and each of r, g, and b are in the range 0..colormode,
+            where colormode is either 1.0 or 255
+          - fillcolor(r, g, b)
+            r, g, and b represent an RGB color, and each of r, g, and b
+            are in the range 0..colormode
+
+        If turtleshape is a polygon, the interior of that polygon is drawn
+        with the newly set fillcolor.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.fillcolor('violet')
+        >>> col = turtle.pencolor()
+        >>> turtle.fillcolor(col)
+        >>> turtle.fillcolor(0, .5, 0)
+        """;
+        if args{
+            color = this._colorstr(args);
+            if color == this._fillcolor{
+                return;
+            } this.pen(fillcolor=color);
+        } else{
+            return this._color(this._fillcolor);
+
+    }
+    } function showturtle(){
+        """Makes the turtle visible.
+
+        Aliases: showturtle | st
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.hideturtle()
+        >>> turtle.showturtle()
+        """;
+        this.pen(shown=true);
+
+    }
+    function hideturtle(){
+        """Makes the turtle invisible.
+
+        Aliases: hideturtle | ht
+
+        No argument.
+
+        It's a good idea to do this while you're in the
+        middle of a complicated drawing, because hiding
+        the turtle speeds up the drawing observably.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.hideturtle()
+        """;
+        this.pen(shown=false);
+
+    }
+    function isvisible(){
+        """Return True if the Turtle is shown, False if it's hidden.
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.hideturtle()
+        >>> print turtle.isvisible():
+        False
+        """;
+        return this._shown;
+
+    }
+    function pen( pen=nil, **pendict){
+        """Return or set the pen's attributes.
+
+        Arguments:
+            pen -- a dictionary with some or all of the below listed keys.
+            **pendict -- one or more keyword-arguments with the below
+                         listed keys as keywords.
+
+        Return or set the pen's attributes in a 'pen-dictionary'
+        with the following key/value pairs:
+           "shown"      :   True/False
+           "pendown"    :   True/False
+           "pencolor"   :   color-string or color-tuple
+           "fillcolor"  :   color-string or color-tuple
+           "pensize"    :   positive number
+           "speed"      :   number in range 0..10
+           "resizemode" :   "auto" or "user" or "noresize"
+           "stretchfactor": (positive number, positive number)
+           "outline"    :   positive number
+           "tilt"       :   number
+
+        This dictionary can be used as argument for a subsequent
+        pen()-call to restore the former pen-state. Moreover one
+        or more of these attributes can be provided as keyword-arguments.
+        This can be used to set several pen attributes in one statement.
+
+
+        Examples (for a Turtle instance named turtle):
+        >>> turtle.pen(fillcolor="black", pencolor="red", pensize=10)
+        >>> turtle.pen()
+        {'pensize': 10, 'shown': True, 'resizemode': 'auto', 'outline': 1,
+        'pencolor': 'red', 'pendown': True, 'fillcolor': 'black',
+        'stretchfactor': (1,1), 'speed': 3}
+        >>> penstate=turtle.pen()
+        >>> turtle.color("yellow","")
+        >>> turtle.penup()
+        >>> turtle.pen()
+        {'pensize': 10, 'shown': True, 'resizemode': 'auto', 'outline': 1,
+        'pencolor': 'yellow', 'pendown': False, 'fillcolor': '',
+        'stretchfactor': (1,1), 'speed': 3}
+        >>> p.pen(penstate, fillcolor="green")
+        >>> p.pen()
+        {'pensize': 10, 'shown': True, 'resizemode': 'auto', 'outline': 1,
+        'pencolor': 'red', 'pendown': True, 'fillcolor': 'green',
+        'stretchfactor': (1,1), 'speed': 3}
+        """;
+        _pd =  {"shown"         : this._shown,
+                "pendown"       : this._drawing,
+                "pencolor"      : this._pencolor,
+                "fillcolor"     : this._fillcolor,
+                "pensize"       : this._pensize,
+                "speed"         : this._speed,
+                "resizemode"    : this._resizemode,
+                "stretchfactor" : this._stretchfactor,
+                "outline"       : this._outlinewidth,
+                "tilt"          : this._tilt
+               };
+
+        if not (pen or pendict){
+            return _pd;
+
+        }
+        if isinstance(pen, dict){
+            p = pen;
+        } else{
+            p = {};
+        } p.update(pendict);
+
+        _p_buf = {};
+        for key in p{
+            _p_buf[key] = _pd[key];
+
+        }
+        if this.undobuffer{
+            this.undobuffer.push(("pen", _p_buf));
+
+        }
+        newLine = false;
+        if "pendown" in p{
+            if this._drawing != p["pendown"]{
+                newLine = true;
+        } } if "pencolor" in p{
+            if isinstance(p["pencolor"], tuple){
+                p["pencolor"] = this._colorstr((p["pencolor"],));
+            } if this._pencolor != p["pencolor"]{
+                newLine = true;
+        } } if "pensize" in p{
+            if this._pensize != p["pensize"]{
+                newLine = true;
+        } } if newLine{
+            this._newLine();
+        } if "pendown" in p{
+            this._drawing = p["pendown"];
+        } if "pencolor" in p{
+            this._pencolor = p["pencolor"];
+        } if "pensize" in p{
+            this._pensize = p["pensize"];
+        } if "fillcolor" in p{
+            if isinstance(p["fillcolor"], tuple){
+                p["fillcolor"] = this._colorstr((p["fillcolor"],));
+            } this._fillcolor = p["fillcolor"];
+        } if "speed" in p{
+            this._speed = p["speed"];
+        } if "resizemode" in p{
+            this._resizemode = p["resizemode"];
+        } if "stretchfactor" in p{
+            sf = p["stretchfactor"];
+            if isinstance(sf, (int, long, float)){
+                sf = (sf, sf);
+            } this._stretchfactor = sf;
+        } if "outline" in p{
+            this._outlinewidth = p["outline"];
+        } if "shown" in p{
+            this._shown = p["shown"];
+        } if "tilt" in p{
+            this._tilt = p["tilt"];
+        } this._update();
+
+## three dummy methods to be implemented by child class:
+
+    }
+    function _newLine( usePos = true){
+        """dummy method - to be overwritten by child class""";
+    } function _update( count=true, forced=false){
+        """dummy method - to be overwritten by child class""";
+    } function _color( args){
+        """dummy method - to be overwritten by child class""";
+    } function _colorstr( args){
+        """dummy method - to be overwritten by child class""";
+
+    }
+    width = pensize;
+    up = penup;
+    pu = penup;
+    pd = pendown;
+    down = pendown;
+    st = showturtle;
+    ht = hideturtle;
+
+
+}
+class _TurtleImage(object){
+    """Helper class: Datatype to store Turtle attributes
+    """;
+
+    function __init__( screen, shapeIndex){
+        this.screen = screen;
+        this._type = nil;
+        this._setshape(shapeIndex);
+
+    }
+    function _setshape( shapeIndex){
+        screen = this.screen; # RawTurtle.screens[self.screenIndex]
+        this.shapeIndex = shapeIndex;
+        if this._type == "polygon" == screen._shapes[shapeIndex]._type{
+            return;
+        } if this._type == "image" == screen._shapes[shapeIndex]._type{
+            return;
+        } if this._type in ["image", "polygon"]{
+            screen._delete(this._item);
+        } elif this._type == "compound"{
+            for item in this._item{
+                screen._delete(item);
+        } } this._type = screen._shapes[shapeIndex]._type;
+        if this._type == "polygon"{
+            this._item = screen._createpoly();
+        } elif this._type == "image"{
+            this._item = screen._createimage(screen._shapes["blank"]._data);
+        } elif this._type == "compound"{
+            this._item = [screen._createpoly() for item in
+                                          screen._shapes[shapeIndex]._data];
+
+
+}
+} } class RawTurtle(TPen, TNavigator){
+    """Animation part of the RawTurtle.
+    Puts RawTurtle upon a TurtleScreen and provides tools for
+    its animation.
+    """;
+    screens = [];
+
+    function __init__( canvas=nil,
+                 shape=_CFG["shape"],
+                 undobuffersize=_CFG["undobuffersize"],
+                 visible=_CFG["visible"]){
+        if isinstance(canvas, _Screen){
+            this.screen = canvas;
+        } elif isinstance(canvas, TurtleScreen){
+            if canvas not in RawTurtle.screens{
+                RawTurtle.screens.append(canvas);
+            } this.screen = canvas;
+        } elif isinstance(canvas, (ScrolledCanvas, Canvas)){
+            for screen in RawTurtle.screens{
+                if screen.cv == canvas{
+                    this.screen = screen;
+                    break;
+            } } else{
+                this.screen = TurtleScreen(canvas);
+                RawTurtle.screens.append(this.screen);
+        } } else{
+            raise TurtleGraphicsError("bad canvas argument %s" % canvas);
+
+        }
+        screen = this.screen;
+        TNavigator.__init__(this, screen.mode());
+        TPen.__init__(this);
+        screen._turtles.append(this);
+        this.drawingLineItem = screen._createline();
+        this.turtle = _TurtleImage(screen, shape);
+        this._poly = nil;
+        this._creatingPoly = false;
+        this._fillitem = this._fillpath = nil;
+        this._shown = visible;
+        this._hidden_from_screen = false;
+        this.currentLineItem = screen._createline();
+        this.currentLine = [this._position];
+        this.items = [this.currentLineItem];
+        this.stampItems = [];
+        this._undobuffersize = undobuffersize;
+        this.undobuffer = Tbuffer(undobuffersize);
+        this._update();
+
+    }
+    function reset(){
+        """Delete the turtle's drawings and restore its default values.
+
+        No argument.
+,
+        Delete the turtle's drawings from the screen, re-center the turtle
+        and set variables to the default values.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.position()
+        (0.00,-22.00)
+        >>> turtle.heading()
+        100.0
+        >>> turtle.reset()
+        >>> turtle.position()
+        (0.00,0.00)
+        >>> turtle.heading()
+        0.0
+        """;
+        TNavigator.reset(this);
+        TPen._reset(this);
+        this._clear();
+        this._drawturtle();
+        this._update();
+
+    }
+    function setundobuffer( size){
+        """Set or disable undobuffer.
+
+        Argument:
+        size -- an integer or None
+
+        If size is an integer an empty undobuffer of given size is installed.
+        Size gives the maximum number of turtle-actions that can be undone
+        by the undo() function.
+        If size is None, no undobuffer is present.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.setundobuffer(42)
+        """;
+        if size is nil or size <= 0{
+            this.undobuffer = nil;
+        } else{
+            this.undobuffer = Tbuffer(size);
+
+    }
+    } function undobufferentries(){
+        """Return count of entries in the undobuffer.
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> while undobufferentries():
+        ...     undo()
+        """;
+        if this.undobuffer is nil{
+            return 0;
+        } return this.undobuffer.nr_of_items();
+
+    }
+    function _clear(){
+        """Delete all of pen's drawings""";
+        this._fillitem = this._fillpath = nil;
+        for item in this.items{
+            this.screen._delete(item);
+        } this.currentLineItem = this.screen._createline();
+        this.currentLine = [];
+        if this._drawing{
+            this.currentLine.append(this._position);
+        } this.items = [this.currentLineItem];
+        this.clearstamps();
+        this.setundobuffer(this._undobuffersize);
+
+
+    }
+    function clear(){
+        """Delete the turtle's drawings from the screen. Do not move turtle.
+
+        No arguments.
+
+        Delete the turtle's drawings from the screen. Do not move turtle.
+        State and position of the turtle as well as drawings of other
+        turtles are not affected.
+
+        Examples (for a Turtle instance named turtle):
+        >>> turtle.clear()
+        """;
+        this._clear();
+        this._update();
+
+    }
+    function _update_data(){
+        this.screen._incrementudc();
+        if this.screen._updatecounter != 0{
+            return;
+        } if len(this.currentLine)>1{
+            this.screen._drawline(this.currentLineItem, this.currentLine,
+                                  this._pencolor, this._pensize);
+
+    }
+    } function _update(){
+        """Perform a Turtle-data update.
+        """;
+        screen = this.screen;
+        if screen._tracing == 0{
+            return;
+        } elif screen._tracing == 1{
+            this._update_data();
+            this._drawturtle();
+            screen._update();                  # TurtleScreenBase
+            screen._delay(screen._delayvalue); # TurtleScreenBase
+        } else{
+            this._update_data();
+            if screen._updatecounter == 0{
+                for t in screen.turtles(){
+                    t._drawturtle();
+                } screen._update();
+
+    }
+    } } function tracer( flag=nil, delay=nil){
+        """Turns turtle animation on/off and set delay for update drawings.
+
+        Optional arguments:
+        n -- nonnegative  integer
+        delay -- nonnegative  integer
+
+        If n is given, only each n-th regular screen update is really performed.
+        (Can be used to accelerate the drawing of complex graphics.)
+        Second arguments sets delay value (see RawTurtle.delay())
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.tracer(8, 25)
+        >>> dist = 2
+        >>> for i in range(200):
+        ...     turtle.fd(dist)
+        ...     turtle.rt(90)
+        ...     dist += 2
+        """;
+        return this.screen.tracer(flag, delay);
+
+    }
+    function _color( args){
+        return this.screen._color(args);
+
+    }
+    function _colorstr( args){
+        return this.screen._colorstr(args);
+
+    }
+    function _cc( args){
+        """Convert colortriples to hexstrings.
+        """;
+        if isinstance(args, basestring){
+            return args;
+        } try{
+            r, g, b = args;
+        } except (TypeError, ValueError){
+            raise TurtleGraphicsError("bad color arguments: %s" % str(args));
+        } if this.screen._colormode == 1.0{
+            r, g, b = [round(255.0*x) for x in (r, g, b)];
+        } if not ((0 <= r <= 255) and (0 <= g <= 255) and (0 <= b <= 255)){
+            raise TurtleGraphicsError("bad color sequence: %s" % str(args));
+        } return "#%02x%02x%02x" % (r, g, b);
+
+    }
+    function clone(){
+        """Create and return a clone of the turtle.
+
+        No argument.
+
+        Create and return a clone of the turtle with same position, heading
+        and turtle properties.
+
+        Example (for a Turtle instance named mick):
+        mick = Turtle()
+        joe = mick.clone()
+        """;
+        screen = this.screen;
+        this._newLine(this._drawing);
+
+        turtle = this.turtle;
+        this.screen = nil;
+        this.turtle = nil;  # too make self deepcopy-able
+
+        q = deepcopy(this);
+
+        this.screen = screen;
+        this.turtle = turtle;
+
+        q.screen = screen;
+        q.turtle = _TurtleImage(screen, this.turtle.shapeIndex);
+
+        screen._turtles.append(q);
+        ttype = screen._shapes[this.turtle.shapeIndex]._type;
+        if ttype == "polygon"{
+            q.turtle._item = screen._createpoly();
+        } elif ttype == "image"{
+            q.turtle._item = screen._createimage(screen._shapes["blank"]._data);
+        } elif ttype == "compound"{
+            q.turtle._item = [screen._createpoly() for item in
+                              screen._shapes[this.turtle.shapeIndex]._data];
+        } q.currentLineItem = screen._createline();
+        q._update();
+        return q;
+
+    }
+    function shape( name=nil){
+        """Set turtle shape to shape with given name / return current shapename.
+
+        Optional argument:
+        name -- a string, which is a valid shapename
+
+        Set turtle shape to shape with given name or, if name is not given,
+        return name of current shape.
+        Shape with name must exist in the TurtleScreen's shape dictionary.
+        Initially there are the following polygon shapes:
+        'arrow', 'turtle', 'circle', 'square', 'triangle', 'classic'.
+        To learn about how to deal with shapes see Screen-method register_shape.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.shape()
+        'arrow'
+        >>> turtle.shape("turtle")
+        >>> turtle.shape()
+        'turtle'
+        """;
+        if name is nil{
+            return this.turtle.shapeIndex;
+        } if not name in this.screen.getshapes(){
+            raise TurtleGraphicsError("There is no shape named %s" % name);
+        } this.turtle._setshape(name);
+        this._update();
+
+    }
+    function shapesize( stretch_wid=nil, stretch_len=nil, outline=nil){
+        """Set/return turtle's stretchfactors/outline. Set resizemode to "user".
+
+        Optional arguments:
+           stretch_wid : positive number
+           stretch_len : positive number
+           outline  : positive number
+
+        Return or set the pen's attributes x/y-stretchfactors and/or outline.
+        Set resizemode to "user".
+        If and only if resizemode is set to "user", the turtle will be displayed
+        stretched according to its stretchfactors:
+        stretch_wid is stretchfactor perpendicular to orientation
+        stretch_len is stretchfactor in direction of turtles orientation.
+        outline determines the width of the shapes's outline.
+
+        Examples (for a Turtle instance named turtle):
+        >>> turtle.resizemode("user")
+        >>> turtle.shapesize(5, 5, 12)
+        >>> turtle.shapesize(outline=8)
+        """;
+        if stretch_wid is stretch_len is outline is nil{
+            stretch_wid, stretch_len = this._stretchfactor;
+            return stretch_wid, stretch_len, this._outlinewidth;
+        } if stretch_wid is not nil{
+            if stretch_len is nil{
+                stretchfactor = stretch_wid, stretch_wid;
+            } else{
+                stretchfactor = stretch_wid, stretch_len;
+        } } elif stretch_len is not nil{
+            stretchfactor = this._stretchfactor[0], stretch_len;
+        } else{
+            stretchfactor = this._stretchfactor;
+        } if outline is nil{
+            outline = this._outlinewidth;
+        } this.pen(resizemode="user",
+                 stretchfactor=stretchfactor, outline=outline);
+
+    }
+    function settiltangle( angle){
+        """Rotate the turtleshape to point in the specified direction
+
+        Optional argument:
+        angle -- number
+
+        Rotate the turtleshape to point in the direction specified by angle,
+        regardless of its current tilt-angle. DO NOT change the turtle's
+        heading (direction of movement).
+
+
+        Examples (for a Turtle instance named turtle):
+        >>> turtle.shape("circle")
+        >>> turtle.shapesize(5,2)
+        >>> turtle.settiltangle(45)
+        >>> stamp()
+        >>> turtle.fd(50)
+        >>> turtle.settiltangle(-45)
+        >>> stamp()
+        >>> turtle.fd(50)
+        """;
+        tilt = -angle * this._degreesPerAU * this._angleOrient;
+        tilt = (tilt * math.pi / 180.0) % (2*math.pi);
+        this.pen(resizemode="user", tilt=tilt);
+
+    }
+    function tiltangle(){
+        """Return the current tilt-angle.
+
+        No argument.
+
+        Return the current tilt-angle, i. e. the angle between the
+        orientation of the turtleshape and the heading of the turtle
+        (its direction of movement).
+
+        Examples (for a Turtle instance named turtle):
+        >>> turtle.shape("circle")
+        >>> turtle.shapesize(5,2)
+        >>> turtle.tilt(45)
+        >>> turtle.tiltangle()
+        """;
+        tilt = -this._tilt * (180.0/math.pi) * this._angleOrient;
+        return (tilt / this._degreesPerAU) % this._fullcircle;
+
+    }
+    function tilt( angle){
+        """Rotate the turtleshape by angle.
+
+        Argument:
+        angle - a number
+
+        Rotate the turtleshape by angle from its current tilt-angle,
+        but do NOT change the turtle's heading (direction of movement).
+
+        Examples (for a Turtle instance named turtle):
+        >>> turtle.shape("circle")
+        >>> turtle.shapesize(5,2)
+        >>> turtle.tilt(30)
+        >>> turtle.fd(50)
+        >>> turtle.tilt(30)
+        >>> turtle.fd(50)
+        """;
+        this.settiltangle(angle + this.tiltangle());
+
+    }
+    function _polytrafo( poly){
+        """Computes transformed polygon shapes from a shape
+        according to current position and heading.
+        """;
+        screen = this.screen;
+        p0, p1 = this._position;
+        e0, e1 = this._orient;
+        e = Vec2D(e0, e1 * screen.yscale / screen.xscale);
+        e0, e1 = (1.0 / abs(e)) * e;
+        return [(p0+(e1*x+e0*y)/screen.xscale, p1+(-e0*x+e1*y)/screen.yscale)
+                                                           for (x, y) in poly];
+
+    }
+    function _drawturtle(){
+        """Manages the correct rendering of the turtle with respect to
+        its shape, resizemode, stretch and tilt etc.""";
+        screen = this.screen;
+        shape = screen._shapes[this.turtle.shapeIndex];
+        ttype = shape._type;
+        titem = this.turtle._item;
+        if this._shown and screen._updatecounter == 0 and screen._tracing > 0{
+            this._hidden_from_screen = false;
+            tshape = shape._data;
+            if ttype == "polygon"{
+                if this._resizemode == "noresize"{
+                    w = 1;
+                    shape = tshape;
+                } else{
+                    if this._resizemode == "auto"{
+                        lx = ly = max(1, this._pensize/5.0);
+                        w = this._pensize;
+                        tiltangle = 0;
+                    } elif this._resizemode == "user"{
+                        lx, ly = this._stretchfactor;
+                        w = this._outlinewidth;
+                        tiltangle = this._tilt;
+                    } shape = [(lx*x, ly*y) for (x, y) in tshape];
+                    t0, t1 = math.sin(tiltangle), math.cos(tiltangle);
+                    shape = [(t1*x+t0*y, -t0*x+t1*y) for (x, y) in shape];
+                } shape = this._polytrafo(shape);
+                fc, oc = this._fillcolor, this._pencolor;
+                screen._drawpoly(titem, shape, fill=fc, outline=oc,
+                                                      width=w, top=true);
+            } elif ttype == "image"{
+                screen._drawimage(titem, this._position, tshape);
+            } elif ttype == "compound"{
+                lx, ly = this._stretchfactor;
+                w = this._outlinewidth;
+                for item, (poly, fc, oc) in zip(titem, tshape){
+                    poly = [(lx*x, ly*y) for (x, y) in poly];
+                    poly = this._polytrafo(poly);
+                    screen._drawpoly(item, poly, fill=this._cc(fc),
+                                     outline=this._cc(oc), width=w, top=true);
+        } } } else{
+            if this._hidden_from_screen{
+                return;
+            } if ttype == "polygon"{
+                screen._drawpoly(titem, ((0, 0), (0, 0), (0, 0)), "", "");
+            } elif ttype == "image"{
+                screen._drawimage(titem, this._position,
+                                          screen._shapes["blank"]._data);
+            } elif ttype == "compound"{
+                for item in titem{
+                    screen._drawpoly(item, ((0, 0), (0, 0), (0, 0)), "", "");
+            } } this._hidden_from_screen = true;
+
+##############################  stamp stuff  ###############################
+
+    }
+    } function stamp(){
+        """Stamp a copy of the turtleshape onto the canvas and return its id.
+
+        No argument.
+
+        Stamp a copy of the turtle shape onto the canvas at the current
+        turtle position. Return a stamp_id for that stamp, which can be
+        used to delete it by calling clearstamp(stamp_id).
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.color("blue")
+        >>> turtle.stamp()
+        13
+        >>> turtle.fd(50)
+        """;
+        screen = this.screen;
+        shape = screen._shapes[this.turtle.shapeIndex];
+        ttype = shape._type;
+        tshape = shape._data;
+        if ttype == "polygon"{
+            stitem = screen._createpoly();
+            if this._resizemode == "noresize"{
+                w = 1;
+                shape = tshape;
+            } else{
+                if this._resizemode == "auto"{
+                    lx = ly = max(1, this._pensize/5.0);
+                    w = this._pensize;
+                    tiltangle = 0;
+                } elif this._resizemode == "user"{
+                    lx, ly = this._stretchfactor;
+                    w = this._outlinewidth;
+                    tiltangle = this._tilt;
+                } shape = [(lx*x, ly*y) for (x, y) in tshape];
+                t0, t1 = math.sin(tiltangle), math.cos(tiltangle);
+                shape = [(t1*x+t0*y, -t0*x+t1*y) for (x, y) in shape];
+            } shape = this._polytrafo(shape);
+            fc, oc = this._fillcolor, this._pencolor;
+            screen._drawpoly(stitem, shape, fill=fc, outline=oc,
+                                                  width=w, top=true);
+        } elif ttype == "image"{
+            stitem = screen._createimage("");
+            screen._drawimage(stitem, this._position, tshape);
+        } elif ttype == "compound"{
+            stitem = [];
+            for element in tshape{
+                item = screen._createpoly();
+                stitem.append(item);
+            } stitem = tuple(stitem);
+            lx, ly = this._stretchfactor;
+            w = this._outlinewidth;
+            for item, (poly, fc, oc) in zip(stitem, tshape){
+                poly = [(lx*x, ly*y) for (x, y) in poly];
+                poly = this._polytrafo(poly);
+                screen._drawpoly(item, poly, fill=this._cc(fc),
+                                 outline=this._cc(oc), width=w, top=true);
+        } } this.stampItems.append(stitem);
+        this.undobuffer.push(("stamp", stitem));
+        return stitem;
+
+    }
+    function _clearstamp( stampid){
+        """does the work for clearstamp() and clearstamps()
+        """;
+        if stampid in this.stampItems{
+            if isinstance(stampid, tuple){
+                for subitem in stampid{
+                    this.screen._delete(subitem);
+            } } else{
+                this.screen._delete(stampid);
+            } this.stampItems.remove(stampid);
+        # Delete stampitem from undobuffer if necessary
+        # if clearstamp is called directly.
+        }
+        item = ("stamp", stampid);
+        buf = this.undobuffer;
+        if item not in buf.buffer{
+            return;
+        } index = buf.buffer.index(item);
+        buf.buffer.remove(item);
+        if index <= buf.ptr{
+            buf.ptr = (buf.ptr - 1) % buf.bufsize;
+        } buf.buffer.insert((buf.ptr+1)%buf.bufsize, [nil]);
+
+    }
+    function clearstamp( stampid){
+        """Delete stamp with given stampid
+
+        Argument:
+        stampid - an integer, must be return value of previous stamp() call.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.color("blue")
+        >>> astamp = turtle.stamp()
+        >>> turtle.fd(50)
+        >>> turtle.clearstamp(astamp)
+        """;
+        this._clearstamp(stampid);
+        this._update();
+
+    }
+    function clearstamps( n=nil){
+        """Delete all or first/last n of turtle's stamps.
+
+        Optional argument:
+        n -- an integer
+
+        If n is None, delete all of pen's stamps,
+        else if n > 0 delete first n stamps
+        else if n < 0 delete last n stamps.
+
+        Example (for a Turtle instance named turtle):
+        >>> for i in range(8):
+        ...     turtle.stamp(); turtle.fd(30)
+        ...
+        >>> turtle.clearstamps(2)
+        >>> turtle.clearstamps(-2)
+        >>> turtle.clearstamps()
+        """;
+        if n is nil{
+            toDelete = this.stampItems[:];
+        } elif n >= 0{
+            toDelete = this.stampItems[:n];
+        } else{
+            toDelete = this.stampItems[n:];
+        } for item in toDelete{
+            this._clearstamp(item);
+        } this._update();
+
+    }
+    function _goto( end){
+        """Move the pen to the point end, thereby drawing a line
+        if pen is down. All other methods for turtle movement depend
+        on this one.
+        """;
+        ## Version mit undo-stuff
+        go_modes = ( this._drawing,
+                     this._pencolor,
+                     this._pensize,
+                     isinstance(this._fillpath, list));
+        screen = this.screen;
+        undo_entry = ("go", this._position, end, go_modes,
+                      (this.currentLineItem,
+                      this.currentLine[:],
+                      screen._pointlist(this.currentLineItem),
+                      this.items[:])
+                      );
+        if this.undobuffer{
+            this.undobuffer.push(undo_entry);
+        } start = this._position;
+        if this._speed and screen._tracing == 1{
+            diff = (end-start);
+            diffsq = (diff[0]*screen.xscale)**2 + (diff[1]*screen.yscale)**2;
+            nhops = 1+int((diffsq**0.5)/(3*(1.1**this._speed)*this._speed));
+            delta = diff * (1.0/nhops);
+            for n in range(1, nhops){
+                if n == 1{
+                    top = true;
+                } else{
+                    top = false;
+                } this._position = start + delta * n;
+                if this._drawing{
+                    screen._drawline(this.drawingLineItem,
+                                     (start, this._position),
+                                     this._pencolor, this._pensize, top);
+                } this._update();
+            } if this._drawing{
+                screen._drawline(this.drawingLineItem, ((0, 0), (0, 0)),
+                                               fill="", width=this._pensize);
+        # Turtle now at end,
+        }
+        } if this._drawing{ # now update currentLine
+            this.currentLine.append(end);
+        } if isinstance(this._fillpath, list){
+            this._fillpath.append(end);
+        ######    vererbung!!!!!!!!!!!!!!!!!!!!!!
+        }
+        this._position = end;
+        if this._creatingPoly{
+            this._poly.append(end);
+        } if len(this.currentLine) > 42{ # 42! answer to the ultimate question
+                                       # of life, the universe and everything
+            this._newLine();
+        } this._update(); #count=True)
+
+    }
+    function _undogoto( entry){
+        """Reverse a _goto. Used for undo()
+        """;
+        old, new, go_modes, coodata = entry;
+        drawing, pc, ps, filling = go_modes;
+        cLI, cL, pl, items = coodata;
+        screen = this.screen;
+        if abs(this._position - new) > 0.5{
+            print "undogoto: HALLO-DA-STIMMT-WAS-NICHT!";
+        # restore former situation
+        }
+        this.currentLineItem = cLI;
+        this.currentLine = cL;
+
+        if pl == [(0, 0), (0, 0)]{
+            usepc = "";
+        } else{
+            usepc = pc;
+        } screen._drawline(cLI, pl, fill=usepc, width=ps);
+
+        todelete = [i for i in this.items if (i not in items) and
+                                       (screen._type(i) == "line")];
+        for i in todelete{
+            screen._delete(i);
+            this.items.remove(i);
+
+        }
+        start = old;
+        if this._speed and screen._tracing == 1{
+            diff = old - new;
+            diffsq = (diff[0]*screen.xscale)**2 + (diff[1]*screen.yscale)**2;
+            nhops = 1+int((diffsq**0.5)/(3*(1.1**this._speed)*this._speed));
+            delta = diff * (1.0/nhops);
+            for n in range(1, nhops){
+                if n == 1{
+                    top = true;
+                } else{
+                    top = false;
+                } this._position = new + delta * n;
+                if drawing{
+                    screen._drawline(this.drawingLineItem,
+                                     (start, this._position),
+                                     pc, ps, top);
+                } this._update();
+            } if drawing{
+                screen._drawline(this.drawingLineItem, ((0, 0), (0, 0)),
+                                               fill="", width=ps);
+        # Turtle now at position old,
+        }
+        } this._position = old;
+        ##  if undo is done during creating a polygon, the last vertex
+        ##  will be deleted. if the polygon is entirely deleted,
+        ##  creatingPoly will be set to False.
+        ##  Polygons created before the last one will not be affected by undo()
+        if this._creatingPoly{
+            if len(this._poly) > 0{
+                this._poly.pop();
+            } if this._poly == []{
+                this._creatingPoly = false;
+                this._poly = nil;
+        } } if filling{
+            if this._fillpath == []{
+                this._fillpath = nil;
+                print "Unwahrscheinlich in _undogoto!";
+            } elif this._fillpath is not nil{
+                this._fillpath.pop();
+        } } this._update(); #count=True)
+
+    }
+    function _rotate( angle){
+        """Turns pen clockwise by angle.
+        """;
+        if this.undobuffer{
+            this.undobuffer.push(("rot", angle, this._degreesPerAU));
+        } angle *= this._degreesPerAU;
+        neworient = this._orient.rotate(angle);
+        tracing = this.screen._tracing;
+        if tracing == 1 and this._speed > 0{
+            anglevel = 3.0 * this._speed;
+            steps = 1 + int(abs(angle)/anglevel);
+            delta = 1.0*angle/steps;
+            for _ in range(steps){
+                this._orient = this._orient.rotate(delta);
+                this._update();
+        } } this._orient = neworient;
+        this._update();
+
+    }
+    function _newLine( usePos=true){
+        """Closes current line item and starts a new one.
+           Remark: if current line became too long, animation
+           performance (via _drawline) slowed down considerably.
+        """;
+        if len(this.currentLine) > 1{
+            this.screen._drawline(this.currentLineItem, this.currentLine,
+                                      this._pencolor, this._pensize);
+            this.currentLineItem = this.screen._createline();
+            this.items.append(this.currentLineItem);
+        } else{
+            this.screen._drawline(this.currentLineItem, top=true);
+        } this.currentLine = [];
+        if usePos{
+            this.currentLine = [this._position];
+
+    }
+    } function fill( flag=nil){
+        """Call fill(True) before drawing a shape to fill, fill(False) when done.
+
+        Optional argument:
+        flag -- True/False (or 1/0 respectively)
+
+        Call fill(True) before drawing the shape you want to fill,
+        and  fill(False) when done.
+        When used without argument: return fillstate (True if filling,
+        False else)
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.fill(True)
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.fill(False)
+        """;
+        filling = isinstance(this._fillpath, list);
+        if flag is nil{
+            return filling;
+        } screen = this.screen;
+        entry1 = entry2 = ();
+        if filling{
+            if len(this._fillpath) > 2{
+                this.screen._drawpoly(this._fillitem, this._fillpath,
+                                      fill=this._fillcolor);
+                entry1 = ("dofill", this._fillitem);
+        } } if flag{
+            this._fillitem = this.screen._createpoly();
+            this.items.append(this._fillitem);
+            this._fillpath = [this._position];
+            entry2 = ("beginfill", this._fillitem); # , self._fillpath)
+            this._newLine();
+        } else{
+            this._fillitem = this._fillpath = nil;
+        } if this.undobuffer{
+            if entry1 == (){
+                if entry2 != (){
+                    this.undobuffer.push(entry2);
+            } } else{
+                if entry2 == (){
+                    this.undobuffer.push(entry1);
+                } else{
+                    this.undobuffer.push(["seq", entry1, entry2]);
+        } } } this._update();
+
+    }
+    function begin_fill(){
+        """Called just before drawing a shape to be filled.
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.begin_fill()
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.end_fill()
+        """;
+        this.fill(true);
+
+    }
+    function end_fill(){
+        """Fill the shape drawn after the call begin_fill().
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.begin_fill()
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.left(90)
+        >>> turtle.forward(100)
+        >>> turtle.end_fill()
+        """;
+        this.fill(false);
+
+    }
+    function dot( size=nil, *color){
+        """Draw a dot with diameter size, using color.
+
+        Optional arguments:
+        size -- an integer >= 1 (if given)
+        color -- a colorstring or a numeric color tuple
+
+        Draw a circular dot with diameter size, using color.
+        If size is not given, the maximum of pensize+4 and 2*pensize is used.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.dot()
+        >>> turtle.fd(50); turtle.dot(20, "blue"); turtle.fd(50)
+        """;
+        #print "dot-1:", size, color
+        if not color{
+            if isinstance(size, (basestring, tuple)){
+                color = this._colorstr(size);
+                size = this._pensize + max(this._pensize, 4);
+            } else{
+                color = this._pencolor;
+                if not size{
+                    size = this._pensize + max(this._pensize, 4);
+        } } } else{
+            if size is nil{
+                size = this._pensize + max(this._pensize, 4);
+            } color = this._colorstr(color);
+        #print "dot-2:", size, color
+        }
+        if hasattr(this.screen, "_dot"){
+            item = this.screen._dot(this._position, size, color);
+            #print "dot:", size, color, "item:", item
+            this.items.append(item);
+            if this.undobuffer{
+                this.undobuffer.push(("dot", item));
+        } } else{
+            pen = this.pen();
+            if this.undobuffer{
+                this.undobuffer.push(["seq"]);
+                this.undobuffer.cumulate = true;
+            } try{
+                if this.resizemode() == 'auto'{
+                    this.ht();
+                } this.pendown();
+                this.pensize(size);
+                this.pencolor(color);
+                this.forward(0);
+            } finally{
+                this.pen(pen);
+            } if this.undobuffer{
+                this.undobuffer.cumulate = false;
+
+    }
+    } } function _write( txt, align, font){
+        """Performs the writing for write()
+        """;
+        item, end = this.screen._write(this._position, txt, align, font,
+                                                          this._pencolor);
+        this.items.append(item);
+        if this.undobuffer{
+            this.undobuffer.push(("wri", item));
+        } return end;
+
+    }
+    function write( arg, move=false, align="left", font=("Arial", 8, "normal")){
+        """Write text at the current turtle position.
+
+        Arguments:
+        arg -- info, which is to be written to the TurtleScreen
+        move (optional) -- True/False
+        align (optional) -- one of the strings "left", "center" or right"
+        font (optional) -- a triple (fontname, fontsize, fonttype)
+
+        Write text - the string representation of arg - at the current
+        turtle position according to align ("left", "center" or right")
+        and with the given font.
+        If move is True, the pen is moved to the bottom-right corner
+        of the text. By default, move is False.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.write('Home = ', True, align="center")
+        >>> turtle.write((0,0), True)
+        """;
+        if this.undobuffer{
+            this.undobuffer.push(["seq"]);
+            this.undobuffer.cumulate = true;
+        } end = this._write(str(arg), align.lower(), font);
+        if move{
+            x, y = this.pos();
+            this.setpos(end, y);
+        } if this.undobuffer{
+            this.undobuffer.cumulate = false;
+
+    }
+    } function begin_poly(){
+        """Start recording the vertices of a polygon.
+
+        No argument.
+
+        Start recording the vertices of a polygon. Current turtle position
+        is first point of polygon.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.begin_poly()
+        """;
+        this._poly = [this._position];
+        this._creatingPoly = true;
+
+    }
+    function end_poly(){
+        """Stop recording the vertices of a polygon.
+
+        No argument.
+
+        Stop recording the vertices of a polygon. Current turtle position is
+        last point of polygon. This will be connected with the first point.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.end_poly()
+        """;
+        this._creatingPoly = false;
+
+    }
+    function get_poly(){
+        """Return the lastly recorded polygon.
+
+        No argument.
+
+        Example (for a Turtle instance named turtle):
+        >>> p = turtle.get_poly()
+        >>> turtle.register_shape("myFavouriteShape", p)
+        """;
+        ## check if there is any poly?  -- 1st solution:
+        if this._poly is not nil{
+            return tuple(this._poly);
+
+    }
+    } function getscreen(){
+        """Return the TurtleScreen object, the turtle is drawing  on.
+
+        No argument.
+
+        Return the TurtleScreen object, the turtle is drawing  on.
+        So TurtleScreen-methods can be called for that object.
+
+        Example (for a Turtle instance named turtle):
+        >>> ts = turtle.getscreen()
+        >>> ts
+        <turtle.TurtleScreen object at 0x0106B770>
+        >>> ts.bgcolor("pink")
+        """;
+        return this.screen;
+
+    }
+    function getturtle(){
+        """Return the Turtleobject itself.
+
+        No argument.
+
+        Only reasonable use: as a function to return the 'anonymous turtle':
+
+        Example:
+        >>> pet = getturtle()
+        >>> pet.fd(50)
+        >>> pet
+        <turtle.Turtle object at 0x0187D810>
+        >>> turtles()
+        [<turtle.Turtle object at 0x0187D810>]
+        """;
+        return this;
+
+    }
+    getpen = getturtle;
+
+
+    ################################################################
+    ### screen oriented methods recurring to methods of TurtleScreen
+    ################################################################
+
+    function window_width(){
+        """ Returns the width of the turtle window.
+
+        No argument.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.window_width()
+        640
+        """;
+        return this.screen._window_size()[0];
+
+    }
+    function window_height(){
+        """ Return the height of the turtle window.
+
+        No argument.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.window_height()
+        480
+        """;
+        return this.screen._window_size()[1];
+
+    }
+    function _delay( delay=nil){
+        """Set delay value which determines speed of turtle animation.
+        """;
+        return this.screen.delay(delay);
+
+    #####   event binding methods   #####
+
+    }
+    function onclick( fun, btn=1, add=nil){
+        """Bind fun to mouse-click event on this turtle on canvas.
+
+        Arguments:
+        fun --  a function with two arguments, to which will be assigned
+                the coordinates of the clicked point on the canvas.
+        btn --  number of the mouse-button defaults to 1 (left mouse button).
+        add --  True or False. If True, new binding will be added, otherwise
+                it will replace a former binding.
+
+        Example for the anonymous turtle, i. e. the procedural way:
+
+        >>> def turn(x, y):
+        ...     left(360)
+        ...
+        >>> onclick(turn)  # Now clicking into the turtle will turn it.
+        >>> onclick(None)  # event-binding will be removed
+        """;
+        this.screen._onclick(this.turtle._item, fun, btn, add);
+        this._update();
+
+    }
+    function onrelease( fun, btn=1, add=nil){
+        """Bind fun to mouse-button-release event on this turtle on canvas.
+
+        Arguments:
+        fun -- a function with two arguments, to which will be assigned
+                the coordinates of the clicked point on the canvas.
+        btn --  number of the mouse-button defaults to 1 (left mouse button).
+
+        Example (for a MyTurtle instance named joe):
+        >>> class MyTurtle(Turtle):
+        ...     def glow(self,x,y):
+        ...             self.fillcolor("red")
+        ...     def unglow(self,x,y):
+        ...             self.fillcolor("")
+        ...
+        >>> joe = MyTurtle()
+        >>> joe.onclick(joe.glow)
+        >>> joe.onrelease(joe.unglow)
+
+        Clicking on joe turns fillcolor red, unclicking turns it to
+        transparent.
+        """;
+        this.screen._onrelease(this.turtle._item, fun, btn, add);
+        this._update();
+
+    }
+    function ondrag( fun, btn=1, add=nil){
+        """Bind fun to mouse-move event on this turtle on canvas.
+
+        Arguments:
+        fun -- a function with two arguments, to which will be assigned
+               the coordinates of the clicked point on the canvas.
+        btn -- number of the mouse-button defaults to 1 (left mouse button).
+
+        Every sequence of mouse-move-events on a turtle is preceded by a
+        mouse-click event on that turtle.
+
+        Example (for a Turtle instance named turtle):
+        >>> turtle.ondrag(turtle.goto)
+
+        Subsequently clicking and dragging a Turtle will move it
+        across the screen thereby producing handdrawings (if pen is
+        down).
+        """;
+        this.screen._ondrag(this.turtle._item, fun, btn, add);
+
+
+    }
+    function _undo( action, data){
+        """Does the main part of the work for undo()
+        """;
+        if this.undobuffer is nil{
+            return;
+        } if action == "rot"{
+            angle, degPAU = data;
+            this._rotate(-angle*degPAU/this._degreesPerAU);
+            dummy = this.undobuffer.pop();
+        } elif action == "stamp"{
+            stitem = data[0];
+            this.clearstamp(stitem);
+        } elif action == "go"{
+            this._undogoto(data);
+        } elif action in ["wri", "dot"]{
+            item = data[0];
+            this.screen._delete(item);
+            this.items.remove(item);
+        } elif action == "dofill"{
+            item = data[0];
+            this.screen._drawpoly(item, ((0, 0),(0, 0),(0, 0)),
+                                  fill="", outline="");
+        } elif action == "beginfill"{
+            item = data[0];
+            this._fillitem = this._fillpath = nil;
+            this.screen._delete(item);
+            this.items.remove(item);
+        } elif action == "pen"{
+            TPen.pen(this, data[0]);
+            this.undobuffer.pop();
+
+    }
+    } function undo(){
+        """undo (repeatedly) the last turtle action.
+
+        No argument.
+
+        undo (repeatedly) the last turtle action.
+        Number of available undo actions is determined by the size of
+        the undobuffer.
+
+        Example (for a Turtle instance named turtle):
+        >>> for i in range(4):
+        ...     turtle.fd(50); turtle.lt(80)
+        ...
+        >>> for i in range(8):
+        ...     turtle.undo()
+        ...
+        """;
+        if this.undobuffer is nil{
+            return;
+        } item = this.undobuffer.pop();
+        action = item[0];
+        data = item[1:];
+        if action == "seq"{
+            while data{
+                item = data.pop();
+                this._undo(item[0], item[1:]);
+        } } else{
+            this._undo(action, data);
+
+    }
+    } turtlesize = shapesize;
+
+}
+RawPen = RawTurtle;
+
+###  Screen - Singleton  ########################
+
+function Screen(){
+    """Return the singleton screen object.
+    If none exists at the moment, create a new one and return it,
+    else return the existing one.""";
+    if Turtle._screen is nil{
+        Turtle._screen = _Screen();
+    } return Turtle._screen;
+
+}
+class _Screen(TurtleScreen){
+
+    _root = nil;
+    _canvas = nil;
+    _title = _CFG["title"];
+
+    function __init__(){
+        # XXX there is no need for this code to be conditional,
+        # as there will be only a single _Screen instance, anyway
+        # XXX actually, the turtle demo is injecting root window,
+        # so perhaps the conditional creation of a root should be
+        # preserved (perhaps by passing it as an optional parameter)
+        if _Screen._root is nil{
+            _Screen._root = this._root = _Root();
+            this._root.title(_Screen._title);
+            this._root.ondestroy(this._destroy);
+        } if _Screen._canvas is nil{
+            width = _CFG["width"];
+            height = _CFG["height"];
+            canvwidth = _CFG["canvwidth"];
+            canvheight = _CFG["canvheight"];
+            leftright = _CFG["leftright"];
+            topbottom = _CFG["topbottom"];
+            this._root.setupcanvas(width, height, canvwidth, canvheight);
+            _Screen._canvas = this._root._getcanvas();
+            TurtleScreen.__init__(this, _Screen._canvas);
+            this.setup(width, height, leftright, topbottom);
+
+    }
+    } function setup( width=_CFG["width"], height=_CFG["height"],
+              startx=_CFG["leftright"], starty=_CFG["topbottom"]){
+        """ Set the size and position of the main window.
+
+        Arguments:
+        width: as integer a size in pixels, as float a fraction of the screen.
+          Default is 50% of screen.
+        height: as integer the height in pixels, as float a fraction of the
+          screen. Default is 75% of screen.
+        startx: if positive, starting position in pixels from the left
+          edge of the screen, if negative from the right edge
+          Default, startx=None is to center window horizontally.
+        starty: if positive, starting position in pixels from the top
+          edge of the screen, if negative from the bottom edge
+          Default, starty=None is to center window vertically.
+
+        Examples (for a Screen instance named screen):
+        >>> screen.setup (width=200, height=200, startx=0, starty=0)
+
+        sets window to 200x200 pixels, in upper left of screen
+
+        >>> screen.setup(width=.75, height=0.5, startx=None, starty=None)
+
+        sets window to 75% of screen by 50% of screen and centers
+        """;
+        if not hasattr(this._root, "set_geometry"){
+            return;
+        } sw = this._root.win_width();
+        sh = this._root.win_height();
+        if isinstance(width, float) and 0 <= width <= 1{
+            width = sw*width;
+        } if startx is nil{
+            startx = (sw - width) / 2;
+        } if isinstance(height, float) and 0 <= height <= 1{
+            height = sh*height;
+        } if starty is nil{
+            starty = (sh - height) / 2;
+        } this._root.set_geometry(width, height, startx, starty);
+        this.update();
+
+    }
+    function title( titlestring){
+        """Set title of turtle-window
+
+        Argument:
+        titlestring -- a string, to appear in the titlebar of the
+                       turtle graphics window.
+
+        This is a method of Screen-class. Not available for TurtleScreen-
+        objects.
+
+        Example (for a Screen instance named screen):
+        >>> screen.title("Welcome to the turtle-zoo!")
+        """;
+        if _Screen._root is not nil{
+            _Screen._root.title(titlestring);
+        } _Screen._title = titlestring;
+
+    }
+    function _destroy(){
+        root = this._root;
+        if root is _Screen._root{
+            Turtle._pen = nil;
+            Turtle._screen = nil;
+            _Screen._root = nil;
+            _Screen._canvas = nil;
+        } TurtleScreen._RUNNING = false;
+        root.destroy();
+
+    }
+    function bye(){
+        """Shut the turtlegraphics window.
+
+        Example (for a TurtleScreen instance named screen):
+        >>> screen.bye()
+        """;
+        this._destroy();
+
+    }
+    function exitonclick(){
+        """Go into mainloop until the mouse is clicked.
+
+        No arguments.
+
+        Bind bye() method to mouseclick on TurtleScreen.
+        If "using_IDLE" - value in configuration dictionary is False
+        (default value), enter mainloop.
+        If IDLE with -n switch (no subprocess) is used, this value should be
+        set to True in turtle.cfg. In this case IDLE's mainloop
+        is active also for the client script.
+
+        This is a method of the Screen-class and not available for
+        TurtleScreen instances.
+
+        Example (for a Screen instance named screen):
+        >>> screen.exitonclick()
+
+        """;
+        function exitGracefully(x, y){
+            """Screen.bye() with two dummy-parameters""";
+            this.bye();
+        } this.onclick(exitGracefully);
+        if _CFG["using_IDLE"]{
+            return;
+        } try{
+            mainloop();
+        } except AttributeError{
+            exit(0);
+
+}
+} } class Turtle(RawTurtle){
+    """RawTurtle auto-creating (scrolled) canvas.
+
+    When a Turtle object is created or a function derived from some
+    Turtle method is called a TurtleScreen object is automatically created.
+    """;
+    _pen = nil;
+    _screen = nil;
+
+    function __init__(
+                 shape=_CFG["shape"],
+                 undobuffersize=_CFG["undobuffersize"],
+                 visible=_CFG["visible"]){
+        if Turtle._screen is nil{
+            Turtle._screen = Screen();
+        } RawTurtle.__init__(this, Turtle._screen,
+                           shape=shape,
+                           undobuffersize=undobuffersize,
+                           visible=visible);
+
+}
+} Pen = Turtle;
+
+function write_docstringdict(filename="turtle_docstringdict"){
+    """Create and write docstring-dictionary to file.
+
+    Optional argument:
+    filename -- a string, used as filename
+                default value is turtle_docstringdict
+
+    Has to be called explicitly, (not used by the turtle-graphics classes)
+    The docstring dictionary will be written to the Python script <filname>.py
+    It is intended to serve as a template for translation of the docstrings
+    into different languages.
+    """;
+    docsdict = {};
+
+    for methodname in _tg_screen_functions{
+        key = "_Screen."+methodname;
+        docsdict[key] = eval(key).__doc__;
+    } for methodname in _tg_turtle_functions{
+        key = "Turtle."+methodname;
+        docsdict[key] = eval(key).__doc__;
+
+    }
+    f = open("%s.py" % filename,"w");
+    keys = sorted([x for x in docsdict.keys()
+                        if x.split('.')[1] not in _alias_list]);
+    f.write('docsdict = {\n\n');
+    for key in keys[:-1]{
+        f.write('%s :\n' % repr(key));
+        f.write('        """%s\n""",\n\n' % docsdict[key]);
+    } key = keys[-1];
+    f.write('%s :\n' % repr(key));
+    f.write('        """%s\n"""\n\n' % docsdict[key]);
+    f.write("}\n");
+    f.close();
+
+}
+function read_docstrings(lang){
+    """Read in docstrings from lang-specific docstring dictionary.
+
+    Transfer docstrings, translated to lang, from a dictionary-file
+    to the methods of classes Screen and Turtle and - in revised form -
+    to the corresponding functions.
+    """;
+    modname = "turtle_docstringdict_%(language)s" % {'language':lang.lower()};
+    module = __import__(modname);
+    docsdict = module.docsdict;
+    for key in docsdict{
+        #print key
+        try{
+            eval(key).im_func.__doc__ = docsdict[key];
+        } except BaseException{
+            print "Bad docstring-entry: %s" % key;
+
+}
+} } _LANGUAGE = _CFG["language"];
+
+try{
+    if _LANGUAGE != "english"{
+        read_docstrings(_LANGUAGE);
+} } except ImportError{
+    print "Cannot find docsdict for", _LANGUAGE;
+} except BaseException{
+    print ("Unknown Error when trying to import %s-docstring-dictionary" %
+                                                                  _LANGUAGE);
+
+
+}
+function getmethparlist(ob){
+    "Get strings describing the arguments for the given object";
+    argText1 = argText2 = "";
+    # bit of a hack for methods - turn it into a function
+    # but we drop the "self" param.
+    if type(ob)==types.MethodType{
+        fob = ob.im_func;
+        argOffset = 1;
+    } else{
+        fob = ob;
+        argOffset = 0;
+    # Try and build one for Python defined functions
+    }
+    if type(fob) in [types.FunctionType, types.LambdaType]{
+        try{
+            counter = fob.func_code.co_argcount;
+            items2 = list(fob.func_code.co_varnames[argOffset:counter]);
+            realArgs = fob.func_code.co_varnames[argOffset:counter];
+            defaults = fob.func_defaults or [];
+            defaults = list(map(lambda name{ "=%s" % repr(name)}, defaults));
+            defaults = [""] * (len(realArgs)-len(defaults)) + defaults;
+            items1 = map(lambda arg, dflt{ arg+dflt}, realArgs, defaults);
+            if fob.func_code.co_flags & 0x4{
+                items1.append("*"+fob.func_code.co_varnames[counter]);
+                items2.append("*"+fob.func_code.co_varnames[counter]);
+                counter += 1;
+            } if fob.func_code.co_flags & 0x8{
+                items1.append("**"+fob.func_code.co_varnames[counter]);
+                items2.append("**"+fob.func_code.co_varnames[counter]);
+            } argText1 = ", ".join(items1);
+            argText1 = "(%s)" % argText1;
+            argText2 = ", ".join(items2);
+            argText2 = "(%s)" % argText2;
+        } except Exception{
+            pass;
+    } } return argText1, argText2;
+
+}
+function _turtle_docrevise(docstr){
+    """To reduce docstrings from RawTurtle class for functions
+    """;
+    import re;
+    if docstr is nil{
+        return nil;
+    } turtlename = _CFG["exampleturtle"];
+    newdocstr = docstr.replace("%s." % turtlename,"");
+    parexp = re.compile(r' \(.+ %s\):' % turtlename);
+    newdocstr = parexp.sub(":", newdocstr);
+    return newdocstr;
+
+}
+function _screen_docrevise(docstr){
+    """To reduce docstrings from TurtleScreen class for functions
+    """;
+    import re;
+    if docstr is nil{
+        return nil;
+    } screenname = _CFG["examplescreen"];
+    newdocstr = docstr.replace("%s." % screenname,"");
+    parexp = re.compile(r' \(.+ %s\):' % screenname);
+    newdocstr = parexp.sub(":", newdocstr);
+    return newdocstr;
+
+## The following mechanism makes all methods of RawTurtle and Turtle available
+## as functions. So we can enhance, change, add, delete methods to these
+## classes and do not need to change anything here.
+
+}
+__func_body = """\
+def {name}{paramslist}:
+    if {obj} is None:
+        if not TurtleScreen._RUNNING:
+            TurtleScreen._RUNNING = True
+            raise Terminator
+        {obj} = {init}
+    try:
+        return {obj}.{name}{argslist}
+    except TK.TclError:
+        if not TurtleScreen._RUNNING:
+            TurtleScreen._RUNNING = True
+            raise Terminator
+        raise
+""";
+
+function _make_global_funcs(functions, cls, obj, init, docrevise){
+    for methodname in functions{
+        method = getattr(cls, methodname);
+        pl1, pl2 = getmethparlist(method);
+        if pl1 == ""{
+            print ">>>>>>", pl1, pl2;
+            continue;
+        } defstr = __func_body.format(obj=obj, init=init, name=methodname,
+                                    paramslist=pl1, argslist=pl2);
+        exec defstr in globals();
+        globals()[methodname].__doc__ = docrevise(method.__doc__);
+
+}
+} _make_global_funcs(_tg_screen_functions, _Screen,
+                   'Turtle._screen', 'Screen()', _screen_docrevise);
+_make_global_funcs(_tg_turtle_functions, Turtle,
+                   'Turtle._pen', 'Turtle()', _turtle_docrevise);
+
+
+done = mainloop = TK.mainloop;
+
+if __name__ == "__main__"{
+    function switchpen(){
+        if isdown(){
+            pu();
+        } else{
+            pd();
+
+    }
+    } function demo1(){
+        """Demo of old turtle.py - module""";
+        reset();
+        tracer(true);
+        up();
+        backward(100);
+        down();
+        # draw 3 squares; the last filled
+        width(3);
+        for i in range(3){
+            if i == 2{
+                fill(1);
+            } for _ in range(4){
+                forward(20);
+                left(90);
+            } if i == 2{
+                color("maroon");
+                fill(0);
+            } up();
+            forward(30);
+            down();
+        } width(1);
+        color("black");
+        # move out of the way
+        tracer(false);
+        up();
+        right(90);
+        forward(100);
+        right(90);
+        forward(100);
+        right(180);
+        down();
+        # some text
+        write("startstart", 1);
+        write(u"start", 1);
+        color("red");
+        # staircase
+        for i in range(5){
+            forward(20);
+            left(90);
+            forward(20);
+            right(90);
+        # filled staircase
+        }
+        tracer(true);
+        fill(1);
+        for i in range(5){
+            forward(20);
+            left(90);
+            forward(20);
+            right(90);
+        } fill(0);
+        # more text
+
+    }
+    function demo2(){
+        """Demo of some new features.""";
+        speed(1);
+        st();
+        pensize(3);
+        setheading(towards(0, 0));
+        radius = distance(0, 0)/2.0;
+        rt(90);
+        for _ in range(18){
+            switchpen();
+            circle(radius, 10);
+        } write("wait a moment...");
+        while undobufferentries(){
+            undo();
+        } reset();
+        lt(90);
+        colormode(255);
+        laenge = 10;
+        pencolor("green");
+        pensize(3);
+        lt(180);
+        for i in range(-2, 16){
+            if i > 0{
+                begin_fill();
+                fillcolor(255-15*i, 0, 15*i);
+            } for _ in range(3){
+                fd(laenge);
+                lt(120);
+            } laenge += 10;
+            lt(15);
+            speed((speed()+1)%12);
+        } end_fill();
+
+        lt(120);
+        pu();
+        fd(70);
+        rt(30);
+        pd();
+        color("red","yellow");
+        speed(0);
+        fill(1);
+        for _ in range(4){
+            circle(50, 90);
+            rt(90);
+            fd(30);
+            rt(90);
+        } fill(0);
+        lt(90);
+        pu();
+        fd(30);
+        pd();
+        shape("turtle");
+
+        tri = getturtle();
+        tri.resizemode("auto");
+        turtle = Turtle();
+        turtle.resizemode(u"auto");
+        turtle.shape("turtle");
+        turtle.reset();
+        turtle.left(90);
+        turtle.speed(0);
+        turtle.up();
+        turtle.goto(280, 40);
+        turtle.lt(30);
+        turtle.down();
+        turtle.speed(6);
+        turtle.color("blue",u"orange");
+        turtle.pensize(2);
+        tri.speed(6);
+        setheading(towards(turtle));
+        count = 1;
+        while tri.distance(turtle) > 4{
+            turtle.fd(3.5);
+            turtle.lt(0.6);
+            tri.setheading(tri.towards(turtle));
+            tri.fd(4);
+            if count % 20 == 0{
+                turtle.stamp();
+                tri.stamp();
+                switchpen();
+            } count += 1;
+        } tri.write("CAUGHT! ", font=("Arial", 16, "bold"), align=u"right");
+        tri.pencolor("black");
+        tri.pencolor(u"red");
+
+        function baba(xdummy, ydummy){
+            clearscreen();
+            bye();
+
+        }
+        time.sleep(2);
+
+        while undobufferentries(){
+            tri.undo();
+            turtle.undo();
+        } tri.fd(50);
+        tri.write("  Click me!", font = ("Courier", 12, "bold") );
+        tri.onclick(baba, 1);
+
+    }
+    demo1();
+    demo2();
+    exitonclick();
+
+}

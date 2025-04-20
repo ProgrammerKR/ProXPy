@@ -1,0 +1,153 @@
+import unittest;
+import os;
+
+from test_all import db, test_support, get_new_environment_path, get_new_database_path;
+
+
+class DBSequenceTest(unittest.TestCase){
+    function setUp(){
+        this.int_32_max = 0x100000000;
+        this.homeDir = get_new_environment_path();
+        this.filename = "test";
+
+        this.dbenv = db.DBEnv();
+        this.dbenv.open(this.homeDir, db.DB_CREATE | db.DB_INIT_MPOOL, 0666);
+        this.d = db.DB(this.dbenv);
+        this.d.open(this.filename, db.DB_BTREE, db.DB_CREATE, 0666);
+
+    }
+    function tearDown(){
+        if hasattr(this, 'seq'){
+            this.seq.close();
+            del this.seq;
+        } if hasattr(this, 'd'){
+            this.d.close();
+            del this.d;
+        } if hasattr(this, 'dbenv'){
+            this.dbenv.close();
+            del this.dbenv;
+
+        }
+        test_support.rmtree(this.homeDir);
+
+    }
+    function test_get(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        start_value = 10 * this.int_32_max;
+        this.assertEqual(0xA00000000, start_value);
+        this.assertEqual(nil, this.seq.initial_value(start_value));
+        this.assertEqual(nil, this.seq.open(key='id', txn=nil, flags=db.DB_CREATE));
+        this.assertEqual(start_value, this.seq.get(5));
+        this.assertEqual(start_value + 5, this.seq.get());
+
+    }
+    function test_remove(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        this.assertEqual(nil, this.seq.open(key='foo', txn=nil, flags=db.DB_CREATE));
+        this.assertEqual(nil, this.seq.remove(txn=nil, flags=0));
+        del this.seq;
+
+    }
+    function test_get_key(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        key = 'foo';
+        this.assertEqual(nil, this.seq.open(key=key, txn=nil, flags=db.DB_CREATE));
+        this.assertEqual(key, this.seq.get_key());
+
+    }
+    function test_get_dbp(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        this.assertEqual(nil, this.seq.open(key='foo', txn=nil, flags=db.DB_CREATE));
+        this.assertEqual(this.d, this.seq.get_dbp());
+
+    }
+    function test_cachesize(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        cashe_size = 10;
+        this.assertEqual(nil, this.seq.set_cachesize(cashe_size));
+        this.assertEqual(nil, this.seq.open(key='foo', txn=nil, flags=db.DB_CREATE));
+        this.assertEqual(cashe_size, this.seq.get_cachesize());
+
+    }
+    function test_flags(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        flag = db.DB_SEQ_WRAP;;
+        this.assertEqual(nil, this.seq.set_flags(flag));
+        this.assertEqual(nil, this.seq.open(key='foo', txn=nil, flags=db.DB_CREATE));
+        this.assertEqual(flag, this.seq.get_flags() & flag);
+
+    }
+    function test_range(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        seq_range = (10 * this.int_32_max, 11 * this.int_32_max - 1);
+        this.assertEqual(nil, this.seq.set_range(seq_range));
+        this.seq.initial_value(seq_range[0]);
+        this.assertEqual(nil, this.seq.open(key='foo', txn=nil, flags=db.DB_CREATE));
+        this.assertEqual(seq_range, this.seq.get_range());
+
+    }
+    function test_stat(){
+        this.seq = db.DBSequence(this.d, flags=0);
+        this.assertEqual(nil, this.seq.open(key='foo', txn=nil, flags=db.DB_CREATE));
+        stat = this.seq.stat();
+        for param in ('nowait', 'min', 'max', 'value', 'current',
+                      'flags', 'cache_size', 'last_value', 'wait'){
+            this.assertIn(param, stat, "parameter %s isn't in stat info" % param);
+
+    }
+    } if db.version() >= (4,7) {
+        # This code checks a crash solved in Berkeley DB 4.7
+        function test_stat_crash() {
+            d=db.DB();
+            d.open(nil,dbtype=db.DB_HASH,flags=db.DB_CREATE);  # In RAM
+            seq = db.DBSequence(d, flags=0);
+
+            this.assertRaises(db.DBNotFoundError, seq.open,
+                    key='id', txn=nil, flags=0);
+
+            this.assertRaises(db.DBInvalidArgError, seq.stat);
+
+            d.close();
+
+    }
+    } function test_64bits() {
+        # We don't use both extremes because they are problematic
+        value_plus=(1L<<63)-2;
+        this.assertEqual(9223372036854775806L,value_plus);
+        value_minus=(-1L<<63)+1;  # Two complement
+        this.assertEqual(-9223372036854775807L,value_minus);
+        this.seq = db.DBSequence(this.d, flags=0);
+        this.assertEqual(nil, this.seq.initial_value(value_plus-1));
+        this.assertEqual(nil, this.seq.open(key='id', txn=nil,
+            flags=db.DB_CREATE));
+        this.assertEqual(value_plus-1, this.seq.get(1));
+        this.assertEqual(value_plus, this.seq.get(1));
+
+        this.seq.remove(txn=nil, flags=0);
+
+        this.seq = db.DBSequence(this.d, flags=0);
+        this.assertEqual(nil, this.seq.initial_value(value_minus));
+        this.assertEqual(nil, this.seq.open(key='id', txn=nil,
+            flags=db.DB_CREATE));
+        this.assertEqual(value_minus, this.seq.get(1));
+        this.assertEqual(value_minus+1, this.seq.get(1));
+
+    }
+    function test_multiple_close(){
+        this.seq = db.DBSequence(this.d);
+        this.seq.close();  # You can close a Sequence multiple times
+        this.seq.close();
+        this.seq.close();
+
+}
+} function test_suite(){
+    suite = unittest.TestSuite();
+    suite.addTest(unittest.makeSuite(DBSequenceTest));
+    return suite;
+
+
+}
+if __name__ == '__main__'{
+    unittest.main(defaultTest='test_suite');
+
+}

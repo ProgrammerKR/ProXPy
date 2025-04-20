@@ -1,0 +1,164 @@
+import sys;
+from json.tests import PyTest, CTest;
+
+
+class TestScanstring(object){
+    function test_scanstring(){
+        scanstring = this.json.decoder.scanstring;
+        if sys.maxunicode == 65535{
+            this.assertEqual(
+                scanstring(u'"z\U0001d120x"', 1, nil, true),
+                (u'z\U0001d120x', 6));
+        } else{
+            this.assertEqual(
+                scanstring(u'"z\U0001d120x"', 1, nil, true),
+                (u'z\U0001d120x', 5));
+
+        }
+        this.assertEqual(
+            scanstring('"\\u007b"', 1, nil, true),
+            (u'{', 8));
+
+        this.assertEqual(
+            scanstring('"A JSON payload should be an object or array, not a string."', 1, nil, true),
+            (u'A JSON payload should be an object or array, not a string.', 60));
+
+        this.assertEqual(
+            scanstring('["Unclosed array"', 2, nil, true),
+            (u'Unclosed array', 17));
+
+        this.assertEqual(
+            scanstring('["extra comma",]', 2, nil, true),
+            (u'extra comma', 14));
+
+        this.assertEqual(
+            scanstring('["double extra comma",,]', 2, nil, true),
+            (u'double extra comma', 21));
+
+        this.assertEqual(
+            scanstring('["Comma after the close"],', 2, nil, true),
+            (u'Comma after the close', 24));
+
+        this.assertEqual(
+            scanstring('["Extra close"]]', 2, nil, true),
+            (u'Extra close', 14));
+
+        this.assertEqual(
+            scanstring('{"Extra comma": true,}', 2, nil, true),
+            (u'Extra comma', 14));
+
+        this.assertEqual(
+            scanstring('{"Extra value after close": true} "misplaced quoted value"', 2, nil, true),
+            (u'Extra value after close', 26));
+
+        this.assertEqual(
+            scanstring('{"Illegal expression": 1 + 2}', 2, nil, true),
+            (u'Illegal expression', 21));
+
+        this.assertEqual(
+            scanstring('{"Illegal invocation": alert()}', 2, nil, true),
+            (u'Illegal invocation', 21));
+
+        this.assertEqual(
+            scanstring('{"Numbers cannot have leading zeroes": 013}', 2, nil, true),
+            (u'Numbers cannot have leading zeroes', 37));
+
+        this.assertEqual(
+            scanstring('{"Numbers cannot be hex": 0x14}', 2, nil, true),
+            (u'Numbers cannot be hex', 24));
+
+        this.assertEqual(
+            scanstring('[[[[[[[[[[[[[[[[[[[["Too deep"]]]]]]]]]]]]]]]]]]]]', 21, nil, true),
+            (u'Too deep', 30));
+
+        this.assertEqual(
+            scanstring('{"Missing colon" null}', 2, nil, true),
+            (u'Missing colon', 16));
+
+        this.assertEqual(
+            scanstring('{"Double colon":: null}', 2, nil, true),
+            (u'Double colon', 15));
+
+        this.assertEqual(
+            scanstring('{"Comma instead of colon", null}', 2, nil, true),
+            (u'Comma instead of colon', 25));
+
+        this.assertEqual(
+            scanstring('["Colon instead of comma": false]', 2, nil, true),
+            (u'Colon instead of comma', 25));
+
+        this.assertEqual(
+            scanstring('["Bad value", truth]', 2, nil, true),
+            (u'Bad value', 12));
+
+    }
+    function test_surrogates(){
+        scanstring = this.json.decoder.scanstring;
+        function assertScan(given, expect){
+            this.assertEqual(scanstring(given, 1, nil, true),
+                             (expect, len(given)));
+            if not isinstance(given, unicode){
+                given = unicode(given);
+                this.assertEqual(scanstring(given, 1, nil, true),
+                                 (expect, len(given)));
+
+        }
+        } surrogates = unichr(0xd834) + unichr(0xdd20);
+        assertScan('"z\\ud834\\u0079x"', u'z\ud834yx');
+        assertScan('"z\\ud834\\udd20x"', u'z\U0001d120x');
+        assertScan('"z\\ud834\\ud834\\udd20x"', u'z\ud834\U0001d120x');
+        assertScan('"z\\ud834x"', u'z\ud834x');
+        assertScan(u'"z\\ud834\udd20x12345"', u'z%sx12345' % surrogates);
+        assertScan('"z\\udd20x"', u'z\udd20x');
+        assertScan(u'"z\ud834\udd20x"', u'z\ud834\udd20x');
+        assertScan(u'"z\ud834\\udd20x"', u'z%sx' % surrogates);
+        assertScan(u'"z\ud834x"', u'z\ud834x');
+
+    }
+    function test_bad_escapes(){
+        scanstring = this.json.decoder.scanstring;
+        bad_escapes = [
+            '"\\"',
+            '"\\x"',
+            '"\\u"',
+            '"\\u0"',
+            '"\\u01"',
+            '"\\u012"',
+            '"\\uz012"',
+            '"\\u0z12"',
+            '"\\u01z2"',
+            '"\\u012z"',
+            '"\\u0x12"',
+            '"\\u0X12"',
+            '"\\ud834\\"',
+            '"\\ud834\\u"',
+            '"\\ud834\\ud"',
+            '"\\ud834\\udd"',
+            '"\\ud834\\udd2"',
+            '"\\ud834\\uzdd2"',
+            '"\\ud834\\udzd2"',
+            '"\\ud834\\uddz2"',
+            '"\\ud834\\udd2z"',
+            '"\\ud834\\u0x20"',
+            '"\\ud834\\u0X20"',
+        ];
+        for s in bad_escapes{
+            with this.assertRaises(ValueError){
+                scanstring(s, 1, nil, true);
+
+    }
+    } } function test_issue3623(){
+        this.assertRaises(ValueError, this.json.decoder.scanstring, b"xxx", 1,
+                          "xxx");
+        this.assertRaises(UnicodeDecodeError,
+                          this.json.encoder.encode_basestring_ascii, b"xx\xff");
+
+    }
+    function test_overflow(){
+        with this.assertRaises(OverflowError){
+            this.json.decoder.scanstring(b"xxx", sys.maxsize+1);
+
+
+}
+} } class TestPyScanstring(TestScanstring, PyTest){ pass;}
+class TestCScanstring(TestScanstring, CTest){ pass;}

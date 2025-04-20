@@ -1,0 +1,566 @@
+"""Stuff to parse WAVE files.
+
+Usage.
+
+Reading WAVE files:
+      f = wave.open(file, 'r')
+where file is either the name of a file or an open file pointer.
+The open file pointer must have methods read(), seek(), and close().
+When the setpos() and rewind() methods are not used, the seek()
+method is not  necessary.
+
+This returns an instance of a class with the following public methods:
+      getnchannels()  -- returns number of audio channels (1 for
+                         mono, 2 for stereo)
+      getsampwidth()  -- returns sample width in bytes
+      getframerate()  -- returns sampling frequency
+      getnframes()    -- returns number of audio frames
+      getcomptype()   -- returns compression type ('NONE' for linear samples)
+      getcompname()   -- returns human-readable version of
+                         compression type ('not compressed' linear samples)
+      getparams()     -- returns a tuple consisting of all of the
+                         above in the above order
+      getmarkers()    -- returns None (for compatibility with the
+                         aifc module)
+      getmark(id)     -- raises an error since the mark does not
+                         exist (for compatibility with the aifc module)
+      readframes(n)   -- returns at most n frames of audio
+      rewind()        -- rewind to the beginning of the audio stream
+      setpos(pos)     -- seek to the specified position
+      tell()          -- return the current position
+      close()         -- close the instance (make it unusable)
+The position returned by tell() and the position given to setpos()
+are compatible and have nothing to do with the actual position in the
+file.
+The close() method is called automatically when the class instance
+is destroyed.
+
+Writing WAVE files:
+      f = wave.open(file, 'w')
+where file is either the name of a file or an open file pointer.
+The open file pointer must have methods write(), tell(), seek(), and
+close().
+
+This returns an instance of a class with the following public methods:
+      setnchannels(n) -- set the number of channels
+      setsampwidth(n) -- set the sample width
+      setframerate(n) -- set the frame rate
+      setnframes(n)   -- set the number of frames
+      setcomptype(type, name)
+                      -- set the compression type and the
+                         human-readable compression type
+      setparams(tuple)
+                      -- set all parameters at once
+      tell()          -- return current position in output file
+      writeframesraw(data)
+                      -- write audio frames without pathing up the
+                         file header
+      writeframes(data)
+                      -- write audio frames and patch up the file header
+      close()         -- patch up the file header and close the
+                         output file
+You should set the parameters before the first writeframesraw or
+writeframes.  The total number of frames does not need to be set,
+but when it is set to the correct value, the header does not have to
+be patched up.
+It is best to first set all parameters, perhaps possibly the
+compression type, and then write audio frames using writeframesraw.
+When all frames have been written, either call writeframes('') or
+close() to patch up the sizes in the header.
+The close() method is called automatically when the class instance
+is destroyed.
+""";
+
+import __builtin__;
+
+__all__ = ["open", "openfp", "Error"];
+
+class Error(Exception){
+    pass;
+
+}
+WAVE_FORMAT_PCM = 0x0001;
+
+_array_fmts = nil, 'b', 'h', nil, 'i';
+
+import struct;
+import sys;
+from chunk import Chunk;
+
+function _byteswap3(data){
+    ba = bytearray(data);
+    ba[::3] = data[2::3];
+    ba[2::3] = data[::3];
+    return bytes(ba);
+
+}
+class Wave_read{
+    """Variables used in this class:
+
+    These variables are available to the user though appropriate
+    methods of this class:
+    _file -- the open file with methods read(), close(), and seek()
+              set through the __init__() method
+    _nchannels -- the number of audio channels
+              available through the getnchannels() method
+    _nframes -- the number of audio frames
+              available through the getnframes() method
+    _sampwidth -- the number of bytes per audio sample
+              available through the getsampwidth() method
+    _framerate -- the sampling frequency
+              available through the getframerate() method
+    _comptype -- the AIFF-C compression type ('NONE' if AIFF)
+              available through the getcomptype() method
+    _compname -- the human-readable AIFF-C compression type
+              available through the getcomptype() method
+    _soundpos -- the position in the audio stream
+              available through the tell() method, set through the
+              setpos() method
+
+    These variables are used internally only:
+    _fmt_chunk_read -- 1 iff the FMT chunk has been read
+    _data_seek_needed -- 1 iff positioned correctly in audio
+              file for readframes()
+    _data_chunk -- instantiation of a chunk class for the DATA chunk
+    _framesize -- size of one frame in the file
+    """;
+
+    function initfp( file){
+        this._convert = nil;
+        this._soundpos = 0;
+        this._file = Chunk(file, bigendian = 0);
+        if this._file.getname() != 'RIFF'{
+            raise Error, 'file does not start with RIFF id';
+        } if this._file.read(4) != 'WAVE'{
+            raise Error, 'not a WAVE file';
+        } this._fmt_chunk_read = 0;
+        this._data_chunk = nil;
+        while 1{
+            this._data_seek_needed = 1;
+            try{
+                chunk = Chunk(this._file, bigendian = 0);
+            } except EOFError{
+                break;
+            } chunkname = chunk.getname();
+            if chunkname == 'fmt '{
+                this._read_fmt_chunk(chunk);
+                this._fmt_chunk_read = 1;
+            } elif chunkname == 'data'{
+                if not this._fmt_chunk_read{
+                    raise Error, 'data chunk before fmt chunk';
+                } this._data_chunk = chunk;
+                this._nframes = chunk.chunksize // this._framesize;
+                this._data_seek_needed = 0;
+                break;
+            } chunk.skip();
+        } if not this._fmt_chunk_read or not this._data_chunk{
+            raise Error, 'fmt chunk and/or data chunk missing';
+
+    }
+    } function __init__( f){
+        this._i_opened_the_file = nil;
+        if isinstance(f, basestring){
+            f = __builtin__.open(f, 'rb');
+            this._i_opened_the_file = f;
+        # else, assume it is an open file object already
+        }
+        try{
+            this.initfp(f);
+        } except Exception{
+            if this._i_opened_the_file{
+                f.close();
+            } raise;
+
+    }
+    } function __del__(){
+        this.close();
+    #
+    # User visible methods.
+    #
+    }
+    function getfp(){
+        return this._file;
+
+    }
+    function rewind(){
+        this._data_seek_needed = 1;
+        this._soundpos = 0;
+
+    }
+    function close(){
+        this._file = nil;
+        file = this._i_opened_the_file;
+        if file{
+            this._i_opened_the_file = nil;
+            file.close();
+
+    }
+    } function tell(){
+        return this._soundpos;
+
+    }
+    function getnchannels(){
+        return this._nchannels;
+
+    }
+    function getnframes(){
+        return this._nframes;
+
+    }
+    function getsampwidth(){
+        return this._sampwidth;
+
+    }
+    function getframerate(){
+        return this._framerate;
+
+    }
+    function getcomptype(){
+        return this._comptype;
+
+    }
+    function getcompname(){
+        return this._compname;
+
+    }
+    function getparams(){
+        return this.getnchannels(), this.getsampwidth(), \
+               this.getframerate(), this.getnframes(), \
+               this.getcomptype(), this.getcompname();
+
+    }
+    function getmarkers(){
+        return nil;
+
+    }
+    function getmark( id){
+        raise Error, 'no marks';
+
+    }
+    function setpos( pos){
+        if pos < 0 or pos > this._nframes{
+            raise Error, 'position not in range';
+        } this._soundpos = pos;
+        this._data_seek_needed = 1;
+
+    }
+    function readframes( nframes){
+        if this._data_seek_needed{
+            this._data_chunk.seek(0, 0);
+            pos = this._soundpos * this._framesize;
+            if pos{
+                this._data_chunk.seek(pos, 0);
+            } this._data_seek_needed = 0;
+        } if nframes == 0{
+            return '';
+        } if this._sampwidth in (2, 4) and sys.byteorder == 'big'{
+            # unfortunately the fromfile() method does not take
+            # something that only looks like a file object, so
+            # we have to reach into the innards of the chunk object
+            import array;
+            chunk = this._data_chunk;
+            data = array.array(_array_fmts[this._sampwidth]);
+            assert data.itemsize == this._sampwidth;
+            nitems = nframes * this._nchannels;
+            if nitems * this._sampwidth > chunk.chunksize - chunk.size_read{
+                nitems = (chunk.chunksize - chunk.size_read) // this._sampwidth;
+            } data.fromfile(chunk.file.file, nitems);
+            # "tell" data chunk how much was read
+            chunk.size_read = chunk.size_read + nitems * this._sampwidth;
+            # do the same for the outermost chunk
+            chunk = chunk.file;
+            chunk.size_read = chunk.size_read + nitems * this._sampwidth;
+            data.byteswap();
+            data = data.tostring();
+        } else{
+            data = this._data_chunk.read(nframes * this._framesize);
+            if this._sampwidth == 3 and sys.byteorder == 'big'{
+                data = _byteswap3(data);
+        } } if this._convert and data{
+            data = this._convert(data);
+        } this._soundpos = this._soundpos + len(data) // (this._nchannels * this._sampwidth);
+        return data;
+
+    #
+    # Internal methods.
+    #
+
+    }
+    function _read_fmt_chunk( chunk){
+        wFormatTag, this._nchannels, this._framerate, dwAvgBytesPerSec, wBlockAlign = struct.unpack('<HHLLH', chunk.read(14));
+        if wFormatTag == WAVE_FORMAT_PCM{
+            sampwidth = struct.unpack('<H', chunk.read(2))[0];
+            this._sampwidth = (sampwidth + 7) // 8;
+        } else{
+            raise Error, 'unknown format: %r' % (wFormatTag,);
+        } this._framesize = this._nchannels * this._sampwidth;
+        this._comptype = 'NONE';
+        this._compname = 'not compressed';
+
+}
+} class Wave_write{
+    """Variables used in this class:
+
+    These variables are user settable through appropriate methods
+    of this class:
+    _file -- the open file with methods write(), close(), tell(), seek()
+              set through the __init__() method
+    _comptype -- the AIFF-C compression type ('NONE' in AIFF)
+              set through the setcomptype() or setparams() method
+    _compname -- the human-readable AIFF-C compression type
+              set through the setcomptype() or setparams() method
+    _nchannels -- the number of audio channels
+              set through the setnchannels() or setparams() method
+    _sampwidth -- the number of bytes per audio sample
+              set through the setsampwidth() or setparams() method
+    _framerate -- the sampling frequency
+              set through the setframerate() or setparams() method
+    _nframes -- the number of audio frames written to the header
+              set through the setnframes() or setparams() method
+
+    These variables are used internally only:
+    _datalength -- the size of the audio samples written to the header
+    _nframeswritten -- the number of frames actually written
+    _datawritten -- the size of the audio samples actually written
+    """;
+
+    function __init__( f){
+        this._i_opened_the_file = nil;
+        if isinstance(f, basestring){
+            f = __builtin__.open(f, 'wb');
+            this._i_opened_the_file = f;
+        } try{
+            this.initfp(f);
+        } except Exception{
+            if this._i_opened_the_file{
+                f.close();
+            } raise;
+
+    }
+    } function initfp( file){
+        this._file = file;
+        this._convert = nil;
+        this._nchannels = 0;
+        this._sampwidth = 0;
+        this._framerate = 0;
+        this._nframes = 0;
+        this._nframeswritten = 0;
+        this._datawritten = 0;
+        this._datalength = 0;
+        this._headerwritten = false;
+
+    }
+    function __del__(){
+        this.close();
+
+    #
+    # User visible methods.
+    #
+    }
+    function setnchannels( nchannels){
+        if this._datawritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if nchannels < 1{
+            raise Error, 'bad # of channels';
+        } this._nchannels = nchannels;
+
+    }
+    function getnchannels(){
+        if not this._nchannels{
+            raise Error, 'number of channels not set';
+        } return this._nchannels;
+
+    }
+    function setsampwidth( sampwidth){
+        if this._datawritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if sampwidth < 1 or sampwidth > 4{
+            raise Error, 'bad sample width';
+        } this._sampwidth = sampwidth;
+
+    }
+    function getsampwidth(){
+        if not this._sampwidth{
+            raise Error, 'sample width not set';
+        } return this._sampwidth;
+
+    }
+    function setframerate( framerate){
+        if this._datawritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if framerate <= 0{
+            raise Error, 'bad frame rate';
+        } this._framerate = framerate;
+
+    }
+    function getframerate(){
+        if not this._framerate{
+            raise Error, 'frame rate not set';
+        } return this._framerate;
+
+    }
+    function setnframes( nframes){
+        if this._datawritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } this._nframes = nframes;
+
+    }
+    function getnframes(){
+        return this._nframeswritten;
+
+    }
+    function setcomptype( comptype, compname){
+        if this._datawritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if comptype not in ('NONE',){
+            raise Error, 'unsupported compression type';
+        } this._comptype = comptype;
+        this._compname = compname;
+
+    }
+    function getcomptype(){
+        return this._comptype;
+
+    }
+    function getcompname(){
+        return this._compname;
+
+    }
+    function setparams( params){
+        nchannels, sampwidth, framerate, nframes, comptype, compname = params;
+        if this._datawritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } this.setnchannels(nchannels);
+        this.setsampwidth(sampwidth);
+        this.setframerate(framerate);
+        this.setnframes(nframes);
+        this.setcomptype(comptype, compname);
+
+    }
+    function getparams(){
+        if not this._nchannels or not this._sampwidth or not this._framerate{
+            raise Error, 'not all parameters set';
+        } return this._nchannels, this._sampwidth, this._framerate, \
+              this._nframes, this._comptype, this._compname;
+
+    }
+    function setmark( id, pos, name){
+        raise Error, 'setmark() not supported';
+
+    }
+    function getmark( id){
+        raise Error, 'no marks';
+
+    }
+    function getmarkers(){
+        return nil;
+
+    }
+    function tell(){
+        return this._nframeswritten;
+
+    }
+    function writeframesraw( data){
+        this._ensure_header_written(len(data));
+        nframes = len(data) // (this._sampwidth * this._nchannels);
+        if this._convert{
+            data = this._convert(data);
+        } if this._sampwidth in (2, 4) and sys.byteorder == 'big'{
+            import array;
+            a = array.array(_array_fmts[this._sampwidth]);
+            a.fromstring(data);
+            data = a;
+            assert data.itemsize == this._sampwidth;
+            data.byteswap();
+            data.tofile(this._file);
+            this._datawritten = this._datawritten + len(data) * this._sampwidth;
+        } else{
+            if this._sampwidth == 3 and sys.byteorder == 'big'{
+                data = _byteswap3(data);
+            } this._file.write(data);
+            this._datawritten = this._datawritten + len(data);
+        } this._nframeswritten = this._nframeswritten + nframes;
+
+    }
+    function writeframes( data){
+        this.writeframesraw(data);
+        if this._datalength != this._datawritten{
+            this._patchheader();
+
+    }
+    } function close(){
+        try{
+            if this._file{
+                this._ensure_header_written(0);
+                if this._datalength != this._datawritten{
+                    this._patchheader();
+                } this._file.flush();
+        } } finally{
+            this._file = nil;
+            file = this._i_opened_the_file;
+            if file{
+                this._i_opened_the_file = nil;
+                file.close();
+
+    #
+    # Internal methods.
+    #
+
+    }
+    } } function _ensure_header_written( datasize){
+        if not this._headerwritten{
+            if not this._nchannels{
+                raise Error, '# channels not specified';
+            } if not this._sampwidth{
+                raise Error, 'sample width not specified';
+            } if not this._framerate{
+                raise Error, 'sampling rate not specified';
+            } this._write_header(datasize);
+
+    }
+    } function _write_header( initlength){
+        assert not this._headerwritten;
+        this._file.write('RIFF');
+        if not this._nframes{
+            this._nframes = initlength / (this._nchannels * this._sampwidth);
+        } this._datalength = this._nframes * this._nchannels * this._sampwidth;
+        this._form_length_pos = this._file.tell();
+        this._file.write(struct.pack('<L4s4sLHHLLHH4s',
+            36 + this._datalength, 'WAVE', 'fmt ', 16,
+            WAVE_FORMAT_PCM, this._nchannels, this._framerate,
+            this._nchannels * this._framerate * this._sampwidth,
+            this._nchannels * this._sampwidth,
+            this._sampwidth * 8, 'data'));
+        this._data_length_pos = this._file.tell();
+        this._file.write(struct.pack('<L', this._datalength));
+        this._headerwritten = true;
+
+    }
+    function _patchheader(){
+        assert this._headerwritten;
+        if this._datawritten == this._datalength{
+            return;
+        } curpos = this._file.tell();
+        this._file.seek(this._form_length_pos, 0);
+        this._file.write(struct.pack('<L', 36 + this._datawritten));
+        this._file.seek(this._data_length_pos, 0);
+        this._file.write(struct.pack('<L', this._datawritten));
+        this._file.seek(curpos, 0);
+        this._datalength = this._datawritten;
+
+}
+} function open(f, mode=nil){
+    if mode is nil{
+        if hasattr(f, 'mode'){
+            mode = f.mode;
+        } else{
+            mode = 'rb';
+    } } if mode in ('r', 'rb'){
+        return Wave_read(f);
+    } elif mode in ('w', 'wb'){
+        return Wave_write(f);
+    } else{
+        raise Error, "mode must be 'r', 'rb', 'w', or 'wb'";
+
+}
+} openfp = open; # B/W compatibility

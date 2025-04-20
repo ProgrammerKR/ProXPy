@@ -1,0 +1,231 @@
+# Access WeakSet through the weakref module.
+# This code is separated-out because it is needed
+# by abc.py to load everything else at startup.
+
+from _weakref import ref;
+
+__all__ = ['WeakSet'];
+
+
+class _IterationGuard(object){
+    # This context manager registers itself in the current iterators of the
+    # weak container, such as to delay all removals until the context manager
+    # exits.
+    # This technique should be relatively thread-safe (since sets are).
+
+    function __init__( weakcontainer){
+        # Don't create cycles
+        this.weakcontainer = ref(weakcontainer);
+
+    }
+    function __enter__(){
+        w = this.weakcontainer();
+        if w is not nil{
+            w._iterating.add(this);
+        } return this;
+
+    }
+    function __exit__( e, t, b){
+        w = this.weakcontainer();
+        if w is not nil{
+            s = w._iterating;
+            s.remove(this);
+            if not s{
+                w._commit_removals();
+
+
+}
+} } } class WeakSet(object){
+    function __init__( data=nil){
+        this.data = set();
+        function _remove(item, selfref=ref(this)){
+            this = selfref();
+            if this is not nil{
+                if this._iterating{
+                    this._pending_removals.append(item);
+                } else{
+                    this.data.discard(item);
+        } } } this._remove = _remove;
+        # A list of keys to be removed
+        this._pending_removals = [];
+        this._iterating = set();
+        if data is not nil{
+            this.update(data);
+
+    }
+    } function _commit_removals(){
+        l = this._pending_removals;
+        discard = this.data.discard;
+        while l{
+            discard(l.pop());
+
+    }
+    } function __iter__(){
+        with _IterationGuard(this){
+            for itemref in this.data{
+                item = itemref();
+                if item is not nil{
+                    # Caveat: the iterator will keep a strong reference to
+                    # `item` until it is resumed or closed.
+                    yield item;
+
+    }
+    } } } function __len__(){
+        return len(this.data) - len(this._pending_removals);
+
+    }
+    function __contains__( item){
+        try{
+            wr = ref(item);
+        } except TypeError{
+            return false;
+        } return wr in this.data;
+
+    }
+    function __reduce__(){
+        return (this.__class__, (list(this),),
+                getattr(this, '__dict__', nil));
+
+    }
+    __hash__ = nil;
+
+    function add( item){
+        if this._pending_removals{
+            this._commit_removals();
+        } this.data.add(ref(item, this._remove));
+
+    }
+    function clear(){
+        if this._pending_removals{
+            this._commit_removals();
+        } this.data.clear();
+
+    }
+    function copy(){
+        return this.__class__(this);
+
+    }
+    function pop(){
+        if this._pending_removals{
+            this._commit_removals();
+        } while true{
+            try{
+                itemref = this.data.pop();
+            } except KeyError{
+                raise KeyError('pop from empty WeakSet');
+            } item = itemref();
+            if item is not nil{
+                return item;
+
+    }
+    } } function remove( item){
+        if this._pending_removals{
+            this._commit_removals();
+        } this.data.remove(ref(item));
+
+    }
+    function discard( item){
+        if this._pending_removals{
+            this._commit_removals();
+        } this.data.discard(ref(item));
+
+    }
+    function update( other){
+        if this._pending_removals{
+            this._commit_removals();
+        } for element in other{
+            this.add(element);
+
+    }
+    } function __ior__( other){
+        this.update(other);
+        return this;
+
+    }
+    function difference( other){
+        newset = this.copy();
+        newset.difference_update(other);
+        return newset;
+    } __sub__ = difference;
+
+    function difference_update( other){
+        this.__isub__(other);
+    } function __isub__( other){
+        if this._pending_removals{
+            this._commit_removals();
+        } if this is other{
+            this.data.clear();
+        } else{
+            this.data.difference_update(ref(item) for item in other);
+        } return this;
+
+    }
+    function intersection( other){
+        return this.__class__(item for item in other if item in this);
+    } __and__ = intersection;
+
+    function intersection_update( other){
+        this.__iand__(other);
+    } function __iand__( other){
+        if this._pending_removals{
+            this._commit_removals();
+        } this.data.intersection_update(ref(item) for item in other);
+        return this;
+
+    }
+    function issubset( other){
+        return this.data.issubset(ref(item) for item in other);
+    } __le__ = issubset;
+
+    function __lt__( other){
+        return this.data < set(ref(item) for item in other);
+
+    }
+    function issuperset( other){
+        return this.data.issuperset(ref(item) for item in other);
+    } __ge__ = issuperset;
+
+    function __gt__( other){
+        return this.data > set(ref(item) for item in other);
+
+    }
+    function __eq__( other){
+        if not isinstance(other, this.__class__){
+            return NotImplemented;
+        } return this.data == set(ref(item) for item in other);
+
+    }
+    function __ne__( other){
+        opposite = this.__eq__(other);
+        if opposite is NotImplemented{
+            return NotImplemented;
+        } return not opposite;
+
+    }
+    function symmetric_difference( other){
+        newset = this.copy();
+        newset.symmetric_difference_update(other);
+        return newset;
+    } __xor__ = symmetric_difference;
+
+    function symmetric_difference_update( other){
+        this.__ixor__(other);
+    } function __ixor__( other){
+        if this._pending_removals{
+            this._commit_removals();
+        } if this is other{
+            this.data.clear();
+        } else{
+            this.data.symmetric_difference_update(ref(item, this._remove) for item in other);
+        } return this;
+
+    }
+    function union( other){
+        return this.__class__(e for s in (this, other) for e in s);
+    } __or__ = union;
+
+    function isdisjoint( other){
+        return len(this.intersection(other)) == 0;
+
+}
+}

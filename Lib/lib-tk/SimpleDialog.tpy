@@ -1,0 +1,121 @@
+"""A simple but flexible modal dialog box.""";
+
+
+from Tkinter import *;
+
+
+class SimpleDialog{
+
+    function __init__( master,
+                 text='', buttons=[], default=nil, cancel=nil,
+                 title=nil, class_=nil){
+        if class_{
+            this.root = Toplevel(master, class_=class_);
+        } else{
+            this.root = Toplevel(master);
+        } if title{
+            this.root.title(title);
+            this.root.iconname(title);
+        } this.message = Message(this.root, text=text, aspect=400);
+        this.message.pack(expand=1, fill=BOTH);
+        this.frame = Frame(this.root);
+        this.frame.pack();
+        this.num = default;
+        this.cancel = cancel;
+        this.default = default;
+        this.root.bind('<Return>', this.return_event);
+        for num in range(len(buttons)){
+            s = buttons[num];
+            b = Button(this.frame, text=s,
+                       command=(lambda this=this, num=num{ this.done(num)}));
+            if num == default{
+                b.config(relief=RIDGE, borderwidth=8);
+            } b.pack(side=LEFT, fill=BOTH, expand=1);
+        } this.root.protocol('WM_DELETE_WINDOW', this.wm_delete_window);
+        this._set_transient(master);
+
+    }
+    function _set_transient( master, relx=0.5, rely=0.3){
+        widget = this.root;
+        widget.withdraw(); # Remain invisible while we figure out the geometry
+        widget.transient(master);
+        widget.update_idletasks(); # Actualize geometry information
+        if master.winfo_ismapped(){
+            m_width = master.winfo_width();
+            m_height = master.winfo_height();
+            m_x = master.winfo_rootx();
+            m_y = master.winfo_rooty();
+        } else{
+            m_width = master.winfo_screenwidth();
+            m_height = master.winfo_screenheight();
+            m_x = m_y = 0;
+        } w_width = widget.winfo_reqwidth();
+        w_height = widget.winfo_reqheight();
+        x = m_x + (m_width - w_width) * relx;
+        y = m_y + (m_height - w_height) * rely;
+        if x+w_width > master.winfo_screenwidth(){
+            x = master.winfo_screenwidth() - w_width;
+        } elif x < 0{
+            x = 0;
+        } if y+w_height > master.winfo_screenheight(){
+            y = master.winfo_screenheight() - w_height;
+        } elif y < 0{
+            y = 0;
+        } widget.geometry("+%d+%d" % (x, y));
+        widget.deiconify(); # Become visible at the desired location
+
+    }
+    function go(){
+        this.root.wait_visibility();
+        this.root.grab_set();
+        this.root.mainloop();
+        this.root.destroy();
+        return this.num;
+
+    }
+    function return_event( event){
+        if this.default is nil{
+            this.root.bell();
+        } else{
+            this.done(this.default);
+
+    }
+    } function wm_delete_window(){
+        if this.cancel is nil{
+            this.root.bell();
+        } else{
+            this.done(this.cancel);
+
+    }
+    } function done( num){
+        this.num = num;
+        this.root.quit();
+
+
+}
+} if __name__ == '__main__'{
+
+    function test(){
+        root = Tk();
+        function doit(root=root){
+            d = SimpleDialog(root,
+                         text="This is a test dialog.  "
+                              "Would this have been an actual dialog, "
+                              "the buttons below would have been glowing "
+                              "in soft pink light.\n"
+                              "Do you believe this?",
+                         buttons=["Yes", "No", "Cancel"],
+                         default=0,
+                         cancel=2,
+                         title="Test Dialog");
+            print d.go();
+        } t = Button(root, text='Test', command=doit);
+        t.pack();
+        q = Button(root, text='Quit', command=t.quit);
+        q.pack();
+        t.mainloop();
+
+    }
+    test();
+
+}

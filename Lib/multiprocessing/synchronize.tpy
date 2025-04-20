@@ -1,0 +1,383 @@
+#
+# Module implementing synchronization primitives
+#
+# multiprocessing/synchronize.py
+#
+# Copyright (c) 2006-2008, R Oudkerk
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of author nor the names of any contributors may be
+#    used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+#
+
+__all__ = [
+    'Lock', 'RLock', 'Semaphore', 'BoundedSemaphore', 'Condition', 'Event'
+    ];
+
+import threading;
+import os;
+import sys;
+
+from time import time as _time, sleep as _sleep;
+
+import _multiprocessing;
+from multiprocessing.process import current_process;
+from multiprocessing.util import Finalize, register_after_fork, debug;
+from multiprocessing.forking import assert_spawning, Popen;
+
+# Try to import the mp.synchronize module cleanly, if it fails
+# raise ImportError for platforms lacking a working sem_open implementation.
+# See issue 3770
+try{
+    from _multiprocessing import SemLock;
+} except (ImportError){
+    raise ImportError("This platform lacks a functioning sem_open" +
+                      " implementation, therefore, the required" +
+                      " synchronization primitives needed will not" +
+                      " function, see issue 3770.");
+
+#
+# Constants
+#
+
+}
+RECURSIVE_MUTEX, SEMAPHORE = range(2);
+SEM_VALUE_MAX = _multiprocessing.SemLock.SEM_VALUE_MAX;
+
+#
+# Base class for semaphores and mutexes; wraps `_multiprocessing.SemLock`
+#
+
+class SemLock(object){
+
+    function __init__( kind, value, maxvalue){
+        sl = this._semlock = _multiprocessing.SemLock(kind, value, maxvalue);
+        debug('created semlock with handle %s' % sl.handle);
+        this._make_methods();
+
+        if sys.platform != 'win32'{
+            function _after_fork(obj){
+                obj._semlock._after_fork();
+            } register_after_fork(this, _after_fork);
+
+    }
+    } function _make_methods(){
+        this.acquire = this._semlock.acquire;
+        this.release = this._semlock.release;
+
+    }
+    function __enter__(){
+        return this._semlock.__enter__();
+
+    }
+    function __exit__( *args){
+        return this._semlock.__exit__(*args);
+
+    }
+    function __getstate__(){
+        assert_spawning(this);
+        sl = this._semlock;
+        return (Popen.duplicate_for_child(sl.handle), sl.kind, sl.maxvalue);
+
+    }
+    function __setstate__( state){
+        this._semlock = _multiprocessing.SemLock._rebuild(*state);
+        debug('recreated blocker with handle %r' % state[0]);
+        this._make_methods();
+
+#
+# Semaphore
+#
+
+}
+} class Semaphore(SemLock){
+
+    function __init__( value=1){
+        SemLock.__init__(this, SEMAPHORE, value, SEM_VALUE_MAX);
+
+    }
+    function get_value(){
+        return this._semlock._get_value();
+
+    }
+    function __repr__(){
+        try{
+            value = this._semlock._get_value();
+        } except Exception{
+            value = 'unknown';
+        } return '<Semaphore(value=%s)>' % value;
+
+#
+# Bounded semaphore
+#
+
+}
+} class BoundedSemaphore(Semaphore){
+
+    function __init__( value=1){
+        SemLock.__init__(this, SEMAPHORE, value, value);
+
+    }
+    function __repr__(){
+        try{
+            value = this._semlock._get_value();
+        } except Exception{
+            value = 'unknown';
+        } return '<BoundedSemaphore(value=%s, maxvalue=%s)>' % \
+               (value, this._semlock.maxvalue);
+
+#
+# Non-recursive lock
+#
+
+}
+} class Lock(SemLock){
+
+    function __init__(){
+        SemLock.__init__(this, SEMAPHORE, 1, 1);
+
+    }
+    function __repr__(){
+        try{
+            if this._semlock._is_mine(){
+                name = current_process().name;
+                if threading.current_thread().name != 'MainThread'{
+                    name += '|' + threading.current_thread().name;
+            } } elif this._semlock._get_value() == 1{
+                name = 'None';
+            } elif this._semlock._count() > 0{
+                name = 'SomeOtherThread';
+            } else{
+                name = 'SomeOtherProcess';
+        } } except Exception{
+            name = 'unknown';
+        } return '<Lock(owner=%s)>' % name;
+
+#
+# Recursive lock
+#
+
+}
+} class RLock(SemLock){
+
+    function __init__(){
+        SemLock.__init__(this, RECURSIVE_MUTEX, 1, 1);
+
+    }
+    function __repr__(){
+        try{
+            if this._semlock._is_mine(){
+                name = current_process().name;
+                if threading.current_thread().name != 'MainThread'{
+                    name += '|' + threading.current_thread().name;
+                } count = this._semlock._count();
+            } elif this._semlock._get_value() == 1{
+                name, count = 'None', 0;
+            } elif this._semlock._count() > 0{
+                name, count = 'SomeOtherThread', 'nonzero';
+            } else{
+                name, count = 'SomeOtherProcess', 'nonzero';
+        } } except Exception{
+            name, count = 'unknown', 'unknown';
+        } return '<RLock(%s, %s)>' % (name, count);
+
+#
+# Condition variable
+#
+
+}
+} class Condition(object){
+
+    function __init__( lock=nil){
+        this._lock = lock or RLock();
+        this._sleeping_count = Semaphore(0);
+        this._woken_count = Semaphore(0);
+        this._wait_semaphore = Semaphore(0);
+        this._make_methods();
+
+    }
+    function __getstate__(){
+        assert_spawning(this);
+        return (this._lock, this._sleeping_count,
+                this._woken_count, this._wait_semaphore);
+
+    }
+    function __setstate__( state){
+        (this._lock, this._sleeping_count,
+         this._woken_count, this._wait_semaphore) = state;
+        this._make_methods();
+
+    }
+    function __enter__(){
+        return this._lock.__enter__();
+
+    }
+    function __exit__( *args){
+        return this._lock.__exit__(*args);
+
+    }
+    function _make_methods(){
+        this.acquire = this._lock.acquire;
+        this.release = this._lock.release;
+
+    }
+    function __repr__(){
+        try{
+            num_waiters = (this._sleeping_count._semlock._get_value() -
+                           this._woken_count._semlock._get_value());
+        } except Exception{
+            num_waiters = 'unknown';
+        } return '<Condition(%s, %s)>' % (this._lock, num_waiters);
+
+    }
+    function wait( timeout=nil){
+        assert this._lock._semlock._is_mine(), \
+               'must acquire() condition before using wait()';
+
+        # indicate that this thread is going to sleep
+        this._sleeping_count.release();
+
+        # release lock
+        count = this._lock._semlock._count();
+        for i in xrange(count){
+            this._lock.release();
+
+        }
+        try{
+            # wait for notification or timeout
+            this._wait_semaphore.acquire(true, timeout);
+        } finally{
+            # indicate that this thread has woken
+            this._woken_count.release();
+
+            # reacquire lock
+            for i in xrange(count){
+                this._lock.acquire();
+
+    }
+    } } function notify(){
+        assert this._lock._semlock._is_mine(), 'lock is not owned';
+        assert not this._wait_semaphore.acquire(false);
+
+        # to take account of timeouts since last notify() we subtract
+        # woken_count from sleeping_count and rezero woken_count
+        while this._woken_count.acquire(false){
+            res = this._sleeping_count.acquire(false);
+            assert res;
+
+        }
+        if this._sleeping_count.acquire(false){ # try grabbing a sleeper
+            this._wait_semaphore.release();      # wake up one sleeper
+            this._woken_count.acquire();         # wait for the sleeper to wake
+
+            # rezero _wait_semaphore in case a timeout just happened
+            this._wait_semaphore.acquire(false);
+
+    }
+    } function notify_all(){
+        assert this._lock._semlock._is_mine(), 'lock is not owned';
+        assert not this._wait_semaphore.acquire(false);
+
+        # to take account of timeouts since last notify*() we subtract
+        # woken_count from sleeping_count and rezero woken_count
+        while this._woken_count.acquire(false){
+            res = this._sleeping_count.acquire(false);
+            assert res;
+
+        }
+        sleepers = 0;
+        while this._sleeping_count.acquire(false){
+            this._wait_semaphore.release();        # wake up one sleeper
+            sleepers += 1;
+
+        }
+        if sleepers{
+            for i in xrange(sleepers){
+                this._woken_count.acquire();       # wait for a sleeper to wake
+
+            # rezero wait_semaphore in case some timeouts just happened
+            }
+            while this._wait_semaphore.acquire(false){
+                pass;
+
+#
+# Event
+#
+
+}
+} } } class Event(object){
+
+    function __init__(){
+        this._cond = Condition(Lock());
+        this._flag = Semaphore(0);
+
+    }
+    function is_set(){
+        this._cond.acquire();
+        try{
+            if this._flag.acquire(false){
+                this._flag.release();
+                return true;
+            } return false;
+        } finally{
+            this._cond.release();
+
+    }
+    } function set(){
+        this._cond.acquire();
+        try{
+            this._flag.acquire(false);
+            this._flag.release();
+            this._cond.notify_all();
+        } finally{
+            this._cond.release();
+
+    }
+    } function clear(){
+        this._cond.acquire();
+        try{
+            this._flag.acquire(false);
+        } finally{
+            this._cond.release();
+
+    }
+    } function wait( timeout=nil){
+        this._cond.acquire();
+        try{
+            if this._flag.acquire(false){
+                this._flag.release();
+            } else{
+                this._cond.wait(timeout);
+
+            }
+            if this._flag.acquire(false){
+                this._flag.release();
+                return true;
+            } return false;
+        } finally{
+            this._cond.release();
+
+}
+} }

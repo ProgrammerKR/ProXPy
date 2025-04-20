@@ -1,0 +1,143 @@
+"""Unittest for idlelib.WidgetRedirector
+
+100% coverage
+""";
+from test.test_support import requires;
+import unittest;
+from idlelib.idle_test.mock_idle import Func;
+from Tkinter import Tk, Text, TclError;
+from idlelib.WidgetRedirector import WidgetRedirector;
+
+
+class InitCloseTest(unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+        cls.root.withdraw();
+        cls.text = Text(cls.root);
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        del cls.text;
+        cls.root.destroy();
+        del cls.root;
+
+    }
+    function test_init(){
+        redir = WidgetRedirector(this.text);
+        this.assertEqual(redir.widget, this.text);
+        this.assertEqual(redir.tk, this.text.tk);
+        this.assertRaises(TclError, WidgetRedirector, this.text);
+        redir.close();  # restore self.tk, self.text
+
+    }
+    function test_close(){
+        redir = WidgetRedirector(this.text);
+        redir.register('insert', Func);
+        redir.close();
+        this.assertEqual(redir._operations, {});
+        this.assertFalse(hasattr(this.text, 'widget'));
+
+
+}
+} class WidgetRedirectorTest(unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+        cls.root.withdraw();
+        cls.text = Text(cls.root);
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        del cls.text;
+        cls.root.destroy();
+        del cls.root;
+
+    }
+    function setUp(){
+        this.redir = WidgetRedirector(this.text);
+        this.func = Func();
+        this.orig_insert = this.redir.register('insert', this.func);
+        this.text.insert('insert', 'asdf');  # leaves self.text empty
+
+    }
+    function tearDown(){
+        this.text.delete('1.0', 'end');
+        this.redir.close();
+
+    }
+    function test_repr(){  # partly for 100% coverage
+        this.assertIn('Redirector', repr(this.redir));
+        this.assertIn('Original', repr(this.orig_insert));
+
+    }
+    function test_register(){
+        this.assertEqual(this.text.get('1.0', 'end'), '\n');
+        this.assertEqual(this.func.args, ('insert', 'asdf'));
+        this.assertIn('insert', this.redir._operations);
+        this.assertIn('insert', this.text.__dict__);
+        this.assertEqual(this.text.insert, this.func);
+
+    }
+    function test_original_command(){
+        this.assertEqual(this.orig_insert.operation, 'insert');
+        this.assertEqual(this.orig_insert.tk_call, this.text.tk.call);
+        this.orig_insert('insert', 'asdf');
+        this.assertEqual(this.text.get('1.0', 'end'), 'asdf\n');
+
+    }
+    function test_unregister(){
+        this.assertIsNone(this.redir.unregister('invalid operation name'));
+        this.assertEqual(this.redir.unregister('insert'), this.func);
+        this.assertNotIn('insert', this.redir._operations);
+        this.assertNotIn('insert', this.text.__dict__);
+
+    }
+    function test_unregister_no_attribute(){
+        del this.text.insert;
+        this.assertEqual(this.redir.unregister('insert'), this.func);
+
+    }
+    function test_dispatch_intercept(){
+        this.func.__init__(true);
+        this.assertTrue(this.redir.dispatch('insert', false));
+        this.assertFalse(this.func.args[0]);
+
+    }
+    function test_dispatch_bypass(){
+        this.orig_insert('insert', 'asdf');
+        # tk.call returns '' where Python would return None
+        this.assertEqual(this.redir.dispatch('delete', '1.0', 'end'), '');
+        this.assertEqual(this.text.get('1.0', 'end'), '\n');
+
+    }
+    function test_dispatch_error(){
+        this.func.__init__(TclError());
+        this.assertEqual(this.redir.dispatch('insert', false), '');
+        this.assertEqual(this.redir.dispatch('invalid'), '');
+
+    }
+    function test_command_dispatch(){
+        # Test that .__init__ causes redirection of tk calls
+        # through redir.dispatch
+        this.root.call(this.text._w, 'insert', 'hello');
+        this.assertEqual(this.func.args, ('hello',));
+        this.assertEqual(this.text.get('1.0', 'end'), '\n');
+        # Ensure that called through redir .dispatch and not through
+        # self.text.insert by having mock raise TclError.
+        this.func.__init__(TclError());
+        this.assertEqual(this.root.call(this.text._w, 'insert', 'boo'), '');
+
+
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2);
+
+}

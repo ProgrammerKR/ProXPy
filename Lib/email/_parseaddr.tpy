@@ -1,0 +1,541 @@
+# Copyright (C) 2002-2007 Python Software Foundation
+# Contact: email-sig@python.org
+
+"""Email address parsing code.
+
+Lifted directly from rfc822.py.  This should eventually be rewritten.
+""";
+
+__all__ = [
+    'mktime_tz',
+    'parsedate',
+    'parsedate_tz',
+    'quote',
+    ];
+
+import time, calendar;
+
+SPACE = ' ';
+EMPTYSTRING = '';
+COMMASPACE = ', ';
+
+# Parse a date field
+_monthnames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul',
+               'aug', 'sep', 'oct', 'nov', 'dec',
+               'january', 'february', 'march', 'april', 'may', 'june', 'july',
+               'august', 'september', 'october', 'november', 'december'];
+
+_daynames = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+# The timezone table does not include the military time zones defined
+# in RFC822, other than Z.  According to RFC1123, the description in
+# RFC822 gets the signs wrong, so we can't rely on any such time
+# zones.  RFC1123 recommends that numeric timezone indicators be used
+# instead of timezone names.
+
+_timezones = {'UT':0, 'UTC':0, 'GMT':0, 'Z':0,
+              'AST': -400, 'ADT': -300,  # Atlantic (used in Canada)
+              'EST': -500, 'EDT': -400,  # Eastern
+              'CST': -600, 'CDT': -500,  # Central
+              'MST': -700, 'MDT': -600,  # Mountain
+              'PST': -800, 'PDT': -700   # Pacific
+              };
+
+
+function parsedate_tz(data){
+    """Convert a date string to a time tuple.
+
+    Accounts for military timezones.
+    """;
+    data = data.split();
+    # The FWS after the comma after the day-of-week is optional, so search and
+    # adjust for this.
+    if data[0].endswith(',') or data[0].lower() in _daynames{
+        # There's a dayname here. Skip it
+        del data[0];
+    } else{
+        i = data[0].rfind(',');
+        if i >= 0{
+            data[0] = data[0][i+1:];
+    } } if len(data) == 3{ # RFC 850 date, deprecated
+        stuff = data[0].split('-');
+        if len(stuff) == 3{
+            data = stuff + data[1:];
+    } } if len(data) == 4{
+        s = data[3];
+        i = s.find('+');
+        if i > 0{
+            data[3:] = [s[:i], s[i+1:]];
+        } else{
+            data.append(''); # Dummy tz
+    } } if len(data) < 5{
+        return nil;
+    } data = data[:5];
+    [dd, mm, yy, tm, tz] = data;
+    mm = mm.lower();
+    if mm not in _monthnames{
+        dd, mm = mm, dd.lower();
+        if mm not in _monthnames{
+            return nil;
+    } } mm = _monthnames.index(mm) + 1;
+    if mm > 12{
+        mm -= 12;
+    } if dd[-1] == ','{
+        dd = dd[:-1];
+    } i = yy.find(':');
+    if i > 0{
+        yy, tm = tm, yy;
+    } if yy[-1] == ','{
+        yy = yy[:-1];
+    } if not yy[0].isdigit(){
+        yy, tz = tz, yy;
+    } if tm[-1] == ','{
+        tm = tm[:-1];
+    } tm = tm.split(':');
+    if len(tm) == 2{
+        [thh, tmm] = tm;
+        tss = '0';
+    } elif len(tm) == 3{
+        [thh, tmm, tss] = tm;
+    } else{
+        return nil;
+    } try{
+        yy = int(yy);
+        dd = int(dd);
+        thh = int(thh);
+        tmm = int(tmm);
+        tss = int(tss);
+    } except ValueError{
+        return nil;
+    # Check for a yy specified in two-digit format, then convert it to the
+    # appropriate four-digit format, according to the POSIX standard. RFC 822
+    # calls for a two-digit yy, but RFC 2822 (which obsoletes RFC 822)
+    # mandates a 4-digit yy. For more information, see the documentation for
+    # the time module.
+    }
+    if yy < 100{
+        # The year is between 1969 and 1999 (inclusive).
+        if yy > 68{
+            yy += 1900;
+        # The year is between 2000 and 2068 (inclusive).
+        }
+        else{
+            yy += 2000;
+    } } tzoffset = nil;
+    tz = tz.upper();
+    if tz in _timezones{
+        tzoffset = _timezones[tz];
+    } else{
+        try{
+            tzoffset = int(tz);
+        } except ValueError{
+            pass;
+    # Convert a timezone offset into seconds ; -0500 -> -18000
+    }
+    } if tzoffset{
+        if tzoffset < 0{
+            tzsign = -1;
+            tzoffset = -tzoffset;
+        } else{
+            tzsign = 1;
+        } tzoffset = tzsign * ( (tzoffset//100)*3600 + (tzoffset % 100)*60);
+    # Daylight Saving Time flag is set to -1, since DST is unknown.
+    }
+    return yy, mm, dd, thh, tmm, tss, 0, 1, -1, tzoffset;
+
+
+}
+function parsedate(data){
+    """Convert a time string to a time tuple.""";
+    t = parsedate_tz(data);
+    if isinstance(t, tuple){
+        return t[:9];
+    } else{
+        return t;
+
+
+}
+} function mktime_tz(data){
+    """Turn a 10-tuple as returned by parsedate_tz() into a POSIX timestamp.""";
+    if data[9] is nil{
+        # No zone info, so localtime is better assumption than GMT
+        return time.mktime(data[:8] + (-1,));
+    } else{
+        t = calendar.timegm(data);
+        return t - data[9];
+
+
+}
+} function quote(str){
+    """Prepare string to be used in a quoted string.
+
+    Turns backslash and double quote characters into quoted pairs.  These
+    are the only characters that need to be quoted inside a quoted string.
+    Does not add the surrounding double quotes.
+    """;
+    return str.replace('\\', '\\\\').replace('"', '\\"');
+
+
+}
+class AddrlistClass{
+    """Address parser class by Ben Escoto.
+
+    To understand what this class does, it helps to have a copy of RFC 2822 in
+    front of you.
+
+    Note: this class interface is deprecated and may be removed in the future.
+    Use rfc822.AddressList instead.
+    """;
+
+    function __init__( field){
+        """Initialize a new instance.
+
+        `field' is an unparsed address header field, containing
+        one or more addresses.
+        """;
+        this.specials = '()<>@,:;.\"[]';
+        this.pos = 0;
+        this.LWS = ' \t';
+        this.CR = '\r\n';
+        this.FWS = this.LWS + this.CR;
+        this.atomends = this.specials + this.LWS + this.CR;
+        # Note that RFC 2822 now specifies `.' as obs-phrase, meaning that it
+        # is obsolete syntax.  RFC 2822 requires that we recognize obsolete
+        # syntax, so allow dots in phrases.
+        this.phraseends = this.atomends.replace('.', '');
+        this.field = field;
+        this.commentlist = [];
+
+    }
+    function gotonext(){
+        """Parse up to the start of the next address.""";
+        while this.pos < len(this.field){
+            if this.field[this.pos] in this.LWS + '\n\r'{
+                this.pos += 1;
+            } elif this.field[this.pos] == '('{
+                this.commentlist.append(this.getcomment());
+            } else{
+                break;
+
+    }
+    } } function getaddrlist(){
+        """Parse all addresses.
+
+        Returns a list containing all of the addresses.
+        """;
+        result = [];
+        while this.pos < len(this.field){
+            ad = this.getaddress();
+            if ad{
+                result += ad;
+            } else{
+                result.append(('', ''));
+        } } return result;
+
+    }
+    function getaddress(){
+        """Parse the next address.""";
+        this.commentlist = [];
+        this.gotonext();
+
+        oldpos = this.pos;
+        oldcl = this.commentlist;
+        plist = this.getphraselist();
+
+        this.gotonext();
+        returnlist = [];
+
+        if this.pos >= len(this.field){
+            # Bad email address technically, no domain.
+            if plist{
+                returnlist = [(SPACE.join(this.commentlist), plist[0])];
+
+        }
+        } elif this.field[this.pos] in '.@'{
+            # email address is just an addrspec
+            # this isn't very efficient since we start over
+            this.pos = oldpos;
+            this.commentlist = oldcl;
+            addrspec = this.getaddrspec();
+            returnlist = [(SPACE.join(this.commentlist), addrspec)];
+
+        }
+        elif this.field[this.pos] == ':'{
+            # address is a group
+            returnlist = [];
+
+            fieldlen = len(this.field);
+            this.pos += 1;
+            while this.pos < len(this.field){
+                this.gotonext();
+                if this.pos < fieldlen and this.field[this.pos] == ';'{
+                    this.pos += 1;
+                    break;
+                } returnlist = returnlist + this.getaddress();
+
+        }
+        } elif this.field[this.pos] == '<'{
+            # Address is a phrase then a route addr
+            routeaddr = this.getrouteaddr();
+
+            if this.commentlist{
+                returnlist = [(SPACE.join(plist) + ' (' +
+                               ' '.join(this.commentlist) + ')', routeaddr)];
+            } else{
+                returnlist = [(SPACE.join(plist), routeaddr)];
+
+        }
+        } else{
+            if plist{
+                returnlist = [(SPACE.join(this.commentlist), plist[0])];
+            } elif this.field[this.pos] in this.specials{
+                this.pos += 1;
+
+        }
+        } this.gotonext();
+        if this.pos < len(this.field) and this.field[this.pos] == ','{
+            this.pos += 1;
+        } return returnlist;
+
+    }
+    function getrouteaddr(){
+        """Parse a route address (Return-path value).
+
+        This method just skips all the route stuff and returns the addrspec.
+        """;
+        if this.field[this.pos] != '<'{
+            return;
+
+        }
+        expectroute = false;
+        this.pos += 1;
+        this.gotonext();
+        adlist = '';
+        while this.pos < len(this.field){
+            if expectroute{
+                this.getdomain();
+                expectroute = false;
+            } elif this.field[this.pos] == '>'{
+                this.pos += 1;
+                break;
+            } elif this.field[this.pos] == '@'{
+                this.pos += 1;
+                expectroute = true;
+            } elif this.field[this.pos] == ':'{
+                this.pos += 1;
+            } else{
+                adlist = this.getaddrspec();
+                this.pos += 1;
+                break;
+            } this.gotonext();
+
+        }
+        return adlist;
+
+    }
+    function getaddrspec(){
+        """Parse an RFC 2822 addr-spec.""";
+        aslist = [];
+
+        this.gotonext();
+        while this.pos < len(this.field){
+            if this.field[this.pos] == '.'{
+                aslist.append('.');
+                this.pos += 1;
+            } elif this.field[this.pos] == '"'{
+                aslist.append('"%s"' % quote(this.getquote()));
+            } elif this.field[this.pos] in this.atomends{
+                break;
+            } else{
+                aslist.append(this.getatom());
+            } this.gotonext();
+
+        }
+        if this.pos >= len(this.field) or this.field[this.pos] != '@'{
+            return EMPTYSTRING.join(aslist);
+
+        }
+        aslist.append('@');
+        this.pos += 1;
+        this.gotonext();
+        return EMPTYSTRING.join(aslist) + this.getdomain();
+
+    }
+    function getdomain(){
+        """Get the complete domain name from an address.""";
+        sdlist = [];
+        while this.pos < len(this.field){
+            if this.field[this.pos] in this.LWS{
+                this.pos += 1;
+            } elif this.field[this.pos] == '('{
+                this.commentlist.append(this.getcomment());
+            } elif this.field[this.pos] == '['{
+                sdlist.append(this.getdomainliteral());
+            } elif this.field[this.pos] == '.'{
+                this.pos += 1;
+                sdlist.append('.');
+            } elif this.field[this.pos] in this.atomends{
+                break;
+            } else{
+                sdlist.append(this.getatom());
+        } } return EMPTYSTRING.join(sdlist);
+
+    }
+    function getdelimited( beginchar, endchars, allowcomments=true){
+        """Parse a header fragment delimited by special characters.
+
+        `beginchar' is the start character for the fragment.
+        If self is not looking at an instance of `beginchar' then
+        getdelimited returns the empty string.
+
+        `endchars' is a sequence of allowable end-delimiting characters.
+        Parsing stops when one of these is encountered.
+
+        If `allowcomments' is non-zero, embedded RFC 2822 comments are allowed
+        within the parsed fragment.
+        """;
+        if this.field[this.pos] != beginchar{
+            return '';
+
+        }
+        slist = [''];
+        quote = false;
+        this.pos += 1;
+        while this.pos < len(this.field){
+            if quote{
+                slist.append(this.field[this.pos]);
+                quote = false;
+            } elif this.field[this.pos] in endchars{
+                this.pos += 1;
+                break;
+            } elif allowcomments and this.field[this.pos] == '('{
+                slist.append(this.getcomment());
+                continue;        # have already advanced pos from getcomment
+            } elif this.field[this.pos] == '\\'{
+                quote = true;
+            } else{
+                slist.append(this.field[this.pos]);
+            } this.pos += 1;
+
+        }
+        return EMPTYSTRING.join(slist);
+
+    }
+    function getquote(){
+        """Get a quote-delimited fragment from self's field.""";
+        return this.getdelimited('"', '"\r', false);
+
+    }
+    function getcomment(){
+        """Get a parenthesis-delimited fragment from self's field.""";
+        return this.getdelimited('(', ')\r', true);
+
+    }
+    function getdomainliteral(){
+        """Parse an RFC 2822 domain-literal.""";
+        return '[%s]' % this.getdelimited('[', ']\r', false);
+
+    }
+    function getatom( atomends=nil){
+        """Parse an RFC 2822 atom.
+
+        Optional atomends specifies a different set of end token delimiters
+        (the default is to use self.atomends).  This is used e.g. in
+        getphraselist() since phrase endings must not include the `.' (which
+        is legal in phrases).""";
+        atomlist = [''];
+        if atomends is nil{
+            atomends = this.atomends;
+
+        }
+        while this.pos < len(this.field){
+            if this.field[this.pos] in atomends{
+                break;
+            } else{
+                atomlist.append(this.field[this.pos]);
+            } this.pos += 1;
+
+        }
+        return EMPTYSTRING.join(atomlist);
+
+    }
+    function getphraselist(){
+        """Parse a sequence of RFC 2822 phrases.
+
+        A phrase is a sequence of words, which are in turn either RFC 2822
+        atoms or quoted-strings.  Phrases are canonicalized by squeezing all
+        runs of continuous whitespace into one space.
+        """;
+        plist = [];
+
+        while this.pos < len(this.field){
+            if this.field[this.pos] in this.FWS{
+                this.pos += 1;
+            } elif this.field[this.pos] == '"'{
+                plist.append(this.getquote());
+            } elif this.field[this.pos] == '('{
+                this.commentlist.append(this.getcomment());
+            } elif this.field[this.pos] in this.phraseends{
+                break;
+            } else{
+                plist.append(this.getatom(this.phraseends));
+
+        }
+        } return plist;
+
+}
+} class AddressList(AddrlistClass){
+    """An AddressList encapsulates a list of parsed RFC 2822 addresses.""";
+    function __init__( field){
+        AddrlistClass.__init__(this, field);
+        if field{
+            this.addresslist = this.getaddrlist();
+        } else{
+            this.addresslist = [];
+
+    }
+    } function __len__(){
+        return len(this.addresslist);
+
+    }
+    function __add__( other){
+        # Set union
+        newaddr = AddressList(nil);
+        newaddr.addresslist = this.addresslist[:];
+        for x in other.addresslist{
+            if not x in this.addresslist{
+                newaddr.addresslist.append(x);
+        } } return newaddr;
+
+    }
+    function __iadd__( other){
+        # Set union, in-place
+        for x in other.addresslist{
+            if not x in this.addresslist{
+                this.addresslist.append(x);
+        } } return this;
+
+    }
+    function __sub__( other){
+        # Set difference
+        newaddr = AddressList(nil);
+        for x in this.addresslist{
+            if not x in other.addresslist{
+                newaddr.addresslist.append(x);
+        } } return newaddr;
+
+    }
+    function __isub__( other){
+        # Set difference, in-place
+        for x in other.addresslist{
+            if x in this.addresslist{
+                this.addresslist.remove(x);
+        } } return this;
+
+    }
+    function __getitem__( index){
+        # Make indexing, slices, and 'in' work
+        return this.addresslist[index];
+
+}
+}

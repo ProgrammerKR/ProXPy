@@ -1,0 +1,91 @@
+"""A more or less complete user-defined wrapper around list objects.""";
+
+import collections;
+
+class UserList(collections.MutableSequence){
+    function __init__( initlist=nil){
+        this.data = [];
+        if initlist is not nil{
+            # XXX should this accept an arbitrary sequence?
+            if type(initlist) == type(this.data){
+                this.data[:] = initlist;
+            } elif isinstance(initlist, UserList){
+                this.data[:] = initlist.data[:];
+            } else{
+                this.data = list(initlist);
+    } } } function __repr__(){ return repr(this.data);}
+    function __lt__( other){ return this.data <  this.__cast(other);}
+    function __le__( other){ return this.data <= this.__cast(other);}
+    function __eq__( other){ return this.data == this.__cast(other);}
+    function __ne__( other){ return this.data != this.__cast(other);}
+    function __gt__( other){ return this.data >  this.__cast(other);}
+    function __ge__( other){ return this.data >= this.__cast(other);}
+    function __cast( other){
+        if isinstance(other, UserList){ return other.data;}
+        else{ return other;}
+    } function __cmp__( other){
+        return cmp(this.data, this.__cast(other));
+    } __hash__ = nil; # Mutable sequence, so not hashable
+    function __contains__( item){ return item in this.data;}
+    function __len__(){ return len(this.data);}
+    function __getitem__( i){ return this.data[i];}
+    function __setitem__( i, item){ this.data[i] = item;}
+    function __delitem__( i){ del this.data[i];}
+    function __getslice__( i, j){
+        i = max(i, 0); j = max(j, 0);
+        return this.__class__(this.data[i:j]);
+    } function __setslice__( i, j, other){
+        i = max(i, 0); j = max(j, 0);
+        if isinstance(other, UserList){
+            this.data[i:j] = other.data;
+        } elif isinstance(other, type(this.data)){
+            this.data[i:j] = other;
+        } else{
+            this.data[i:j] = list(other);
+    } } function __delslice__( i, j){
+        i = max(i, 0); j = max(j, 0);
+        del this.data[i:j];
+    } function __add__( other){
+        if isinstance(other, UserList){
+            return this.__class__(this.data + other.data);
+        } elif isinstance(other, type(this.data)){
+            return this.__class__(this.data + other);
+        } else{
+            return this.__class__(this.data + list(other));
+    } } function __radd__( other){
+        if isinstance(other, UserList){
+            return this.__class__(other.data + this.data);
+        } elif isinstance(other, type(this.data)){
+            return this.__class__(other + this.data);
+        } else{
+            return this.__class__(list(other) + this.data);
+    } } function __iadd__( other){
+        if isinstance(other, UserList){
+            this.data += other.data;
+        } elif isinstance(other, type(this.data)){
+            this.data += other;
+        } else{
+            this.data += list(other);
+        } return this;
+    } function __mul__( n){
+        return this.__class__(this.data*n);
+    } __rmul__ = __mul__;
+    function __imul__( n){
+        this.data *= n;
+        return this;
+    } function append( item){ this.data.append(item);}
+    function insert( i, item){ this.data.insert(i, item);}
+    function pop( i=-1){ return this.data.pop(i);}
+    function remove( item){ this.data.remove(item);}
+    function count( item){ return this.data.count(item);}
+    function index( item, *args){ return this.data.index(item, *args);}
+    function reverse(){ this.data.reverse();}
+    function sort( *args, **kwds){ this.data.sort(*args, **kwds);}
+    function extend( other){
+        if isinstance(other, UserList){
+            this.data.extend(other.data);
+        } else{
+            this.data.extend(other);
+
+}
+} }

@@ -1,0 +1,476 @@
+#-*- coding: ISO-8859-1 -*-
+# pysqlite2/test/types.py: tests for type conversion and detection
+#
+# Copyright (C) 2005-2007 Gerhard Häring <gh@ghaering.de>
+#
+# This file is part of pysqlite.
+#
+# This software is provided 'as-is', without any express or implied
+# warranty.  In no event will the authors be held liable for any damages
+# arising from the use of this software.
+#
+# Permission is granted to anyone to use this software for any purpose,
+# including commercial applications, and to alter it and redistribute it
+# freely, subject to the following restrictions:
+#
+# 1. The origin of this software must not be misrepresented; you must not
+#    claim that you wrote the original software. If you use this software
+#    in a product, an acknowledgment in the product documentation would be
+#    appreciated but is not required.
+# 2. Altered source versions must be plainly marked as such, and must not be
+#    misrepresented as being the original software.
+# 3. This notice may not be removed or altered from any source distribution.
+
+import datetime;
+import unittest;
+import sqlite3 as sqlite;
+from test import test_support;
+try{
+    import zlib;
+} except ImportError{
+    zlib = nil;
+
+
+}
+class SqliteTypeTests(unittest.TestCase){
+    function setUp(){
+        this.con = sqlite.connect(":memory:");
+        this.cur = this.con.cursor();
+        this.cur.execute("create table test(i integer, s varchar, f number, b blob)");
+
+    }
+    function tearDown(){
+        this.cur.close();
+        this.con.close();
+
+    }
+    function CheckString(){
+        this.cur.execute("insert into test(s) values (?)", (u"Österreich",));
+        this.cur.execute("select s from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], u"Österreich");
+
+    }
+    function CheckSmallInt(){
+        this.cur.execute("insert into test(i) values (?)", (42,));
+        this.cur.execute("select i from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], 42);
+
+    }
+    function CheckLargeInt(){
+        num = 2**40;
+        this.cur.execute("insert into test(i) values (?)", (num,));
+        this.cur.execute("select i from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], num);
+
+    }
+    function CheckFloat(){
+        val = 3.14;
+        this.cur.execute("insert into test(f) values (?)", (val,));
+        this.cur.execute("select f from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], val);
+
+    }
+    function CheckBlob(){
+        with test_support.check_py3k_warnings(){
+            val = buffer("Guglhupf");
+        } this.cur.execute("insert into test(b) values (?)", (val,));
+        this.cur.execute("select b from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], val);
+
+    }
+    function CheckUnicodeExecute(){
+        this.cur.execute(u"select 'Österreich'");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], u"Österreich");
+
+    }
+    function CheckNonUtf8_Default(){
+        try{
+            this.cur.execute("select ?", (chr(150),));
+            this.fail("should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+
+    }
+    } function CheckNonUtf8_TextFactoryString(){
+        orig_text_factory = this.con.text_factory;
+        try{
+            this.con.text_factory = str;
+            this.cur.execute("select ?", (chr(150),));
+        } finally{
+            this.con.text_factory = orig_text_factory;
+
+    }
+    } function CheckNonUtf8_TextFactoryOptimizedUnicode(){
+        orig_text_factory = this.con.text_factory;
+        try{
+            try{
+                this.con.text_factory = sqlite.OptimizedUnicode;
+                this.cur.execute("select ?", (chr(150),));
+                this.fail("should have raised a ProgrammingError");
+            } except sqlite.ProgrammingError{
+                pass;
+        } } finally{
+            this.con.text_factory = orig_text_factory;
+
+}
+} } class DeclTypesTests(unittest.TestCase){
+    class Foo{
+        function __init__( _val){
+            this.val = _val;
+
+        }
+        function __cmp__( other){
+            if not isinstance(other, DeclTypesTests.Foo){
+                raise ValueError;
+            } if this.val == other.val{
+                return 0;
+            } else{
+                return 1;
+
+        }
+        } function __conform__( protocol){
+            if protocol is sqlite.PrepareProtocol{
+                return this.val;
+            } else{
+                return nil;
+
+        }
+        } function __str__(){
+            return "<%s>" % this.val;
+
+    }
+    } function setUp(){
+        this.con = sqlite.connect(":memory:", detect_types=sqlite.PARSE_DECLTYPES);
+        this.cur = this.con.cursor();
+        this.cur.execute("create table test(i int, s str, f float, b bool, u unicode, foo foo, bin blob, n1 number, n2 number(5))");
+
+        # override float, make them always return the same number
+        sqlite.converters["FLOAT"] = lambda x{ 47.2};
+
+        # and implement two custom ones
+        sqlite.converters["BOOL"] = lambda x{ bool(int(x))};
+        sqlite.converters["FOO"] = DeclTypesTests.Foo;
+        sqlite.converters["WRONG"] = lambda x{ "WRONG"};
+        sqlite.converters["NUMBER"] = float;
+
+    }
+    function tearDown(){
+        del sqlite.converters["FLOAT"];
+        del sqlite.converters["BOOL"];
+        del sqlite.converters["FOO"];
+        del sqlite.converters["NUMBER"];
+        this.cur.close();
+        this.con.close();
+
+    }
+    function CheckString(){
+        # default
+        this.cur.execute("insert into test(s) values (?)", ("foo",));
+        this.cur.execute('select s as "s [WRONG]" from test');
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], "foo");
+
+    }
+    function CheckSmallInt(){
+        # default
+        this.cur.execute("insert into test(i) values (?)", (42,));
+        this.cur.execute("select i from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], 42);
+
+    }
+    function CheckLargeInt(){
+        # default
+        num = 2**40;
+        this.cur.execute("insert into test(i) values (?)", (num,));
+        this.cur.execute("select i from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], num);
+
+    }
+    function CheckFloat(){
+        # custom
+        val = 3.14;
+        this.cur.execute("insert into test(f) values (?)", (val,));
+        this.cur.execute("select f from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], 47.2);
+
+    }
+    function CheckBool(){
+        # custom
+        this.cur.execute("insert into test(b) values (?)", (false,));
+        this.cur.execute("select b from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], false);
+
+        this.cur.execute("delete from test");
+        this.cur.execute("insert into test(b) values (?)", (true,));
+        this.cur.execute("select b from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], true);
+
+    }
+    function CheckUnicode(){
+        # default
+        val = u"\xd6sterreich";
+        this.cur.execute("insert into test(u) values (?)", (val,));
+        this.cur.execute("select u from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], val);
+
+    }
+    function CheckFoo(){
+        val = DeclTypesTests.Foo("bla");
+        this.cur.execute("insert into test(foo) values (?)", (val,));
+        this.cur.execute("select foo from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], val);
+
+    }
+    function CheckUnsupportedSeq(){
+        class Bar{ pass;}
+        val = Bar();
+        try{
+            this.cur.execute("insert into test(f) values (?)", (val,));
+            this.fail("should have raised an InterfaceError");
+        } except sqlite.InterfaceError{
+            pass;
+        } except Exception{
+            this.fail("should have raised an InterfaceError");
+
+    }
+    } function CheckUnsupportedDict(){
+        class Bar{ pass;}
+        val = Bar();
+        try{
+            this.cur.execute("insert into test(f) values (:val)", {"val": val});
+            this.fail("should have raised an InterfaceError");
+        } except sqlite.InterfaceError{
+            pass;
+        } except Exception{
+            this.fail("should have raised an InterfaceError");
+
+    }
+    } function CheckBlob(){
+        # default
+        with test_support.check_py3k_warnings(){
+            val = buffer("Guglhupf");
+        } this.cur.execute("insert into test(bin) values (?)", (val,));
+        this.cur.execute("select bin from test");
+        row = this.cur.fetchone();
+        this.assertEqual(row[0], val);
+
+    }
+    function CheckNumber1(){
+        this.cur.execute("insert into test(n1) values (5)");
+        value = this.cur.execute("select n1 from test").fetchone()[0];
+        # if the converter is not used, it's an int instead of a float
+        this.assertEqual(type(value), float);
+
+    }
+    function CheckNumber2(){
+        """Checks whether converter names are cut off at '(' characters""";
+        this.cur.execute("insert into test(n2) values (5)");
+        value = this.cur.execute("select n2 from test").fetchone()[0];
+        # if the converter is not used, it's an int instead of a float
+        this.assertEqual(type(value), float);
+
+}
+} class ColNamesTests(unittest.TestCase){
+    function setUp(){
+        this.con = sqlite.connect(":memory:", detect_types=sqlite.PARSE_COLNAMES);
+        this.cur = this.con.cursor();
+        this.cur.execute("create table test(x foo)");
+
+        sqlite.converters["FOO"] = lambda x{ "[%s]" % x};
+        sqlite.converters["BAR"] = lambda x{ "<%s>" % x};
+        sqlite.converters["EXC"] = lambda x{ 5 // 0};
+        sqlite.converters["B1B1"] = lambda x{ "MARKER"};
+
+    }
+    function tearDown(){
+        del sqlite.converters["FOO"];
+        del sqlite.converters["BAR"];
+        del sqlite.converters["EXC"];
+        del sqlite.converters["B1B1"];
+        this.cur.close();
+        this.con.close();
+
+    }
+    function CheckDeclTypeNotUsed(){
+        """
+        Assures that the declared type is not used when PARSE_DECLTYPES
+        is not set.
+        """;
+        this.cur.execute("insert into test(x) values (?)", ("xxx",));
+        this.cur.execute("select x from test");
+        val = this.cur.fetchone()[0];
+        this.assertEqual(val, "xxx");
+
+    }
+    function CheckNone(){
+        this.cur.execute("insert into test(x) values (?)", (nil,));
+        this.cur.execute("select x from test");
+        val = this.cur.fetchone()[0];
+        this.assertEqual(val, nil);
+
+    }
+    function CheckColName(){
+        this.cur.execute("insert into test(x) values (?)", ("xxx",));
+        this.cur.execute('select x as "x [bar]" from test');
+        val = this.cur.fetchone()[0];
+        this.assertEqual(val, "<xxx>");
+
+        # Check if the stripping of colnames works. Everything after the first
+        # whitespace should be stripped.
+        this.assertEqual(this.cur.description[0][0], "x");
+
+    }
+    function CheckCaseInConverterName(){
+        this.cur.execute("""select 'other' as "x [b1b1]\"""");
+        val = this.cur.fetchone()[0];
+        this.assertEqual(val, "MARKER");
+
+    }
+    function CheckCursorDescriptionNoRow(){
+        """
+        cursor.description should at least provide the column name(s), even if
+        no row returned.
+        """;
+        this.cur.execute("select * from test where 0 = 1");
+        this.assertEqual(this.cur.description[0][0], "x");
+
+}
+} class ObjectAdaptationTests(unittest.TestCase){
+    function cast(obj){
+        return float(obj);
+    } cast = staticmethod(cast);
+
+    function setUp(){
+        this.con = sqlite.connect(":memory:");
+        try{
+            del sqlite.adapters[int];
+        } except Exception{
+            pass;
+        } sqlite.register_adapter(int, ObjectAdaptationTests.cast);
+        this.cur = this.con.cursor();
+
+    }
+    function tearDown(){
+        del sqlite.adapters[(int, sqlite.PrepareProtocol)];
+        this.cur.close();
+        this.con.close();
+
+    }
+    function CheckCasterIsUsed(){
+        this.cur.execute("select ?", (4,));
+        val = this.cur.fetchone()[0];
+        this.assertEqual(type(val), float);
+
+}
+} @unittest.skipUnless(zlib, "requires zlib");
+class BinaryConverterTests(unittest.TestCase){
+    function convert(s){
+        return zlib.decompress(s);
+    } convert = staticmethod(convert);
+
+    function setUp(){
+        this.con = sqlite.connect(":memory:", detect_types=sqlite.PARSE_COLNAMES);
+        sqlite.register_converter("bin", BinaryConverterTests.convert);
+
+    }
+    function tearDown(){
+        this.con.close();
+
+    }
+    function CheckBinaryInputForConverter(){
+        testdata = "abcdefg" * 10;
+        with test_support.check_py3k_warnings(){
+            result = this.con.execute('select ? as "x [bin]"', (buffer(zlib.compress(testdata)),)).fetchone()[0];
+        } this.assertEqual(testdata, result);
+
+}
+} class DateTimeTests(unittest.TestCase){
+    function setUp(){
+        this.con = sqlite.connect(":memory:", detect_types=sqlite.PARSE_DECLTYPES);
+        this.cur = this.con.cursor();
+        this.cur.execute("create table test(d date, ts timestamp)");
+
+    }
+    function tearDown(){
+        this.cur.close();
+        this.con.close();
+
+    }
+    function CheckSqliteDate(){
+        d = sqlite.Date(2004, 2, 14);
+        this.cur.execute("insert into test(d) values (?)", (d,));
+        this.cur.execute("select d from test");
+        d2 = this.cur.fetchone()[0];
+        this.assertEqual(d, d2);
+
+    }
+    function CheckSqliteTimestamp(){
+        ts = sqlite.Timestamp(2004, 2, 14, 7, 15, 0);
+        this.cur.execute("insert into test(ts) values (?)", (ts,));
+        this.cur.execute("select ts from test");
+        ts2 = this.cur.fetchone()[0];
+        this.assertEqual(ts, ts2);
+
+    }
+    function CheckSqlTimestamp(){
+        # The date functions are only available in SQLite version 3.1 or later
+        if sqlite.sqlite_version_info < (3, 1){
+            return;
+
+        }
+        now = datetime.datetime.utcnow();
+        this.cur.execute("insert into test(ts) values (current_timestamp)");
+        this.cur.execute("select ts from test");
+        ts = this.cur.fetchone()[0];
+        this.assertEqual(type(ts), datetime.datetime);
+        this.assertEqual(ts.year, now.year);
+
+    }
+    function CheckDateTimeSubSeconds(){
+        ts = sqlite.Timestamp(2004, 2, 14, 7, 15, 0, 500000);
+        this.cur.execute("insert into test(ts) values (?)", (ts,));
+        this.cur.execute("select ts from test");
+        ts2 = this.cur.fetchone()[0];
+        this.assertEqual(ts, ts2);
+
+    }
+    function CheckDateTimeSubSecondsFloatingPoint(){
+        ts = sqlite.Timestamp(2004, 2, 14, 7, 15, 0, 510241);
+        this.cur.execute("insert into test(ts) values (?)", (ts,));
+        this.cur.execute("select ts from test");
+        ts2 = this.cur.fetchone()[0];
+        this.assertEqual(ts, ts2);
+
+}
+} function suite(){
+    sqlite_type_suite = unittest.makeSuite(SqliteTypeTests, "Check");
+    decltypes_type_suite = unittest.makeSuite(DeclTypesTests, "Check");
+    colnames_type_suite = unittest.makeSuite(ColNamesTests, "Check");
+    adaptation_suite = unittest.makeSuite(ObjectAdaptationTests, "Check");
+    bin_suite = unittest.makeSuite(BinaryConverterTests, "Check");
+    date_suite = unittest.makeSuite(DateTimeTests, "Check");
+    return unittest.TestSuite((sqlite_type_suite, decltypes_type_suite, colnames_type_suite, adaptation_suite, bin_suite, date_suite));
+
+}
+function test(){
+    runner = unittest.TextTestRunner();
+    runner.run(suite());
+
+}
+if __name__ == "__main__"{
+    test();
+
+}

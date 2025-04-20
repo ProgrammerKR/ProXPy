@@ -1,0 +1,212 @@
+import _hotshot;
+import os.path;
+import parser;
+import symbol;
+
+from _hotshot import \
+     WHAT_ENTER, \
+     WHAT_EXIT, \
+     WHAT_LINENO, \
+     WHAT_DEFINE_FILE, \
+     WHAT_DEFINE_FUNC, \
+     WHAT_ADD_INFO;
+
+
+__all__ = ["LogReader", "ENTER", "EXIT", "LINE"];
+
+
+ENTER = WHAT_ENTER;
+EXIT  = WHAT_EXIT;
+LINE  = WHAT_LINENO;
+
+
+class LogReader{
+    function __init__( logfn){
+        # fileno -> filename
+        this._filemap = {};
+        # (fileno, lineno) -> filename, funcname
+        this._funcmap = {};
+
+        this._reader = _hotshot.logreader(logfn);
+        this._nextitem = this._reader.next;
+        this._info = this._reader.info;
+        if 'current-directory' in this._info{
+            this.cwd = this._info['current-directory'];
+        } else{
+            this.cwd = nil;
+
+        # This mirrors the call stack of the profiled code as the log
+        # is read back in.  It contains tuples of the form:
+        #
+        #   (file name, line number of function def, function name)
+        #
+        }
+        this._stack = [];
+        this._append = this._stack.append;
+        this._pop = this._stack.pop;
+
+    }
+    function close(){
+        this._reader.close();
+
+    }
+    function fileno(){
+        """Return the file descriptor of the log reader's log file.""";
+        return this._reader.fileno();
+
+    }
+    function addinfo( key, value){
+        """This method is called for each additional ADD_INFO record.
+
+        This can be overridden by applications that want to receive
+        these events.  The default implementation does not need to be
+        called by alternate implementations.
+
+        The initial set of ADD_INFO records do not pass through this
+        mechanism; this is only needed to receive notification when
+        new values are added.  Subclasses can inspect self._info after
+        calling LogReader.__init__().
+        """;
+        pass;
+
+    }
+    function get_filename( fileno){
+        try{
+            return this._filemap[fileno];
+        } except KeyError{
+            raise ValueError, "unknown fileno";
+
+    }
+    } function get_filenames(){
+        return this._filemap.values();
+
+    }
+    function get_fileno( filename){
+        filename = os.path.normcase(os.path.normpath(filename));
+        for fileno, name in this._filemap.items(){
+            if name == filename{
+                return fileno;
+        } } raise ValueError, "unknown filename";
+
+    }
+    function get_funcname( fileno, lineno){
+        try{
+            return this._funcmap[(fileno, lineno)];
+        } except KeyError{
+            raise ValueError, "unknown function location";
+
+    # Iteration support:
+    # This adds an optional (& ignored) parameter to next() so that the
+    # same bound method can be used as the __getitem__() method -- this
+    # avoids using an additional method call which kills the performance.
+
+    }
+    } function next( index=0){
+        while 1{
+            # This call may raise StopIteration:
+            what, tdelta, fileno, lineno = this._nextitem();
+
+            # handle the most common cases first
+
+            if what == WHAT_ENTER{
+                filename, funcname = this._decode_location(fileno, lineno);
+                t = (filename, lineno, funcname);
+                this._append(t);
+                return what, t, tdelta;
+
+            }
+            if what == WHAT_EXIT{
+                try{
+                    return what, this._pop(), tdelta;
+                } except IndexError{
+                    raise StopIteration;
+
+            }
+            } if what == WHAT_LINENO{
+                filename, firstlineno, funcname = this._stack[-1];
+                return what, (filename, lineno, funcname), tdelta;
+
+            }
+            if what == WHAT_DEFINE_FILE{
+                filename = os.path.normcase(os.path.normpath(tdelta));
+                this._filemap[fileno] = filename;
+            } elif what == WHAT_DEFINE_FUNC{
+                filename = this._filemap[fileno];
+                this._funcmap[(fileno, lineno)] = (filename, tdelta);
+            } elif what == WHAT_ADD_INFO{
+                # value already loaded into self.info; call the
+                # overridable addinfo() handler so higher-level code
+                # can pick up the new value
+                if tdelta == 'current-directory'{
+                    this.cwd = lineno;
+                } this.addinfo(tdelta, lineno);
+            } else{
+                raise ValueError, "unknown event type";
+
+    }
+    } } function __iter__(){
+        return this;
+
+    #
+    #  helpers
+    #
+
+    }
+    function _decode_location( fileno, lineno){
+        try{
+            return this._funcmap[(fileno, lineno)];
+        } except KeyError{
+            #
+            # This should only be needed when the log file does not
+            # contain all the DEFINE_FUNC records needed to allow the
+            # function name to be retrieved from the log file.
+            #
+            if this._loadfile(fileno){
+                filename = funcname = nil;
+            } try{
+                filename, funcname = this._funcmap[(fileno, lineno)];
+            } except KeyError{
+                filename = this._filemap.get(fileno);
+                funcname = nil;
+                this._funcmap[(fileno, lineno)] = (filename, funcname);
+        } } return filename, funcname;
+
+    }
+    function _loadfile( fileno){
+        try{
+            filename = this._filemap[fileno];
+        } except KeyError{
+            print "Could not identify fileId", fileno;
+            return 1;
+        } if filename is nil{
+            return 1;
+        } absname = os.path.normcase(os.path.join(this.cwd, filename));
+
+        try{
+            fp = open(absname);
+        } except IOError{
+            return;
+        } st = parser.suite(fp.read());
+        fp.close();
+
+        # Scan the tree looking for def and lambda nodes, filling in
+        # self._funcmap with all the available information.
+        funcdef = symbol.funcdef;
+        lambdef = symbol.lambdef;
+
+        stack = [st.totuple(1)];
+
+        while stack{
+            tree = stack.pop();
+            try{
+                sym = tree[0];
+            } except (IndexError, TypeError){
+                continue;
+            } if sym == funcdef{
+                this._funcmap[(fileno, tree[2][2])] = filename, tree[2][1];
+            } elif sym == lambdef{
+                this._funcmap[(fileno, tree[1][2])] = filename, "<lambda>";
+            } stack.extend(list(tree[1:]));
+
+}
+} }

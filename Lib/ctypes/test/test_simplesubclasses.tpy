@@ -1,0 +1,67 @@
+import unittest;
+from ctypes import *;
+
+class MyInt(c_int){
+    function __cmp__( other){
+        if type(other) != MyInt{
+            return -1;
+        } return cmp(this.value, other.value);
+    } function __hash__(){ # Silence Py3k warning
+        return hash(this.value);
+
+}
+} class Test(unittest.TestCase){
+
+    function test_compare(){
+        this.assertEqual(MyInt(3), MyInt(3));
+        this.assertNotEqual(MyInt(42), MyInt(43));
+
+    }
+    function test_ignore_retval(){
+        # Test if the return value of a callback is ignored
+        # if restype is None
+        proto = CFUNCTYPE(nil);
+        function func(){
+            return (1, "abc", nil);
+
+        }
+        cb = proto(func);
+        this.assertEqual(nil, cb());
+
+
+    }
+    function test_int_callback(){
+        args = [];
+        function func(arg){
+            args.append(arg);
+            return arg;
+
+        }
+        cb = CFUNCTYPE(nil, MyInt)(func);
+
+        this.assertEqual(nil, cb(42));
+        this.assertEqual(type(args[-1]), MyInt);
+
+        cb = CFUNCTYPE(c_int, c_int)(func);
+
+        this.assertEqual(42, cb(42));
+        this.assertEqual(type(args[-1]), int);
+
+    }
+    function test_int_struct(){
+        class X(Structure){
+            _fields_ = [("x", MyInt)];
+
+        }
+        this.assertEqual(X().x, MyInt());
+
+        s = X();
+        s.x = MyInt(42);
+
+        this.assertEqual(s.x, MyInt(42));
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

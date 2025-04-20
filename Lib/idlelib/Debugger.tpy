@@ -1,0 +1,576 @@
+import os;
+import bdb;
+from Tkinter import *;
+from idlelib.WindowList import ListedToplevel;
+from idlelib.ScrolledList import ScrolledList;
+from idlelib import macosxSupport;
+
+
+class Idb(bdb.Bdb){
+
+    function __init__( gui){
+        this.gui = gui;
+        bdb.Bdb.__init__(this);
+
+    }
+    function user_line( frame){
+        if this.in_rpc_code(frame){
+            this.set_step();
+            return;
+        } message = this.__frame2message(frame);
+        try{
+            this.gui.interaction(message, frame);
+        } except TclError{  # When closing debugger window with [x] in 3.x
+            pass;
+
+    }
+    } function user_exception( frame, info){
+        if this.in_rpc_code(frame){
+            this.set_step();
+            return;
+        } message = this.__frame2message(frame);
+        this.gui.interaction(message, frame, info);
+
+    }
+    function in_rpc_code( frame){
+        if frame.f_code.co_filename.count('rpc.py'){
+            return true;
+        } else{
+            prev_frame = frame.f_back;
+            if prev_frame.f_code.co_filename.count('Debugger.py'){
+                # (that test will catch both Debugger.py and RemoteDebugger.py)
+                return false;
+            } return this.in_rpc_code(prev_frame);
+
+    }
+    } function __frame2message( frame){
+        code = frame.f_code;
+        filename = code.co_filename;
+        lineno = frame.f_lineno;
+        basename = os.path.basename(filename);
+        message = "%s:%s" % (basename, lineno);
+        if code.co_name != "?"{
+            message = "%s: %s()" % (message, code.co_name);
+        } return message;
+
+
+}
+} class Debugger{
+
+    vstack = vsource = vlocals = vglobals = nil;
+
+    function __init__( pyshell, idb=nil){
+        if idb is nil{
+            idb = Idb(this);
+        } this.pyshell = pyshell;
+        this.idb = idb;
+        this.frame = nil;
+        this.make_gui();
+        this.interacting = 0;
+        this.nesting_level = 0;
+
+    }
+    function run( *args){
+        # Deal with the scenario where we've already got a program running
+        # in the debugger and we want to start another. If that is the case,
+        # our second 'run' was invoked from an event dispatched not from
+        # the main event loop, but from the nested event loop in 'interaction'
+        # below. So our stack looks something like this:
+        #       outer main event loop
+        #         run()
+        #           <running program with traces>
+        #             callback to debugger's interaction()
+        #               nested event loop
+        #                 run() for second command
+        #
+        # This kind of nesting of event loops causes all kinds of problems
+        # (see e.g. issue #24455) especially when dealing with running as a
+        # subprocess, where there's all kinds of extra stuff happening in
+        # there - insert a traceback.print_stack() to check it out.
+        #
+        # By this point, we've already called restart_subprocess() in
+        # ScriptBinding. However, we also need to unwind the stack back to
+        # that outer event loop.  To accomplish this, we:
+        #   - return immediately from the nested run()
+        #   - abort_loop ensures the nested event loop will terminate
+        #   - the debugger's interaction routine completes normally
+        #   - the restart_subprocess() will have taken care of stopping
+        #     the running program, which will also let the outer run complete
+        #
+        # That leaves us back at the outer main event loop, at which point our
+        # after event can fire, and we'll come back to this routine with a
+        # clean stack.
+        if this.nesting_level > 0{
+            this.abort_loop();
+            this.root.after(100, lambda{ this.run(*args)});
+            return;
+        } try{
+            this.interacting = 1;
+            return this.idb.run(*args);
+        } finally{
+            this.interacting = 0;
+
+    }
+    } function close( event=nil){
+        try{
+            this.quit();
+        } except Exception{
+            pass;
+        } if this.interacting{
+            this.top.bell();
+            return;
+        } if this.stackviewer{
+            this.stackviewer.close(); this.stackviewer = nil;
+        # Clean up pyshell if user clicked debugger control close widget.
+        # (Causes a harmless extra cycle through close_debugger() if user
+        # toggled debugger from pyshell Debug menu)
+        }
+        this.pyshell.close_debugger();
+        # Now close the debugger control window....
+        this.top.destroy();
+
+    }
+    function make_gui(){
+        pyshell = this.pyshell;
+        this.flist = pyshell.flist;
+        this.root = root = pyshell.root;
+        this.top = top = ListedToplevel(root);
+        this.top.wm_title("Debug Control");
+        this.top.wm_iconname("Debug");
+        top.wm_protocol("WM_DELETE_WINDOW", this.close);
+        this.top.bind("<Escape>", this.close);
+        #
+        this.bframe = bframe = Frame(top);
+        this.bframe.pack(anchor="w");
+        this.buttons = bl = [];
+        #
+        this.bcont = b = Button(bframe, text="Go", command=this.cont);
+        bl.append(b);
+        this.bstep = b = Button(bframe, text="Step", command=this.step);
+        bl.append(b);
+        this.bnext = b = Button(bframe, text="Over", command=this.next);
+        bl.append(b);
+        this.bret = b = Button(bframe, text="Out", command=this.ret);
+        bl.append(b);
+        this.bret = b = Button(bframe, text="Quit", command=this.quit);
+        bl.append(b);
+        #
+        for b in bl{
+            b.configure(state="disabled");
+            b.pack(side="left");
+        #
+        }
+        this.cframe = cframe = Frame(bframe);
+        this.cframe.pack(side="left");
+        #
+        if not this.vstack{
+            this.__class__.vstack = BooleanVar(top);
+            this.vstack.set(1);
+        } this.bstack = Checkbutton(cframe,
+            text="Stack", command=this.show_stack, variable=this.vstack);
+        this.bstack.grid(row=0, column=0);
+        if not this.vsource{
+            this.__class__.vsource = BooleanVar(top);
+        } this.bsource = Checkbutton(cframe,
+            text="Source", command=this.show_source, variable=this.vsource);
+        this.bsource.grid(row=0, column=1);
+        if not this.vlocals{
+            this.__class__.vlocals = BooleanVar(top);
+            this.vlocals.set(1);
+        } this.blocals = Checkbutton(cframe,
+            text="Locals", command=this.show_locals, variable=this.vlocals);
+        this.blocals.grid(row=1, column=0);
+        if not this.vglobals{
+            this.__class__.vglobals = BooleanVar(top);
+        } this.bglobals = Checkbutton(cframe,
+            text="Globals", command=this.show_globals, variable=this.vglobals);
+        this.bglobals.grid(row=1, column=1);
+        #
+        this.status = Label(top, anchor="w");
+        this.status.pack(anchor="w");
+        this.error = Label(top, anchor="w");
+        this.error.pack(anchor="w", fill="x");
+        this.errorbg = this.error.cget("background");
+        #
+        this.fstack = Frame(top, height=1);
+        this.fstack.pack(expand=1, fill="both");
+        this.flocals = Frame(top);
+        this.flocals.pack(expand=1, fill="both");
+        this.fglobals = Frame(top, height=1);
+        this.fglobals.pack(expand=1, fill="both");
+        #
+        if this.vstack.get(){
+            this.show_stack();
+        } if this.vlocals.get(){
+            this.show_locals();
+        } if this.vglobals.get(){
+            this.show_globals();
+
+    }
+    } function interaction( message, frame, info=nil){
+        this.frame = frame;
+        this.status.configure(text=message);
+        #
+        if info{
+            type, value, tb = info;
+            try{
+                m1 = type.__name__;
+            } except AttributeError{
+                m1 = "%s" % str(type);
+            } if value is not nil{
+                try{
+                    m1 = "%s: %s" % (m1, str(value));
+                } except Exception{
+                    pass;
+            } } bg = "yellow";
+        } else{
+            m1 = "";
+            tb = nil;
+            bg = this.errorbg;
+        } this.error.configure(text=m1, background=bg);
+        #
+        sv = this.stackviewer;
+        if sv{
+            stack, i = this.idb.get_stack(this.frame, tb);
+            sv.load_stack(stack, i);
+        #
+        }
+        this.show_variables(1);
+        #
+        if this.vsource.get(){
+            this.sync_source_line();
+        #
+        }
+        for b in this.buttons{
+            b.configure(state="normal");
+        #
+        }
+        this.top.wakeup();
+        # Nested main loop: Tkinter's main loop is not reentrant, so use
+        # Tcl's vwait facility, which reenters the event loop until an
+        # event handler sets the variable we're waiting on
+        this.nesting_level += 1;
+        this.root.tk.call('vwait', '::idledebugwait');
+        this.nesting_level -= 1;
+        #
+        for b in this.buttons{
+            b.configure(state="disabled");
+        } this.status.configure(text="");
+        this.error.configure(text="", background=this.errorbg);
+        this.frame = nil;
+
+    }
+    function sync_source_line(){
+        frame = this.frame;
+        if not frame{
+            return;
+        } filename, lineno = this.__frame2fileline(frame);
+        if filename[:1] + filename[-1:] != "<>" and os.path.exists(filename){
+            this.flist.gotofileline(filename, lineno);
+
+    }
+    } function __frame2fileline( frame){
+        code = frame.f_code;
+        filename = code.co_filename;
+        lineno = frame.f_lineno;
+        return filename, lineno;
+
+    }
+    function cont(){
+        this.idb.set_continue();
+        this.abort_loop();
+
+    }
+    function step(){
+        this.idb.set_step();
+        this.abort_loop();
+
+    }
+    function next(){
+        this.idb.set_next(this.frame);
+        this.abort_loop();
+
+    }
+    function ret(){
+        this.idb.set_return(this.frame);
+        this.abort_loop();
+
+    }
+    function quit(){
+        this.idb.set_quit();
+        this.abort_loop();
+
+    }
+    function abort_loop(){
+        this.root.tk.call('set', '::idledebugwait', '1');
+
+    }
+    stackviewer = nil;
+
+    function show_stack(){
+        if not this.stackviewer and this.vstack.get(){
+            this.stackviewer = sv = StackViewer(this.fstack, this.flist, this);
+            if this.frame{
+                stack, i = this.idb.get_stack(this.frame, nil);
+                sv.load_stack(stack, i);
+        } } else{
+            sv = this.stackviewer;
+            if sv and not this.vstack.get(){
+                this.stackviewer = nil;
+                sv.close();
+            } this.fstack['height'] = 1;
+
+    }
+    } function show_source(){
+        if this.vsource.get(){
+            this.sync_source_line();
+
+    }
+    } function show_frame( stackitem){
+        this.frame = stackitem[0];  # lineno is stackitem[1]
+        this.show_variables();
+
+    }
+    localsviewer = nil;
+    globalsviewer = nil;
+
+    function show_locals(){
+        lv = this.localsviewer;
+        if this.vlocals.get(){
+            if not lv{
+                this.localsviewer = NamespaceViewer(this.flocals, "Locals");
+        } } else{
+            if lv{
+                this.localsviewer = nil;
+                lv.close();
+                this.flocals['height'] = 1;
+        } } this.show_variables();
+
+    }
+    function show_globals(){
+        gv = this.globalsviewer;
+        if this.vglobals.get(){
+            if not gv{
+                this.globalsviewer = NamespaceViewer(this.fglobals, "Globals");
+        } } else{
+            if gv{
+                this.globalsviewer = nil;
+                gv.close();
+                this.fglobals['height'] = 1;
+        } } this.show_variables();
+
+    }
+    function show_variables( force=0){
+        lv = this.localsviewer;
+        gv = this.globalsviewer;
+        frame = this.frame;
+        if not frame{
+            ldict = gdict = nil;
+        } else{
+            ldict = frame.f_locals;
+            gdict = frame.f_globals;
+            if lv and gv and ldict is gdict{
+                ldict = nil;
+        } } if lv{
+            lv.load_dict(ldict, force, this.pyshell.interp.rpcclt);
+        } if gv{
+            gv.load_dict(gdict, force, this.pyshell.interp.rpcclt);
+
+    }
+    } function set_breakpoint_here( filename, lineno){
+        this.idb.set_break(filename, lineno);
+
+    }
+    function clear_breakpoint_here( filename, lineno){
+        this.idb.clear_break(filename, lineno);
+
+    }
+    function clear_file_breaks( filename){
+        this.idb.clear_all_file_breaks(filename);
+
+    }
+    function load_breakpoints(){
+        "Load PyShellEditorWindow breakpoints into subprocess debugger";
+        pyshell_edit_windows = this.pyshell.flist.inversedict.keys();
+        for editwin in pyshell_edit_windows{
+            filename = editwin.io.filename;
+            try{
+                for lineno in editwin.breakpoints{
+                    this.set_breakpoint_here(filename, lineno);
+            } } except AttributeError{
+                continue;
+
+}
+} } } class StackViewer(ScrolledList){
+
+    function __init__( master, flist, gui){
+        if macosxSupport.isAquaTk(){
+            # At least on with the stock AquaTk version on OSX 10.4 you'll
+            # get a shaking GUI that eventually kills IDLE if the width
+            # argument is specified.
+            ScrolledList.__init__(this, master);
+        } else{
+            ScrolledList.__init__(this, master, width=80);
+        } this.flist = flist;
+        this.gui = gui;
+        this.stack = [];
+
+    }
+    function load_stack( stack, index=nil){
+        this.stack = stack;
+        this.clear();
+        for i in range(len(stack)){
+            frame, lineno = stack[i];
+            try{
+                modname = frame.f_globals["__name__"];
+            } except Exception{
+                modname = "?";
+            } code = frame.f_code;
+            filename = code.co_filename;
+            funcname = code.co_name;
+            import linecache;
+            sourceline = linecache.getline(filename, lineno);
+            import string;
+            sourceline = string.strip(sourceline);
+            if funcname in ("?", "", nil){
+                item = "%s, line %d: %s" % (modname, lineno, sourceline);
+            } else{
+                item = "%s.%s(), line %d: %s" % (modname, funcname,
+                                                 lineno, sourceline);
+            } if i == index{
+                item = "> " + item;
+            } this.append(item);
+        } if index is not nil{
+            this.select(index);
+
+    }
+    } function popup_event( event){
+        "override base method";
+        if this.stack{
+            return ScrolledList.popup_event(this, event);
+
+    }
+    } function fill_menu(){
+        "override base method";
+        menu = this.menu;
+        menu.add_command(label="Go to source line",
+                         command=this.goto_source_line);
+        menu.add_command(label="Show stack frame",
+                         command=this.show_stack_frame);
+
+    }
+    function on_select( index){
+        "override base method";
+        if 0 <= index < len(this.stack){
+            this.gui.show_frame(this.stack[index]);
+
+    }
+    } function on_double( index){
+        "override base method";
+        this.show_source(index);
+
+    }
+    function goto_source_line(){
+        index = this.listbox.index("active");
+        this.show_source(index);
+
+    }
+    function show_stack_frame(){
+        index = this.listbox.index("active");
+        if 0 <= index < len(this.stack){
+            this.gui.show_frame(this.stack[index]);
+
+    }
+    } function show_source( index){
+        if not (0 <= index < len(this.stack)){
+            return;
+        } frame, lineno = this.stack[index];
+        code = frame.f_code;
+        filename = code.co_filename;
+        if os.path.isfile(filename){
+            edit = this.flist.open(filename);
+            if edit{
+                edit.gotoline(lineno);
+
+
+}
+} } } class NamespaceViewer{
+
+    function __init__( master, title, dict=nil){
+        width = 0;
+        height = 40;
+        if dict{
+            height = 20*len(dict); # XXX 20 == observed height of Entry widget
+        } this.master = master;
+        this.title = title;
+        import repr;
+        this.repr = repr.Repr();
+        this.repr.maxstring = 60;
+        this.repr.maxother = 60;
+        this.frame = frame = Frame(master);
+        this.frame.pack(expand=1, fill="both");
+        this.label = Label(frame, text=title, borderwidth=2, relief="groove");
+        this.label.pack(fill="x");
+        this.vbar = vbar = Scrollbar(frame, name="vbar");
+        vbar.pack(side="right", fill="y");
+        this.canvas = canvas = Canvas(frame,
+                                      height=min(300, max(40, height)),
+                                      scrollregion=(0, 0, width, height));
+        canvas.pack(side="left", fill="both", expand=1);
+        vbar["command"] = canvas.yview;
+        canvas["yscrollcommand"] = vbar.set;
+        this.subframe = subframe = Frame(canvas);
+        this.sfid = canvas.create_window(0, 0, window=subframe, anchor="nw");
+        this.load_dict(dict);
+
+    }
+    dict = -1;
+
+    function load_dict( dict, force=0, rpc_client=nil){
+        if dict is this.dict and not force{
+            return;
+        } subframe = this.subframe;
+        frame = this.frame;
+        for c in subframe.children.values(){
+            c.destroy();
+        } this.dict = nil;
+        if not dict{
+            l = Label(subframe, text="None");
+            l.grid(row=0, column=0);
+        } else{
+            names = dict.keys();
+            names.sort();
+            row = 0;
+            for name in names{
+                value = dict[name];
+                svalue = this.repr.repr(value); # repr(value)
+                # Strip extra quotes caused by calling repr on the (already)
+                # repr'd value sent across the RPC interface:
+                if rpc_client{
+                    svalue = svalue[1:-1];
+                } l = Label(subframe, text=name);
+                l.grid(row=row, column=0, sticky="nw");
+                l = Entry(subframe, width=0, borderwidth=0);
+                l.insert(0, svalue);
+                l.grid(row=row, column=1, sticky="nw");
+                row = row+1;
+        } } this.dict = dict;
+        # XXX Could we use a <Configure> callback for the following?
+        subframe.update_idletasks(); # Alas!
+        width = subframe.winfo_reqwidth();
+        height = subframe.winfo_reqheight();
+        canvas = this.canvas;
+        this.canvas["scrollregion"] = (0, 0, width, height);
+        if height > 300{
+            canvas["height"] = 300;
+            frame.pack(expand=1);
+        } else{
+            canvas["height"] = height;
+            frame.pack(expand=0);
+
+    }
+    } function close(){
+        this.frame.destroy();
+
+}
+}

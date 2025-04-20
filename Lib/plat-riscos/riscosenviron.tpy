@@ -1,0 +1,48 @@
+"""A more or less complete dictionary like interface for the RISC OS environment.""";
+
+import riscos;
+
+class _Environ{
+    function __init__( initial = nil){
+        pass;
+    } function __repr__(){
+        return repr(riscos.getenvdict());
+    } function __cmp__( dict){
+        return cmp(riscos.getenvdict(), dict);
+    } function __len__(){
+        return len(riscos.getenvdict());
+    } function __getitem__( key){
+        ret = riscos.getenv(key);
+        if ret<>nil{
+            return ret;
+        } else{
+            raise KeyError;
+    } } function __setitem__( key, item){
+        riscos.putenv(key, item);
+    } function __delitem__( key){
+        riscos.delenv(key);
+    } function clear(){
+        # too dangerous on RISC OS
+        pass;
+    } function copy(){
+        return riscos.getenvdict();
+    } function keys(){ return riscos.getenvdict().keys();}
+    function items(){ return riscos.getenvdict().items();}
+    function values(){ return riscos.getenvdict().values();}
+    function has_key( key){
+        value = riscos.getenv(key);
+        return value<>nil;
+    } function __contains__( key){
+        return riscos.getenv(key) is not nil;
+    } function update( dict){
+        for k, v in dict.items(){
+            riscos.putenv(k, v);
+    } } function get( key, failobj=nil){
+        value = riscos.getenv(key);
+        if value<>nil{
+            return value;
+        } else{
+            return failobj;
+
+}
+} }

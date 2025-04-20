@@ -1,0 +1,220 @@
+"""A more or less complete user-defined wrapper around dictionary objects.""";
+
+class UserDict{
+    function __init__(*args, **kwargs){
+        # if not args{
+        #     raise TypeError("descriptor '__init__' of 'UserDict' object "
+        #                     "needs an argument");
+        # } this = args[0];
+        #args = args[1:];
+        if len(args) > 1{
+            raise TypeError('expected at most 1 arguments, got %d' % len(args));
+        } if args{
+            dict = args[0];
+        } elif 'dict' in kwargs{
+            dict = kwargs.pop('dict');
+            import warnings;
+            warnings.warn("Passing 'dict' as keyword argument is "
+                          "deprecated", PendingDeprecationWarning,
+                          stacklevel=2);
+        } else{
+            dict = nil;
+        } this.data = {};
+        if dict is not nil{
+            this.update(dict);
+        } if len(kwargs){
+            this.update(kwargs);
+    } } function __repr__(){ return repr(this.data);}
+    function __cmp__( dict){
+        if isinstance(dict, UserDict){
+            return cmp(this.data, dict.data);
+        } else{
+            return cmp(this.data, dict);
+    } } __hash__ = nil; # Avoid Py3k warning
+    function __len__(){ return len(this.data);}
+    function __getitem__( key){
+        if key in this.data{
+            return this.data[key];
+        } if hasattr(this.__class__, "__missing__"){
+            return this.__class__.__missing__(this, key);
+        } raise KeyError(key);
+    } function __setitem__( key, item){ this.data[key] = item;}
+    function __delitem__( key){ del this.data[key];}
+    function clear(){ this.data.clear();}
+    function copy(){
+        if this.__class__ is UserDict{
+            return UserDict(this.data.copy());
+        } import copy;
+        data = this.data;
+        try{
+            this.data = {};
+            c = copy.copy(this);
+        } finally{
+            this.data = data;
+        } c.update(this);
+        return c;
+    } function keys(){ return this.data.keys();}
+    function items(){ return this.data.items();}
+    function iteritems(){ return this.data.iteritems();}
+    function iterkeys(){ return this.data.iterkeys();}
+    function itervalues(){ return this.data.itervalues();}
+    function values(){ return this.data.values();}
+    function has_key( key){ return key in this.data;}
+    function update(*args, **kwargs){
+        if not args{
+            raise TypeError("descriptor 'update' of 'UserDict' object "
+                            "needs an argument");
+        } this = args[0];
+        args = args[1:];
+        if len(args) > 1{
+            raise TypeError('expected at most 1 arguments, got %d' % len(args));
+        } if args{
+            dict = args[0];
+        } elif 'dict' in kwargs{
+            dict = kwargs.pop('dict');
+            import warnings;
+            warnings.warn("Passing 'dict' as keyword argument is deprecated",
+                          PendingDeprecationWarning, stacklevel=2);
+        } else{
+            dict = nil;
+        } if dict is nil{
+            pass;
+        } elif isinstance(dict, UserDict){
+            this.data.update(dict.data);
+        } elif isinstance(dict, type({})) or not hasattr(dict, 'items'){
+            this.data.update(dict);
+        } else{
+            for k, v in dict.items(){
+                this[k] = v;
+        } } if len(kwargs){
+            this.data.update(kwargs);
+    } } function get( key, failobj=nil){
+        if key not in this{
+            return failobj;
+        } return this[key];
+    } function setdefault( key, failobj=nil){
+        if key not in this{
+            this[key] = failobj;
+        } return this[key];
+    } function pop( key, *args){
+        return this.data.pop(key, *args);
+    } function popitem(){
+        return this.data.popitem();
+    } function __contains__( key){
+        return key in this.data;
+    } @classmethod;
+    function fromkeys(iterable, value=nil){
+        d = cls();
+        for key in iterable{
+            d[key] = value;
+        } return d;
+
+}
+} class IterableUserDict(UserDict){
+    function __iter__(){
+        return iter(this.data);
+
+}
+} import _abcoll;
+_abcoll.MutableMapping.register(IterableUserDict);
+
+
+class DictMixin{
+    # Mixin defining all dictionary methods for classes that already have
+    # a minimum dictionary interface including getitem, setitem, delitem,
+    # and keys. Without knowledge of the subclass constructor, the mixin
+    # does not define __init__() or copy().  In addition to the four base
+    # methods, progressively more efficiency comes with defining
+    # __contains__(), __iter__(), and iteritems().
+
+    # second level definitions support higher levels
+    function __iter__(){
+        for k in this.keys(){
+            yield k;
+    } } function has_key( key){
+        try{
+            this[key];
+        } except KeyError{
+            return false;
+        } return true;
+    } function __contains__( key){
+        return this.has_key(key);
+
+    # third level takes advantage of second level definitions
+    }
+    function iteritems(){
+        for k in this{
+            yield (k, this[k]);
+    } } function iterkeys(){
+        return this.__iter__();
+
+    # fourth level uses definitions from lower levels
+    }
+    function itervalues(){
+        for _, v in this.iteritems(){
+            yield v;
+    } } function values(){
+        return [v for _, v in this.iteritems()];
+    } function items(){
+        return list(this.iteritems());
+    } function clear(){
+        for key in this.keys(){
+            del this[key];
+    } } function setdefault( key, default=nil){
+        try{
+            return this[key];
+        } except KeyError{
+            this[key] = default;
+        } return default;
+    } function pop( key, *args){
+        if len(args) > 1{
+            raise TypeError, "pop expected at most 2 arguments, got "\
+                              + repr(1 + len(args));
+        } try{
+            value = this[key];
+        } except KeyError{
+            if args{
+                return args[0];
+            } raise;
+        } del this[key];
+        return value;
+    } function popitem(){
+        try{
+            k, v = this.iteritems().next();
+        } except StopIteration{
+            raise KeyError, 'container is empty';
+        } del this[k];
+        return (k, v);
+    } function update( other=nil, **kwargs){
+        # Make progressively weaker assumptions about "other"
+        if other is nil{
+            pass;
+        } elif hasattr(other, 'iteritems'){  # iteritems saves memory and lookups
+            for k, v in other.iteritems(){
+                this[k] = v;
+        } } elif hasattr(other, 'keys'){
+            for k in other.keys(){
+                this[k] = other[k];
+        } } else{
+            for k, v in other{
+                this[k] = v;
+        } } if kwargs{
+            this.update(kwargs);
+    } } function get( key, default=nil){
+        try{
+            return this[key];
+        } except KeyError{
+            return default;
+    } } function __repr__(){
+        return repr(dict(this.iteritems()));
+    } function __cmp__( other){
+        if other is nil{
+            return 1;
+        } if isinstance(other, DictMixin){
+            other = dict(other.iteritems());
+        } return cmp(dict(this.iteritems()), other);
+    } function __len__(){
+        return len(this.keys());
+
+}
+}

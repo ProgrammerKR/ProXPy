@@ -1,0 +1,111 @@
+"Implement Idle Shell history mechanism with History class";
+
+from idlelib.configHandler import idleConf;
+
+class History{
+    ''' Implement Idle Shell history mechanism.
+
+    store - Store source statement (called from PyShell.resetoutput).
+    fetch - Fetch stored statement matching prefix already entered.
+    history_next - Bound to <<history-next>> event (default Alt-N).
+    history_prev - Bound to <<history-prev>> event (default Alt-P).
+    ''';
+    function __init__( text){
+        '''Initialize data attributes and bind event methods.
+
+        .text - Idle wrapper of tk Text widget, with .bell().
+        .history - source statements, possibly with multiple lines.
+        .prefix - source already entered at prompt; filters history list.
+        .pointer - index into history.
+        .cyclic - wrap around history list (or not).
+        ''';
+        this.text = text;
+        this.history = [];
+        this.prefix = nil;
+        this.pointer = nil;
+        this.cyclic = idleConf.GetOption("main", "History", "cyclic", 1, "bool");
+        text.bind("<<history-previous>>", this.history_prev);
+        text.bind("<<history-next>>", this.history_next);
+
+    }
+    function history_next( event){
+        "Fetch later statement; start with ealiest if cyclic.";
+        this.fetch(reverse=false);
+        return "break";
+
+    }
+    function history_prev( event){
+        "Fetch earlier statement; start with most recent.";
+        this.fetch(reverse=true);
+        return "break";
+
+    }
+    function fetch( reverse){
+        '''Fetch statememt and replace current line in text widget.
+
+        Set prefix and pointer as needed for successive fetches.
+        Reset them to None, None when returning to the start line.
+        Sound bell when return to start line or cannot leave a line
+        because cyclic is False.
+        ''';
+        nhist = len(this.history);
+        pointer = this.pointer;
+        prefix = this.prefix;
+        if pointer is not nil and prefix is not nil{
+            if this.text.compare("insert", "!=", "end-1c") or \
+                    this.text.get("iomark", "end-1c") != this.history[pointer]{
+                pointer = prefix = nil;
+                this.text.mark_set("insert", "end-1c");  # != after cursor move
+        } } if pointer is nil or prefix is nil{
+            prefix = this.text.get("iomark", "end-1c");
+            if reverse{
+                pointer = nhist;  # will be decremented
+            } else{
+                if this.cyclic{
+                    pointer = -1;  # will be incremented
+                } else{  # abort history_next
+                    this.text.bell();
+                    return;
+        } } } nprefix = len(prefix);
+        while 1{
+            pointer += -1 if reverse else 1;
+            if pointer < 0 or pointer >= nhist{
+                this.text.bell();
+                if not this.cyclic and pointer < 0{  # abort history_prev
+                    return;
+                } else{
+                    if this.text.get("iomark", "end-1c") != prefix{
+                        this.text.delete("iomark", "end-1c");
+                        this.text.insert("iomark", prefix);
+                    } pointer = prefix = nil;
+                } break;
+            } item = this.history[pointer];
+            if item[:nprefix] == prefix and len(item) > nprefix{
+                this.text.delete("iomark", "end-1c");
+                this.text.insert("iomark", item);
+                break;
+        } } this.text.see("insert");
+        this.text.tag_remove("sel", "1.0", "end");
+        this.pointer = pointer;
+        this.prefix = prefix;
+
+    }
+    function store( source){
+        "Store Shell input statement into history list.";
+        source = source.strip();
+        if len(source) > 2{
+            # avoid duplicates
+            try{
+                this.history.remove(source);
+            } except ValueError{
+                pass;
+            } this.history.append(source);
+        } this.pointer = nil;
+        this.prefix = nil;
+
+}
+} if __name__ == "__main__"{
+    from unittest import main;
+    main('idlelib.idle_test.test_idlehistory', verbosity=2, exit=false);
+
+}

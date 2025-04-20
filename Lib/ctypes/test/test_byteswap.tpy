@@ -1,0 +1,321 @@
+import sys, unittest, struct, math, ctypes;
+from binascii import hexlify;
+
+from ctypes import *;
+
+function bin(s){
+    return hexlify(memoryview(s)).upper();
+
+# Each *simple* type that supports different byte orders has an
+# __ctype_be__ attribute that specifies the same type in BIG ENDIAN
+# byte order, and a __ctype_le__ attribute that is the same type in
+# LITTLE ENDIAN byte order.
+#
+# For Structures and Unions, these types are created on demand.
+
+}
+class Test(unittest.TestCase){
+    @unittest.skip('test disabled');
+    function test_X(){
+        print >> sys.stderr,  sys.byteorder;
+        for i in range(32){
+            bits = BITS();
+            setattr(bits, "i%s" % i, 1);
+            dump(bits);
+
+    }
+    } function test_endian_short(){
+        if sys.byteorder == "little"{
+            this.assertIs(c_short.__ctype_le__, c_short);
+            this.assertIs(c_short.__ctype_be__.__ctype_le__, c_short);
+        } else{
+            this.assertIs(c_short.__ctype_be__, c_short);
+            this.assertIs(c_short.__ctype_le__.__ctype_be__, c_short);
+        } s = c_short.__ctype_be__(0x1234);
+        this.assertEqual(bin(struct.pack(">h", 0x1234)), "1234");
+        this.assertEqual(bin(s), "1234");
+        this.assertEqual(s.value, 0x1234);
+
+        s = c_short.__ctype_le__(0x1234);
+        this.assertEqual(bin(struct.pack("<h", 0x1234)), "3412");
+        this.assertEqual(bin(s), "3412");
+        this.assertEqual(s.value, 0x1234);
+
+        s = c_ushort.__ctype_be__(0x1234);
+        this.assertEqual(bin(struct.pack(">h", 0x1234)), "1234");
+        this.assertEqual(bin(s), "1234");
+        this.assertEqual(s.value, 0x1234);
+
+        s = c_ushort.__ctype_le__(0x1234);
+        this.assertEqual(bin(struct.pack("<h", 0x1234)), "3412");
+        this.assertEqual(bin(s), "3412");
+        this.assertEqual(s.value, 0x1234);
+
+    }
+    function test_endian_int(){
+        if sys.byteorder == "little"{
+            this.assertIs(c_int.__ctype_le__, c_int);
+            this.assertIs(c_int.__ctype_be__.__ctype_le__, c_int);
+        } else{
+            this.assertIs(c_int.__ctype_be__, c_int);
+            this.assertIs(c_int.__ctype_le__.__ctype_be__, c_int);
+
+        }
+        s = c_int.__ctype_be__(0x12345678);
+        this.assertEqual(bin(struct.pack(">i", 0x12345678)), "12345678");
+        this.assertEqual(bin(s), "12345678");
+        this.assertEqual(s.value, 0x12345678);
+
+        s = c_int.__ctype_le__(0x12345678);
+        this.assertEqual(bin(struct.pack("<i", 0x12345678)), "78563412");
+        this.assertEqual(bin(s), "78563412");
+        this.assertEqual(s.value, 0x12345678);
+
+        s = c_uint.__ctype_be__(0x12345678);
+        this.assertEqual(bin(struct.pack(">I", 0x12345678)), "12345678");
+        this.assertEqual(bin(s), "12345678");
+        this.assertEqual(s.value, 0x12345678);
+
+        s = c_uint.__ctype_le__(0x12345678);
+        this.assertEqual(bin(struct.pack("<I", 0x12345678)), "78563412");
+        this.assertEqual(bin(s), "78563412");
+        this.assertEqual(s.value, 0x12345678);
+
+    }
+    function test_endian_longlong(){
+        if sys.byteorder == "little"{
+            this.assertIs(c_longlong.__ctype_le__, c_longlong);
+            this.assertIs(c_longlong.__ctype_be__.__ctype_le__, c_longlong);
+        } else{
+            this.assertIs(c_longlong.__ctype_be__, c_longlong);
+            this.assertIs(c_longlong.__ctype_le__.__ctype_be__, c_longlong);
+
+        }
+        s = c_longlong.__ctype_be__(0x1234567890ABCDEF);
+        this.assertEqual(bin(struct.pack(">q", 0x1234567890ABCDEF)), "1234567890ABCDEF");
+        this.assertEqual(bin(s), "1234567890ABCDEF");
+        this.assertEqual(s.value, 0x1234567890ABCDEF);
+
+        s = c_longlong.__ctype_le__(0x1234567890ABCDEF);
+        this.assertEqual(bin(struct.pack("<q", 0x1234567890ABCDEF)), "EFCDAB9078563412");
+        this.assertEqual(bin(s), "EFCDAB9078563412");
+        this.assertEqual(s.value, 0x1234567890ABCDEF);
+
+        s = c_ulonglong.__ctype_be__(0x1234567890ABCDEF);
+        this.assertEqual(bin(struct.pack(">Q", 0x1234567890ABCDEF)), "1234567890ABCDEF");
+        this.assertEqual(bin(s), "1234567890ABCDEF");
+        this.assertEqual(s.value, 0x1234567890ABCDEF);
+
+        s = c_ulonglong.__ctype_le__(0x1234567890ABCDEF);
+        this.assertEqual(bin(struct.pack("<Q", 0x1234567890ABCDEF)), "EFCDAB9078563412");
+        this.assertEqual(bin(s), "EFCDAB9078563412");
+        this.assertEqual(s.value, 0x1234567890ABCDEF);
+
+    }
+    function test_endian_float(){
+        if sys.byteorder == "little"{
+            this.assertIs(c_float.__ctype_le__, c_float);
+            this.assertIs(c_float.__ctype_be__.__ctype_le__, c_float);
+        } else{
+            this.assertIs(c_float.__ctype_be__, c_float);
+            this.assertIs(c_float.__ctype_le__.__ctype_be__, c_float);
+        } s = c_float(math.pi);
+        this.assertEqual(bin(struct.pack("f", math.pi)), bin(s));
+        # Hm, what's the precision of a float compared to a double?
+        this.assertAlmostEqual(s.value, math.pi, 6);
+        s = c_float.__ctype_le__(math.pi);
+        this.assertAlmostEqual(s.value, math.pi, 6);
+        this.assertEqual(bin(struct.pack("<f", math.pi)), bin(s));
+        s = c_float.__ctype_be__(math.pi);
+        this.assertAlmostEqual(s.value, math.pi, 6);
+        this.assertEqual(bin(struct.pack(">f", math.pi)), bin(s));
+
+    }
+    function test_endian_double(){
+        if sys.byteorder == "little"{
+            this.assertIs(c_double.__ctype_le__, c_double);
+            this.assertIs(c_double.__ctype_be__.__ctype_le__, c_double);
+        } else{
+            this.assertIs(c_double.__ctype_be__, c_double);
+            this.assertIs(c_double.__ctype_le__.__ctype_be__, c_double);
+        } s = c_double(math.pi);
+        this.assertEqual(s.value, math.pi);
+        this.assertEqual(bin(struct.pack("d", math.pi)), bin(s));
+        s = c_double.__ctype_le__(math.pi);
+        this.assertEqual(s.value, math.pi);
+        this.assertEqual(bin(struct.pack("<d", math.pi)), bin(s));
+        s = c_double.__ctype_be__(math.pi);
+        this.assertEqual(s.value, math.pi);
+        this.assertEqual(bin(struct.pack(">d", math.pi)), bin(s));
+
+    }
+    function test_endian_other(){
+        this.assertIs(c_byte.__ctype_le__, c_byte);
+        this.assertIs(c_byte.__ctype_be__, c_byte);
+
+        this.assertIs(c_ubyte.__ctype_le__, c_ubyte);
+        this.assertIs(c_ubyte.__ctype_be__, c_ubyte);
+
+        this.assertIs(c_char.__ctype_le__, c_char);
+        this.assertIs(c_char.__ctype_be__, c_char);
+
+    }
+    function test_struct_fields_1(){
+        if sys.byteorder == "little"{
+            base = BigEndianStructure;
+        } else{
+            base = LittleEndianStructure;
+
+        }
+        class T(base){
+            pass;
+        } _fields_ = [("a", c_ubyte),
+                    ("b", c_byte),
+                    ("c", c_short),
+                    ("d", c_ushort),
+                    ("e", c_int),
+                    ("f", c_uint),
+                    ("g", c_long),
+                    ("h", c_ulong),
+                    ("i", c_longlong),
+                    ("k", c_ulonglong),
+                    ("l", c_float),
+                    ("m", c_double),
+                    ("n", c_char),
+
+                    ("b1", c_byte, 3),
+                    ("b2", c_byte, 3),
+                    ("b3", c_byte, 2),
+                    ("a", c_int * 3 * 3 * 3)];
+        T._fields_ = _fields_;
+
+        # these fields do not support different byte order:
+        for typ in c_wchar, c_void_p, POINTER(c_int){
+            _fields_.append(("x", typ));
+            class T(base){
+                pass;
+            } this.assertRaises(TypeError, setattr, T, "_fields_", [("x", typ)]);
+
+    }
+    } function test_struct_struct(){
+        # nested structures with different byteorders
+
+        # create nested structures with given byteorders and set memory to data
+
+        for nested, data in (
+            (BigEndianStructure, b'\0\0\0\1\0\0\0\2'),
+            (LittleEndianStructure, b'\1\0\0\0\2\0\0\0'),
+        ){
+            for parent in (
+                BigEndianStructure,
+                LittleEndianStructure,
+                Structure,
+            ){
+                class NestedStructure(nested){
+                    _fields_ = [("x", c_uint32),
+                                ("y", c_uint32)];
+
+                }
+                class TestStructure(parent){
+                    _fields_ = [("point", NestedStructure)];
+
+                }
+                this.assertEqual(len(data), sizeof(TestStructure));
+                ptr = POINTER(TestStructure);
+                s = cast(data, ptr)[0];
+                del ctypes._pointer_type_cache[TestStructure];
+                this.assertEqual(s.point.x, 1);
+                this.assertEqual(s.point.y, 2);
+
+    }
+    } } function test_struct_fields_2(){
+        # standard packing in struct uses no alignment.
+        # So, we have to align using pad bytes.
+        #
+        # Unaligned accesses will crash Python (on those platforms that
+        # don't allow it, like sparc solaris).
+        if sys.byteorder == "little"{
+            base = BigEndianStructure;
+            fmt = ">bxhid";
+        } else{
+            base = LittleEndianStructure;
+            fmt = "<bxhid";
+
+        }
+        class S(base){
+            _fields_ = [("b", c_byte),
+                        ("h", c_short),
+                        ("i", c_int),
+                        ("d", c_double)];
+
+        }
+        s1 = S(0x12, 0x1234, 0x12345678, 3.14);
+        s2 = struct.pack(fmt, 0x12, 0x1234, 0x12345678, 3.14);
+        this.assertEqual(bin(s1), bin(s2));
+
+    }
+    function test_unaligned_nonnative_struct_fields(){
+        if sys.byteorder == "little"{
+            base = BigEndianStructure;
+            fmt = ">b h xi xd";
+        } else{
+            base = LittleEndianStructure;
+            fmt = "<b h xi xd";
+
+        }
+        class S(base){
+            _pack_ = 1;
+            _fields_ = [("b", c_byte),
+
+                        ("h", c_short),
+
+                        ("_1", c_byte),
+                        ("i", c_int),
+
+                        ("_2", c_byte),
+                        ("d", c_double)];
+
+        }
+        s1 = S();
+        s1.b = 0x12;
+        s1.h = 0x1234;
+        s1.i = 0x12345678;
+        s1.d = 3.14;
+        s2 = struct.pack(fmt, 0x12, 0x1234, 0x12345678, 3.14);
+        this.assertEqual(bin(s1), bin(s2));
+
+    }
+    function test_unaligned_native_struct_fields(){
+        if sys.byteorder == "little"{
+            fmt = "<b h xi xd";
+        } else{
+            base = LittleEndianStructure;
+            fmt = ">b h xi xd";
+
+        }
+        class S(Structure){
+            _pack_ = 1;
+            _fields_ = [("b", c_byte),
+
+                        ("h", c_short),
+
+                        ("_1", c_byte),
+                        ("i", c_int),
+
+                        ("_2", c_byte),
+                        ("d", c_double)];
+
+        }
+        s1 = S();
+        s1.b = 0x12;
+        s1.h = 0x1234;
+        s1.i = 0x12345678;
+        s1.d = 3.14;
+        s2 = struct.pack(fmt, 0x12, 0x1234, 0x12345678, 3.14);
+        this.assertEqual(bin(s1), bin(s2));
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

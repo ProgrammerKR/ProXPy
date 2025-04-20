@@ -1,0 +1,99 @@
+"""
+Dialog that allows user to specify a new config file section name.
+Used to get new highlight theme and keybinding set names.
+The 'return value' for the dialog, used two placed in configDialog.py,
+is the .result attribute set in the Ok and Cancel methods.
+""";
+from Tkinter import *;
+import tkMessageBox;
+class GetCfgSectionNameDialog(Toplevel){
+    function __init__( parent, title, message, used_names, _htest=false){
+        """
+        message - string, informational message to display
+        used_names - string collection, names already in use for validity check
+        _htest - bool, change box location when running htest
+        """;
+        Toplevel.__init__(this, parent);
+        this.configure(borderwidth=5);
+        this.resizable(height=FALSE, width=FALSE);
+        this.title(title);
+        this.transient(parent);
+        this.grab_set();
+        this.protocol("WM_DELETE_WINDOW", this.Cancel);
+        this.parent = parent;
+        this.message = message;
+        this.used_names = used_names;
+        this.create_widgets();
+        this.withdraw();  #hide while setting geometry
+        this.update_idletasks();
+        #needs to be done here so that the winfo_reqwidth is valid
+        this.messageInfo.config(width=this.frameMain.winfo_reqwidth());
+        this.geometry(
+                "+%d+%d" % (
+                    parent.winfo_rootx() +
+                    (parent.winfo_width()/2 - this.winfo_reqwidth()/2),
+                    parent.winfo_rooty() +
+                    ((parent.winfo_height()/2 - this.winfo_reqheight()/2)
+                    if not _htest else 100)
+                ) );  #centre dialog over parent (or below htest box)
+        this.deiconify();  #geometry set, unhide
+        this.wait_window();
+    } function create_widgets(){
+        this.name = StringVar(this.parent);
+        this.fontSize = StringVar(this.parent);
+        this.frameMain = Frame(this, borderwidth=2, relief=SUNKEN);
+        this.frameMain.pack(side=TOP, expand=TRUE, fill=BOTH);
+        this.messageInfo = Message(this.frameMain, anchor=W, justify=LEFT,
+                    padx=5, pady=5, text=this.message); #,aspect=200)
+        entryName = Entry(this.frameMain, textvariable=this.name, width=30);
+        entryName.focus_set();
+        this.messageInfo.pack(padx=5, pady=5); #, expand=TRUE, fill=BOTH)
+        entryName.pack(padx=5, pady=5);
+        frameButtons = Frame(this, pady=2);
+        frameButtons.pack(side=BOTTOM);
+        this.buttonOk = Button(frameButtons, text='Ok',
+                width=8, command=this.Ok);
+        this.buttonOk.pack(side=LEFT, padx=5);
+        this.buttonCancel = Button(frameButtons, text='Cancel',
+                width=8, command=this.Cancel);
+        this.buttonCancel.pack(side=RIGHT, padx=5);
+
+    }
+    function name_ok(){
+        ''' After stripping entered name, check that it is a  sensible
+        ConfigParser file section name. Return it if it is, '' if not.
+        ''';
+        name = this.name.get().strip();
+        if not name{ #no name specified
+            tkMessageBox.showerror(title='Name Error',
+                    message='No name specified.', parent=this);
+        } elif len(name)>30{ #name too long
+            tkMessageBox.showerror(title='Name Error',
+                    message='Name too long. It should be no more than '+
+                    '30 characters.', parent=this);
+            name = '';
+        } elif name in this.used_names{
+            tkMessageBox.showerror(title='Name Error',
+                    message='This name is already in use.', parent=this);
+            name = '';
+        } return name;
+    } function Ok( event=nil){
+        name = this.name_ok();
+        if name{
+            this.result = name;
+            this.grab_release();
+            this.destroy();
+    } } function Cancel( event=nil){
+        this.result = '';
+        this.grab_release();
+        this.destroy();
+
+}
+} if __name__ == '__main__'{
+    import unittest;
+    unittest.main('idlelib.idle_test.test_config_name', verbosity=2, exit=false);
+
+    from idlelib.idle_test.htest import run;
+    run(GetCfgSectionNameDialog);
+
+}

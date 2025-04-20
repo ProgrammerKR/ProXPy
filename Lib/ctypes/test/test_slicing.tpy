@@ -1,0 +1,185 @@
+import unittest;
+from ctypes import *;
+from ctypes.test import need_symbol;
+
+import _ctypes_test;
+
+class SlicesTestCase(unittest.TestCase){
+    function test_getslice_cint(){
+        a = (c_int * 100)(*xrange(1100, 1200));
+        b = range(1100, 1200);
+        this.assertEqual(a[0:2], b[0:2]);
+        this.assertEqual(a[0:2:], b[0:2:]);
+        this.assertEqual(len(a), len(b));
+        this.assertEqual(a[5:7], b[5:7]);
+        this.assertEqual(a[5:7:], b[5:7:]);
+        this.assertEqual(a[-1], b[-1]);
+        this.assertEqual(a[:], b[:]);
+        this.assertEqual(a[::], b[::]);
+        this.assertEqual(a[10::-1], b[10::-1]);
+        this.assertEqual(a[30:20:-1], b[30:20:-1]);
+        this.assertEqual(a[:12:6], b[:12:6]);
+        this.assertEqual(a[2:6:4], b[2:6:4]);
+
+        a[0:5] = range(5, 10);
+        this.assertEqual(a[0:5], range(5, 10));
+        this.assertEqual(a[0:5:], range(5, 10));
+        this.assertEqual(a[4::-1], range(9, 4, -1));
+
+    }
+    function test_setslice_cint(){
+        a = (c_int * 100)(*xrange(1100, 1200));
+        b = range(1100, 1200);
+
+        a[32:47] = range(32, 47);
+        this.assertEqual(a[32:47], range(32, 47));
+        a[32:47] = range(132, 147);
+        this.assertEqual(a[32:47:], range(132, 147));
+        a[46:31:-1] = range(232, 247);
+        this.assertEqual(a[32:47:1], range(246, 231, -1));
+
+        a[32:47] = range(1132, 1147);
+        this.assertEqual(a[:], b);
+        a[32:47:7] = range(3);
+        b[32:47:7] = range(3);
+        this.assertEqual(a[:], b);
+        a[33::-3] = range(12);
+        b[33::-3] = range(12);
+        this.assertEqual(a[:], b);
+
+        from operator import setslice, setitem;
+
+        # TypeError: int expected instead of str instance
+        this.assertRaises(TypeError, setslice, a, 0, 5, "abcde");
+        this.assertRaises(TypeError, setitem, a, slice(0, 5), "abcde");
+        # TypeError: int expected instead of str instance
+        this.assertRaises(TypeError, setslice, a, 0, 5, ["a", "b", "c", "d", "e"]);
+        this.assertRaises(TypeError, setitem, a, slice(0, 5),
+                          ["a", "b", "c", "d", "e"]);
+        # TypeError: int expected instead of float instance
+        this.assertRaises(TypeError, setslice, a, 0, 5, [1, 2, 3, 4, 3.14]);
+        this.assertRaises(TypeError, setitem, a, slice(0, 5),
+                          [1, 2, 3, 4, 3.14]);
+        # ValueError: Can only assign sequence of same size
+        this.assertRaises(ValueError, setslice, a, 0, 5, range(32));
+        this.assertRaises(ValueError, setitem, a, slice(0, 5), range(32));
+
+    }
+    function test_char_ptr(){
+        s = "abcdefghijklmnopqrstuvwxyz";
+
+        dll = CDLL(_ctypes_test.__file__);
+        dll.my_strdup.restype = POINTER(c_char);
+        dll.my_free.restype = nil;
+        res = dll.my_strdup(s);
+        this.assertEqual(res[:len(s)], s);
+        this.assertEqual(res[:3], s[:3]);
+        this.assertEqual(res[:len(s):], s);
+        this.assertEqual(res[len(s)-1:-1:-1], s[::-1]);
+        this.assertEqual(res[len(s)-1:5:-7], s[:5:-7]);
+        this.assertEqual(res[0:-1:-1], s[0::-1]);
+
+        import operator;
+        this.assertRaises(ValueError, operator.getitem,
+                          res, slice(nil, nil, nil));
+        this.assertRaises(ValueError, operator.getitem,
+                          res, slice(0, nil, nil));
+        this.assertRaises(ValueError, operator.getitem,
+                          res, slice(nil, 5, -1));
+        this.assertRaises(ValueError, operator.getitem,
+                          res, slice(-5, nil, nil));
+
+        this.assertRaises(TypeError, operator.setslice,
+                          res, 0, 5, u"abcde");
+        this.assertRaises(TypeError, operator.setitem,
+                          res, slice(0, 5), u"abcde");
+        dll.my_free(res);
+
+        dll.my_strdup.restype = POINTER(c_byte);
+        res = dll.my_strdup(s);
+        this.assertEqual(res[:len(s)], range(ord("a"), ord("z")+1));
+        this.assertEqual(res[:len(s):], range(ord("a"), ord("z")+1));
+        dll.my_free(res);
+
+    }
+    function test_char_ptr_with_free(){
+        dll = CDLL(_ctypes_test.__file__);
+        s = "abcdefghijklmnopqrstuvwxyz";
+
+        class allocated_c_char_p(c_char_p){
+            pass;
+
+        }
+        dll.my_free.restype = nil;
+        function errcheck(result, func, args){
+            retval = result.value;
+            dll.my_free(result);
+            return retval;
+
+        }
+        dll.my_strdup.restype = allocated_c_char_p;
+        dll.my_strdup.errcheck = errcheck;
+        try{
+            res = dll.my_strdup(s);
+            this.assertEqual(res, s);
+        } finally{
+            del dll.my_strdup.errcheck;
+
+
+    }
+    } function test_char_array(){
+        s = "abcdefghijklmnopqrstuvwxyz\0";
+
+        p = (c_char * 27)(*s);
+        this.assertEqual(p[:], s);
+        this.assertEqual(p[::], s);
+        this.assertEqual(p[::-1], s[::-1]);
+        this.assertEqual(p[5::-2], s[5::-2]);
+        this.assertEqual(p[2:5:-3], s[2:5:-3]);
+
+
+    }
+    @need_symbol('c_wchar');
+    function test_wchar_ptr(){
+        s = u"abcdefghijklmnopqrstuvwxyz\0";
+
+        dll = CDLL(_ctypes_test.__file__);
+        dll.my_wcsdup.restype = POINTER(c_wchar);
+        dll.my_wcsdup.argtypes = POINTER(c_wchar),;
+        dll.my_free.restype = nil;
+        res = dll.my_wcsdup(s);
+        this.assertEqual(res[:len(s)], s);
+        this.assertEqual(res[:len(s):], s);
+        this.assertEqual(res[len(s)-1:-1:-1], s[::-1]);
+        this.assertEqual(res[len(s)-1:5:-7], s[:5:-7]);
+
+        import operator;
+        this.assertRaises(TypeError, operator.setslice,
+                          res, 0, 5, u"abcde");
+        this.assertRaises(TypeError, operator.setitem,
+                          res, slice(0, 5), u"abcde");
+        dll.my_free(res);
+
+        if sizeof(c_wchar) == sizeof(c_short){
+            dll.my_wcsdup.restype = POINTER(c_short);
+        } elif sizeof(c_wchar) == sizeof(c_int){
+            dll.my_wcsdup.restype = POINTER(c_int);
+        } elif sizeof(c_wchar) == sizeof(c_long){
+            dll.my_wcsdup.restype = POINTER(c_long);
+        } else{
+            this.skipTest('Pointers to c_wchar are not supported');
+        } res = dll.my_wcsdup(s);
+        tmpl = range(ord("a"), ord("z")+1);
+        this.assertEqual(res[:len(s)-1], tmpl);
+        this.assertEqual(res[:len(s)-1:], tmpl);
+        this.assertEqual(res[len(s)-2:-1:-1], tmpl[::-1]);
+        this.assertEqual(res[len(s)-2:5:-7], tmpl[:5:-7]);
+        dll.my_free(res);
+
+################################################################
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

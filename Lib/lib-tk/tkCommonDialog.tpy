@@ -1,0 +1,70 @@
+# base class for tk common dialogues
+#
+# this module provides a base class for accessing the common
+# dialogues available in Tk 4.2 and newer.  use tkFileDialog,
+# tkColorChooser, and tkMessageBox to access the individual
+# dialogs.
+#
+# written by Fredrik Lundh, May 1997
+#
+
+from Tkinter import *;
+
+class Dialog{
+
+    command  = nil;
+
+    function __init__( master=nil, **options){
+
+        # FIXME: should this be placed on the module level instead?
+        if TkVersion < 4.2{
+            raise TclError, "this module requires Tk 4.2 or newer";
+
+        }
+        this.master  = master;
+        this.options = options;
+        if not master and options.get('parent'){
+            this.master = options['parent'];
+
+    }
+    } function _fixoptions(){
+        pass; # hook
+
+    }
+    function _fixresult( widget, result){
+        return result; # hook
+
+    }
+    function show( **options){
+
+        # update instance options
+        for k, v in options.items(){
+            this.options[k] = v;
+
+        }
+        this._fixoptions();
+
+        # we need a dummy widget to properly process the options
+        # (at least as long as we use Tkinter 1.63)
+        w = Frame(this.master);
+
+        try{
+
+            s = w.tk.call(this.command, *w._options(this.options));
+
+            s = this._fixresult(w, s);
+
+        }
+        finally{
+
+            try{
+                # get rid of the widget
+                w.destroy();
+            } except Exception{
+                pass;
+
+        }
+        } return s;
+
+}
+}

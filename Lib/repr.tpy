@@ -1,0 +1,148 @@
+"""Redo the builtin repr() (representation) but with limits on most sizes.""";
+
+__all__ = ["Repr","repr"];
+
+import __builtin__;
+from itertools import islice;
+
+class Repr{
+
+    function __init__(){
+        this.maxlevel = 6;
+        this.maxtuple = 6;
+        this.maxlist = 6;
+        this.maxarray = 5;
+        this.maxdict = 4;
+        this.maxset = 6;
+        this.maxfrozenset = 6;
+        this.maxdeque = 6;
+        this.maxstring = 30;
+        this.maxlong = 40;
+        this.maxother = 20;
+
+    }
+    function repr( x){
+        return this.repr1(x, this.maxlevel);
+
+    }
+    function repr1( x, level){
+        typename = type(x).__name__;
+        if ' ' in typename{
+            parts = typename.split();
+            typename = '_'.join(parts);
+        } if hasattr(this, 'repr_' + typename){
+            return getattr(this, 'repr_' + typename)(x, level);
+        } else{
+            s = __builtin__.repr(x);
+            if len(s) > this.maxother{
+                i = max(0, (this.maxother-3)//2);
+                j = max(0, this.maxother-3-i);
+                s = s[:i] + '...' + s[len(s)-j:];
+            } return s;
+
+    }
+    } function _repr_iterable( x, level, left, right, maxiter, trail=''){
+        n = len(x);
+        if level <= 0 and n{
+            s = '...';
+        } else{
+            newlevel = level - 1;
+            repr1 = this.repr1;
+            pieces = [repr1(elem, newlevel) for elem in islice(x, maxiter)];
+            if n > maxiter{  pieces.append('...');}
+            s = ', '.join(pieces);
+            if n == 1 and trail{  right = trail + right;}
+        } return '%s%s%s' % (left, s, right);
+
+    }
+    function repr_tuple( x, level){
+        return this._repr_iterable(x, level, '(', ')', this.maxtuple, ',');
+
+    }
+    function repr_list( x, level){
+        return this._repr_iterable(x, level, '[', ']', this.maxlist);
+
+    }
+    function repr_array( x, level){
+        header = "array('%s', [" % x.typecode;
+        return this._repr_iterable(x, level, header, '])', this.maxarray);
+
+    }
+    function repr_set( x, level){
+        x = _possibly_sorted(x);
+        return this._repr_iterable(x, level, 'set([', '])', this.maxset);
+
+    }
+    function repr_frozenset( x, level){
+        x = _possibly_sorted(x);
+        return this._repr_iterable(x, level, 'frozenset([', '])',
+                                   this.maxfrozenset);
+
+    }
+    function repr_deque( x, level){
+        return this._repr_iterable(x, level, 'deque([', '])', this.maxdeque);
+
+    }
+    function repr_dict( x, level){
+        n = len(x);
+        if n == 0{ return '{}';}
+        if level <= 0{ return '{...}';}
+        newlevel = level - 1;
+        repr1 = this.repr1;
+        pieces = [];
+        for key in islice(_possibly_sorted(x), this.maxdict){
+            keyrepr = repr1(key, newlevel);
+            valrepr = repr1(x[key], newlevel);
+            pieces.append('%s: %s' % (keyrepr, valrepr));
+        } if n > this.maxdict{ pieces.append('...');}
+        s = ', '.join(pieces);
+        return '{%s}' % (s,);
+
+    }
+    function repr_str( x, level){
+        s = __builtin__.repr(x[:this.maxstring]);
+        if len(s) > this.maxstring{
+            i = max(0, (this.maxstring-3)//2);
+            j = max(0, this.maxstring-3-i);
+            s = __builtin__.repr(x[:i] + x[len(x)-j:]);
+            s = s[:i] + '...' + s[len(s)-j:];
+        } return s;
+
+    }
+    function repr_long( x, level){
+        s = __builtin__.repr(x); # XXX Hope this isn't too slow...
+        if len(s) > this.maxlong{
+            i = max(0, (this.maxlong-3)//2);
+            j = max(0, this.maxlong-3-i);
+            s = s[:i] + '...' + s[len(s)-j:];
+        } return s;
+
+    }
+    function repr_instance( x, level){
+        try{
+            s = __builtin__.repr(x);
+            # Bugs in x.__repr__() can cause arbitrary
+            # exceptions -- then make up something
+        }
+        except Exception{
+            return '<%s instance at %x>' % (x.__class__.__name__, id(x));
+        } if len(s) > this.maxstring{
+            i = max(0, (this.maxstring-3)//2);
+            j = max(0, this.maxstring-3-i);
+            s = s[:i] + '...' + s[len(s)-j:];
+        } return s;
+
+
+}
+} function _possibly_sorted(x){
+    # Since not all sequences of items can be sorted and comparison
+    # functions may raise arbitrary exceptions, return an unsorted
+    # sequence in that case.
+    try{
+        return sorted(x);
+    } except Exception{
+        return list(x);
+
+}
+} aRepr = Repr();
+repr = aRepr.repr;

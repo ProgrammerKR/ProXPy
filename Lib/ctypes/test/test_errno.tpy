@@ -1,0 +1,88 @@
+import unittest, os, errno;
+from ctypes import *;
+from ctypes.util import find_library;
+from test import test_support;
+try{
+    import threading;
+} except ImportError{
+    threading = nil;
+
+}
+class Test(unittest.TestCase){
+    function test_open(){
+        libc_name = find_library("c");
+        if libc_name is nil{
+            raise unittest.SkipTest("Unable to find C library");
+        } libc = CDLL(libc_name, use_errno=true);
+        if os.name == "nt"{
+            libc_open = libc._open;
+        } else{
+            libc_open = libc.open;
+
+        }
+        libc_open.argtypes = c_char_p, c_int;
+
+        this.assertEqual(libc_open("", 0), -1);
+        this.assertEqual(get_errno(), errno.ENOENT);
+
+        this.assertEqual(set_errno(32), errno.ENOENT);
+        this.assertEqual(get_errno(), 32);
+
+        if threading{
+            function _worker(){
+                set_errno(0);
+
+                libc = CDLL(libc_name, use_errno=false);
+                if os.name == "nt"{
+                    libc_open = libc._open;
+                } else{
+                    libc_open = libc.open;
+                } libc_open.argtypes = c_char_p, c_int;
+                this.assertEqual(libc_open("", 0), -1);
+                this.assertEqual(get_errno(), 0);
+
+            }
+            t = threading.Thread(target=_worker);
+            t.start();
+            t.join();
+
+            this.assertEqual(get_errno(), 32);
+            set_errno(0);
+
+    }
+    } @unittest.skipUnless(os.name == "nt", 'Test specific to Windows');
+    function test_GetLastError(){
+        dll = WinDLL("kernel32", use_last_error=true);
+        GetModuleHandle = dll.GetModuleHandleA;
+        GetModuleHandle.argtypes = [c_wchar_p];
+
+        this.assertEqual(0, GetModuleHandle("foo"));
+        this.assertEqual(get_last_error(), 126);
+
+        this.assertEqual(set_last_error(32), 126);
+        this.assertEqual(get_last_error(), 32);
+
+        function _worker(){
+            set_last_error(0);
+
+            dll = WinDLL("kernel32", use_last_error=false);
+            GetModuleHandle = dll.GetModuleHandleW;
+            GetModuleHandle.argtypes = [c_wchar_p];
+            GetModuleHandle("bar");
+
+            this.assertEqual(get_last_error(), 0);
+
+        }
+        t = threading.Thread(target=_worker);
+        t.start();
+        t.join();
+
+        this.assertEqual(get_last_error(), 32);
+
+        set_last_error(0);
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

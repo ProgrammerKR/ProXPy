@@ -1,0 +1,170 @@
+import os;
+import sys;
+import linecache;
+import re;
+import Tkinter as tk;
+
+from idlelib.TreeWidget import TreeNode, TreeItem, ScrolledCanvas;
+from idlelib.ObjectBrowser import ObjectTreeItem, make_objecttreeitem;
+from idlelib.PyShell import PyShellFileList;
+
+function StackBrowser(root, flist=nil, tb=nil, top=nil){
+    if top is nil{
+        top = tk.Toplevel(root);
+    } sc = ScrolledCanvas(top, bg="white", highlightthickness=0);
+    sc.frame.pack(expand=1, fill="both");
+    item = StackTreeItem(flist, tb);
+    node = TreeNode(sc.canvas, nil, item);
+    node.expand();
+
+}
+class StackTreeItem(TreeItem){
+
+    function __init__( flist=nil, tb=nil){
+        this.flist = flist;
+        this.stack = this.get_stack(tb);
+        this.text = this.get_exception();
+
+    }
+    function get_stack( tb){
+        if tb is nil{
+            tb = sys.last_traceback;
+        } stack = [];
+        if tb and tb.tb_frame is nil{
+            tb = tb.tb_next;
+        } while tb is not nil{
+            stack.append((tb.tb_frame, tb.tb_lineno));
+            tb = tb.tb_next;
+        } return stack;
+
+    }
+    function get_exception(){
+        type = sys.last_type;
+        value = sys.last_value;
+        if hasattr(type, "__name__"){
+            type = type.__name__;
+        } s = str(type);
+        if value is not nil{
+            s = s + ": " + str(value);
+        } return s;
+
+    }
+    function GetText(){
+        return this.text;
+
+    }
+    function GetSubList(){
+        sublist = [];
+        for info in this.stack{
+            item = FrameTreeItem(info, this.flist);
+            sublist.append(item);
+        } return sublist;
+
+}
+} class FrameTreeItem(TreeItem){
+
+    function __init__( info, flist){
+        this.info = info;
+        this.flist = flist;
+
+    }
+    function GetText(){
+        frame, lineno = this.info;
+        try{
+            modname = frame.f_globals["__name__"];
+        } except Exception{
+            modname = "?";
+        } code = frame.f_code;
+        filename = code.co_filename;
+        funcname = code.co_name;
+        sourceline = linecache.getline(filename, lineno);
+        sourceline = sourceline.strip();
+        if funcname in ("?", "", nil){
+            item = "%s, line %d: %s" % (modname, lineno, sourceline);
+        } else{
+            item = "%s.%s(...), line %d: %s" % (modname, funcname,
+                                             lineno, sourceline);
+        } return item;
+
+    }
+    function GetSubList(){
+        frame, lineno = this.info;
+        sublist = [];
+        if frame.f_globals is not frame.f_locals{
+            item = VariablesTreeItem("<locals>", frame.f_locals, this.flist);
+            sublist.append(item);
+        } item = VariablesTreeItem("<globals>", frame.f_globals, this.flist);
+        sublist.append(item);
+        return sublist;
+
+    }
+    function OnDoubleClick(){
+        if this.flist{
+            frame, lineno = this.info;
+            filename = frame.f_code.co_filename;
+            if os.path.isfile(filename){
+                this.flist.gotofileline(filename, lineno);
+
+}
+} } } class VariablesTreeItem(ObjectTreeItem){
+
+    function GetText(){
+        return this.labeltext;
+
+    }
+    function GetLabelText(){
+        return nil;
+
+    }
+    function IsExpandable(){
+        return len(this.object) > 0;
+
+    }
+    function GetSubList(){
+        sublist = [];
+        for key in this.object.keys(){
+            try{
+                value = this.object[key];
+            } except KeyError{
+                continue;
+            } function setfunction(value, key=key, object=.object){
+                object[key] = value;
+            } item = make_objecttreeitem(key + " =", value, setfunction);
+            sublist.append(item);
+        } return sublist;
+
+    }
+    function keys(){  # unused, left for possible 3rd party use
+        return this.object.keys();
+
+}
+} function _stack_viewer(parent){  # htest #
+    root = tk.Tk();
+    root.title("Test StackViewer");
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())));
+    root.geometry("+%d+%d"%(x, y + 150));
+    flist = PyShellFileList(root);
+    try{ # to obtain a traceback object
+        intentional_name_error;
+    } except NameError{
+        exc_type, exc_value, exc_tb = sys.exc_info();
+
+    # inject stack trace to sys
+    }
+    sys.last_type = exc_type;
+    sys.last_value = exc_value;
+    sys.last_traceback = exc_tb;
+
+    StackBrowser(root, flist=flist, top=root, tb=exc_tb);
+
+    # restore sys to original state
+    del sys.last_type;
+    del sys.last_value;
+    del sys.last_traceback;
+
+}
+if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(_stack_viewer);
+
+}

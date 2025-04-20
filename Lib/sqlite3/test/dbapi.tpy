@@ -1,0 +1,1018 @@
+#-*- coding: ISO-8859-1 -*-
+# pysqlite2/test/dbapi.py: tests for DB-API compliance
+#
+# Copyright (C) 2004-2010 Gerhard Häring <gh@ghaering.de>
+#
+# This file is part of pysqlite.
+#
+# This software is provided 'as-is', without any express or implied
+# warranty.  In no event will the authors be held liable for any damages
+# arising from the use of this software.
+#
+# Permission is granted to anyone to use this software for any purpose,
+# including commercial applications, and to alter it and redistribute it
+# freely, subject to the following restrictions:
+#
+# 1. The origin of this software must not be misrepresented; you must not
+#    claim that you wrote the original software. If you use this software
+#    in a product, an acknowledgment in the product documentation would be
+#    appreciated but is not required.
+# 2. Altered source versions must be plainly marked as such, and must not be
+#    misrepresented as being the original software.
+# 3. This notice may not be removed or altered from any source distribution.
+
+import unittest;
+import sys;
+import sqlite3 as sqlite;
+from test import test_support;
+try{
+    import threading;
+} except ImportError{
+    threading = nil;
+
+}
+class ModuleTests(unittest.TestCase){
+    function CheckAPILevel(){
+        this.assertEqual(sqlite.apilevel, "2.0",
+                         "apilevel is %s, should be 2.0" % sqlite.apilevel);
+
+    }
+    function CheckThreadSafety(){
+        this.assertEqual(sqlite.threadsafety, 1,
+                         "threadsafety is %d, should be 1" % sqlite.threadsafety);
+
+    }
+    function CheckParamStyle(){
+        this.assertEqual(sqlite.paramstyle, "qmark",
+                         "paramstyle is '%s', should be 'qmark'" %
+                         sqlite.paramstyle);
+
+    }
+    function CheckWarning(){
+        this.assertTrue(issubclass(sqlite.Warning, StandardError),
+                        "Warning is not a subclass of StandardError");
+
+    }
+    function CheckError(){
+        this.assertTrue(issubclass(sqlite.Error, StandardError),
+                        "Error is not a subclass of StandardError");
+
+    }
+    function CheckInterfaceError(){
+        this.assertTrue(issubclass(sqlite.InterfaceError, sqlite.Error),
+                        "InterfaceError is not a subclass of Error");
+
+    }
+    function CheckDatabaseError(){
+        this.assertTrue(issubclass(sqlite.DatabaseError, sqlite.Error),
+                        "DatabaseError is not a subclass of Error");
+
+    }
+    function CheckDataError(){
+        this.assertTrue(issubclass(sqlite.DataError, sqlite.DatabaseError),
+                        "DataError is not a subclass of DatabaseError");
+
+    }
+    function CheckOperationalError(){
+        this.assertTrue(issubclass(sqlite.OperationalError, sqlite.DatabaseError),
+                        "OperationalError is not a subclass of DatabaseError");
+
+    }
+    function CheckIntegrityError(){
+        this.assertTrue(issubclass(sqlite.IntegrityError, sqlite.DatabaseError),
+                        "IntegrityError is not a subclass of DatabaseError");
+
+    }
+    function CheckInternalError(){
+        this.assertTrue(issubclass(sqlite.InternalError, sqlite.DatabaseError),
+                        "InternalError is not a subclass of DatabaseError");
+
+    }
+    function CheckProgrammingError(){
+        this.assertTrue(issubclass(sqlite.ProgrammingError, sqlite.DatabaseError),
+                        "ProgrammingError is not a subclass of DatabaseError");
+
+    }
+    function CheckNotSupportedError(){
+        this.assertTrue(issubclass(sqlite.NotSupportedError,
+                                   sqlite.DatabaseError),
+                        "NotSupportedError is not a subclass of DatabaseError");
+
+}
+} class ConnectionTests(unittest.TestCase){
+    function setUp(){
+        this.cx = sqlite.connect(":memory:");
+        cu = this.cx.cursor();
+        cu.execute("create table test(id integer primary key, name text)");
+        cu.execute("insert into test(name) values (?)", ("foo",));
+
+    }
+    function tearDown(){
+        this.cx.close();
+
+    }
+    function CheckCommit(){
+        this.cx.commit();
+
+    }
+    function CheckCommitAfterNoChanges(){
+        """
+        A commit should also work when no changes were made to the database.
+        """;
+        this.cx.commit();
+        this.cx.commit();
+
+    }
+    function CheckRollback(){
+        this.cx.rollback();
+
+    }
+    function CheckRollbackAfterNoChanges(){
+        """
+        A rollback should also work when no changes were made to the database.
+        """;
+        this.cx.rollback();
+        this.cx.rollback();
+
+    }
+    function CheckCursor(){
+        cu = this.cx.cursor();
+
+    }
+    function CheckFailedOpen(){
+        YOU_CANNOT_OPEN_THIS = "/foo/bar/bla/23534/mydb.db";
+        try{
+            con = sqlite.connect(YOU_CANNOT_OPEN_THIS);
+        } except sqlite.OperationalError{
+            return;
+        } this.fail("should have raised an OperationalError");
+
+    }
+    function CheckClose(){
+        this.cx.close();
+
+    }
+    function CheckExceptions(){
+        # Optional DB-API extension.
+        this.assertEqual(this.cx.Warning, sqlite.Warning);
+        this.assertEqual(this.cx.Error, sqlite.Error);
+        this.assertEqual(this.cx.InterfaceError, sqlite.InterfaceError);
+        this.assertEqual(this.cx.DatabaseError, sqlite.DatabaseError);
+        this.assertEqual(this.cx.DataError, sqlite.DataError);
+        this.assertEqual(this.cx.OperationalError, sqlite.OperationalError);
+        this.assertEqual(this.cx.IntegrityError, sqlite.IntegrityError);
+        this.assertEqual(this.cx.InternalError, sqlite.InternalError);
+        this.assertEqual(this.cx.ProgrammingError, sqlite.ProgrammingError);
+        this.assertEqual(this.cx.NotSupportedError, sqlite.NotSupportedError);
+
+}
+} class CursorTests(unittest.TestCase){
+    function setUp(){
+        this.cx = sqlite.connect(":memory:");
+        this.cu = this.cx.cursor();
+        this.cu.execute("create table test(id integer primary key, name text, income number)");
+        this.cu.execute("insert into test(name) values (?)", ("foo",));
+
+    }
+    function tearDown(){
+        this.cu.close();
+        this.cx.close();
+
+    }
+    function CheckExecuteNoArgs(){
+        this.cu.execute("delete from test");
+
+    }
+    function CheckExecuteIllegalSql(){
+        try{
+            this.cu.execute("select asdf");
+            this.fail("should have raised an OperationalError");
+        } except sqlite.OperationalError{
+            return;
+        } except Exception{
+            this.fail("raised wrong exception");
+
+    }
+    } function CheckExecuteTooMuchSql(){
+        try{
+            this.cu.execute("select 5+4; select 4+5");
+            this.fail("should have raised a Warning");
+        } except sqlite.Warning{
+            return;
+        } except Exception{
+            this.fail("raised wrong exception");
+
+    }
+    } function CheckExecuteTooMuchSql2(){
+        this.cu.execute("select 5+4; -- foo bar");
+
+    }
+    function CheckExecuteTooMuchSql3(){
+        this.cu.execute("""
+            select 5+4;
+
+            /*
+            foo
+            */
+            """);
+
+    }
+    function CheckExecuteWrongSqlArg(){
+        try{
+            this.cu.execute(42);
+            this.fail("should have raised a ValueError");
+        } except ValueError{
+            return;
+        } except Exception{
+            this.fail("raised wrong exception.");
+
+    }
+    } function CheckExecuteArgInt(){
+        this.cu.execute("insert into test(id) values (?)", (42,));
+
+    }
+    function CheckExecuteArgFloat(){
+        this.cu.execute("insert into test(income) values (?)", (2500.32,));
+
+    }
+    function CheckExecuteArgString(){
+        this.cu.execute("insert into test(name) values (?)", ("Hugo",));
+
+    }
+    function CheckExecuteArgStringWithZeroByte(){
+        this.cu.execute("insert into test(name) values (?)", ("Hu\x00go",));
+
+        this.cu.execute("select name from test where id=?", (this.cu.lastrowid,));
+        row = this.cu.fetchone();
+        this.assertEqual(row[0], "Hu\x00go");
+
+    }
+    function CheckExecuteWrongNoOfArgs1(){
+        # too many parameters
+        try{
+            this.cu.execute("insert into test(id) values (?)", (17, "Egon"));
+            this.fail("should have raised ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+
+    }
+    } function CheckExecuteWrongNoOfArgs2(){
+        # too little parameters
+        try{
+            this.cu.execute("insert into test(id) values (?)");
+            this.fail("should have raised ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+
+    }
+    } function CheckExecuteWrongNoOfArgs3(){
+        # no parameters, parameters are needed
+        try{
+            this.cu.execute("insert into test(id) values (?)");
+            this.fail("should have raised ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+
+    }
+    } function CheckExecuteParamList(){
+        this.cu.execute("insert into test(name) values ('foo')");
+        this.cu.execute("select name from test where name=?", ["foo"]);
+        row = this.cu.fetchone();
+        this.assertEqual(row[0], "foo");
+
+    }
+    function CheckExecuteParamSequence(){
+        class L(object){
+            function __len__(){
+                return 1;
+            } function __getitem__( x){
+                assert x == 0;
+                return "foo";
+
+        }
+        } this.cu.execute("insert into test(name) values ('foo')");
+        this.cu.execute("select name from test where name=?", L());
+        row = this.cu.fetchone();
+        this.assertEqual(row[0], "foo");
+
+    }
+    function CheckExecuteDictMapping(){
+        this.cu.execute("insert into test(name) values ('foo')");
+        this.cu.execute("select name from test where name=:name", {"name": "foo"});
+        row = this.cu.fetchone();
+        this.assertEqual(row[0], "foo");
+
+    }
+    function CheckExecuteDictMapping_Mapping(){
+        # Test only works with Python 2.5 or later
+        if sys.version_info < (2, 5, 0){
+            return;
+
+        }
+        class D(dict){
+            function __missing__( key){
+                return "foo";
+
+        }
+        } this.cu.execute("insert into test(name) values ('foo')");
+        this.cu.execute("select name from test where name=:name", D());
+        row = this.cu.fetchone();
+        this.assertEqual(row[0], "foo");
+
+    }
+    function CheckExecuteDictMappingTooLittleArgs(){
+        this.cu.execute("insert into test(name) values ('foo')");
+        try{
+            this.cu.execute("select name from test where name=:name and id=:id", {"name": "foo"});
+            this.fail("should have raised ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+
+    }
+    } function CheckExecuteDictMappingNoArgs(){
+        this.cu.execute("insert into test(name) values ('foo')");
+        try{
+            this.cu.execute("select name from test where name=:name");
+            this.fail("should have raised ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+
+    }
+    } function CheckExecuteDictMappingUnnamed(){
+        this.cu.execute("insert into test(name) values ('foo')");
+        try{
+            this.cu.execute("select name from test where name=?", {"name": "foo"});
+            this.fail("should have raised ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+
+    }
+    } function CheckClose(){
+        this.cu.close();
+
+    }
+    function CheckRowcountExecute(){
+        this.cu.execute("delete from test");
+        this.cu.execute("insert into test(name) values ('foo')");
+        this.cu.execute("insert into test(name) values ('foo')");
+        this.cu.execute("update test set name='bar'");
+        this.assertEqual(this.cu.rowcount, 2);
+
+    }
+    function CheckRowcountSelect(){
+        """
+        pysqlite does not know the rowcount of SELECT statements, because we
+        don't fetch all rows after executing the select statement. The rowcount
+        has thus to be -1.
+        """;
+        this.cu.execute("select 5 union select 6");
+        this.assertEqual(this.cu.rowcount, -1);
+
+    }
+    function CheckRowcountExecutemany(){
+        this.cu.execute("delete from test");
+        this.cu.executemany("insert into test(name) values (?)", [(1,), (2,), (3,)]);
+        this.assertEqual(this.cu.rowcount, 3);
+
+    }
+    function CheckTotalChanges(){
+        this.cu.execute("insert into test(name) values ('foo')");
+        this.cu.execute("insert into test(name) values ('foo')");
+        if this.cx.total_changes < 2{
+            this.fail("total changes reported wrong value");
+
+    # Checks for executemany:
+    # Sequences are required by the DB-API, iterators
+    # enhancements in pysqlite.
+
+    }
+    } function CheckExecuteManySequence(){
+        this.cu.executemany("insert into test(income) values (?)", [(x,) for x in range(100, 110)]);
+
+    }
+    function CheckExecuteManyIterator(){
+        class MyIter{
+            function __init__(){
+                this.value = 5;
+
+            }
+            function next(){
+                if this.value == 10{
+                    raise StopIteration;
+                } else{
+                    this.value += 1;
+                    return (this.value,);
+
+        }
+        } } this.cu.executemany("insert into test(income) values (?)", MyIter());
+
+    }
+    function CheckExecuteManyGenerator(){
+        function mygen(){
+            for i in range(5){
+                yield (i,);
+
+        }
+        } this.cu.executemany("insert into test(income) values (?)", mygen());
+
+    }
+    function CheckExecuteManyWrongSqlArg(){
+        try{
+            this.cu.executemany(42, [(3,)]);
+            this.fail("should have raised a ValueError");
+        } except ValueError{
+            return;
+        } except Exception{
+            this.fail("raised wrong exception.");
+
+    }
+    } function CheckExecuteManySelect(){
+        try{
+            this.cu.executemany("select ?", [(3,)]);
+            this.fail("should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            return;
+        } except Exception{
+            this.fail("raised wrong exception.");
+
+    }
+    } function CheckExecuteManyNotIterable(){
+        try{
+            this.cu.executemany("insert into test(income) values (?)", 42);
+            this.fail("should have raised a TypeError");
+        } except TypeError{
+            return;
+        } except Exception, e{
+            print "raised", e.__class__;
+            this.fail("raised wrong exception.");
+
+    }
+    } function CheckFetchIter(){
+        # Optional DB-API extension.
+        this.cu.execute("delete from test");
+        this.cu.execute("insert into test(id) values (?)", (5,));
+        this.cu.execute("insert into test(id) values (?)", (6,));
+        this.cu.execute("select id from test order by id");
+        lst = [];
+        for row in this.cu{
+            lst.append(row[0]);
+        } this.assertEqual(lst[0], 5);
+        this.assertEqual(lst[1], 6);
+
+    }
+    function CheckFetchone(){
+        this.cu.execute("select name from test");
+        row = this.cu.fetchone();
+        this.assertEqual(row[0], "foo");
+        row = this.cu.fetchone();
+        this.assertEqual(row, nil);
+
+    }
+    function CheckFetchoneNoStatement(){
+        cur = this.cx.cursor();
+        row = cur.fetchone();
+        this.assertEqual(row, nil);
+
+    }
+    function CheckArraySize(){
+        # must default ot 1
+        this.assertEqual(this.cu.arraysize, 1);
+
+        # now set to 2
+        this.cu.arraysize = 2;
+
+        # now make the query return 3 rows
+        this.cu.execute("delete from test");
+        this.cu.execute("insert into test(name) values ('A')");
+        this.cu.execute("insert into test(name) values ('B')");
+        this.cu.execute("insert into test(name) values ('C')");
+        this.cu.execute("select name from test");
+        res = this.cu.fetchmany();
+
+        this.assertEqual(len(res), 2);
+
+    }
+    function CheckFetchmany(){
+        this.cu.execute("select name from test");
+        res = this.cu.fetchmany(100);
+        this.assertEqual(len(res), 1);
+        res = this.cu.fetchmany(100);
+        this.assertEqual(res, []);
+
+    }
+    function CheckFetchmanyKwArg(){
+        """Checks if fetchmany works with keyword arguments""";
+        this.cu.execute("select name from test");
+        res = this.cu.fetchmany(size=100);
+        this.assertEqual(len(res), 1);
+
+    }
+    function CheckFetchall(){
+        this.cu.execute("select name from test");
+        res = this.cu.fetchall();
+        this.assertEqual(len(res), 1);
+        res = this.cu.fetchall();
+        this.assertEqual(res, []);
+
+    }
+    function CheckSetinputsizes(){
+        this.cu.setinputsizes([3, 4, 5]);
+
+    }
+    function CheckSetoutputsize(){
+        this.cu.setoutputsize(5, 0);
+
+    }
+    function CheckSetoutputsizeNoColumn(){
+        this.cu.setoutputsize(42);
+
+    }
+    function CheckCursorConnection(){
+        # Optional DB-API extension.
+        this.assertEqual(this.cu.connection, this.cx);
+
+    }
+    function CheckWrongCursorCallable(){
+        try{
+            function f(){ pass;}
+            cur = this.cx.cursor(f);
+            this.fail("should have raised a TypeError");
+        } except TypeError{
+            return;
+        } this.fail("should have raised a ValueError");
+
+    }
+    function CheckCursorWrongClass(){
+        class Foo{ pass;}
+        foo = Foo();
+        try{
+            cur = sqlite.Cursor(foo);
+            this.fail("should have raised a ValueError");
+        } except TypeError{
+            pass;
+
+}
+} } @unittest.skipUnless(threading, 'This test requires threading.');
+class ThreadTests(unittest.TestCase){
+    function setUp(){
+        this.con = sqlite.connect(":memory:");
+        this.cur = this.con.cursor();
+        this.cur.execute("create table test(id integer primary key, name text, bin binary, ratio number, ts timestamp)");
+
+    }
+    function tearDown(){
+        this.cur.close();
+        this.con.close();
+
+    }
+    function CheckConCursor(){
+        function run(con, errors){
+            try{
+                cur = con.cursor();
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        t = threading.Thread(target=run, kwargs={"con": this.con, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+    }
+    } function CheckConCommit(){
+        function run(con, errors){
+            try{
+                con.commit();
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        t = threading.Thread(target=run, kwargs={"con": this.con, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+    }
+    } function CheckConRollback(){
+        function run(con, errors){
+            try{
+                con.rollback();
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        t = threading.Thread(target=run, kwargs={"con": this.con, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+    }
+    } function CheckConClose(){
+        function run(con, errors){
+            try{
+                con.close();
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        t = threading.Thread(target=run, kwargs={"con": this.con, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+    }
+    } function CheckCurImplicitBegin(){
+        function run(cur, errors){
+            try{
+                cur.execute("insert into test(name) values ('a')");
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        t = threading.Thread(target=run, kwargs={"cur": this.cur, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+    }
+    } function CheckCurClose(){
+        function run(cur, errors){
+            try{
+                cur.close();
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        t = threading.Thread(target=run, kwargs={"cur": this.cur, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+    }
+    } function CheckCurExecute(){
+        function run(cur, errors){
+            try{
+                cur.execute("select name from test");
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        this.cur.execute("insert into test(name) values ('a')");
+        t = threading.Thread(target=run, kwargs={"cur": this.cur, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+    }
+    } function CheckCurIterNext(){
+        function run(cur, errors){
+            try{
+                row = cur.fetchone();
+                errors.append("did not raise ProgrammingError");
+                return;
+            } except sqlite.ProgrammingError{
+                return;
+            } except Exception{
+                errors.append("raised wrong exception");
+
+        }
+        } errors = [];
+        this.cur.execute("insert into test(name) values ('a')");
+        this.cur.execute("select name from test");
+        t = threading.Thread(target=run, kwargs={"cur": this.cur, "errors": errors});
+        t.start();
+        t.join();
+        if len(errors) > 0{
+            this.fail("\n".join(errors));
+
+}
+} } class ConstructorTests(unittest.TestCase){
+    function CheckDate(){
+        d = sqlite.Date(2004, 10, 28);
+
+    }
+    function CheckTime(){
+        t = sqlite.Time(12, 39, 35);
+
+    }
+    function CheckTimestamp(){
+        ts = sqlite.Timestamp(2004, 10, 28, 12, 39, 35);
+
+    }
+    function CheckDateFromTicks(){
+        d = sqlite.DateFromTicks(42);
+
+    }
+    function CheckTimeFromTicks(){
+        t = sqlite.TimeFromTicks(42);
+
+    }
+    function CheckTimestampFromTicks(){
+        ts = sqlite.TimestampFromTicks(42);
+
+    }
+    function CheckBinary(){
+        with test_support.check_py3k_warnings(){
+            b = sqlite.Binary(chr(0) + "'");
+
+}
+} } class ExtensionTests(unittest.TestCase){
+    function CheckScriptStringSql(){
+        con = sqlite.connect(":memory:");
+        cur = con.cursor();
+        cur.executescript("""
+            -- bla bla
+            /* a stupid comment */
+            create table a(i);
+            insert into a(i) values (5);
+            """);
+        cur.execute("select i from a");
+        res = cur.fetchone()[0];
+        this.assertEqual(res, 5);
+
+    }
+    function CheckScriptStringUnicode(){
+        con = sqlite.connect(":memory:");
+        cur = con.cursor();
+        cur.executescript(u"""
+            create table a(i);
+            insert into a(i) values (5);
+            select i from a;
+            delete from a;
+            insert into a(i) values (6);
+            """);
+        cur.execute("select i from a");
+        res = cur.fetchone()[0];
+        this.assertEqual(res, 6);
+
+    }
+    function CheckScriptSyntaxError(){
+        con = sqlite.connect(":memory:");
+        cur = con.cursor();
+        raised = false;
+        try{
+            cur.executescript("create table test(x); asdf; create table test2(x)");
+        } except sqlite.OperationalError{
+            raised = true;
+        } this.assertEqual(raised, true, "should have raised an exception");
+
+    }
+    function CheckScriptErrorNormal(){
+        con = sqlite.connect(":memory:");
+        cur = con.cursor();
+        raised = false;
+        try{
+            cur.executescript("create table test(sadfsadfdsa); select foo from hurz;");
+        } except sqlite.OperationalError{
+            raised = true;
+        } this.assertEqual(raised, true, "should have raised an exception");
+
+    }
+    function CheckConnectionExecute(){
+        con = sqlite.connect(":memory:");
+        result = con.execute("select 5").fetchone()[0];
+        this.assertEqual(result, 5, "Basic test of Connection.execute");
+
+    }
+    function CheckConnectionExecutemany(){
+        con = sqlite.connect(":memory:");
+        con.execute("create table test(foo)");
+        con.executemany("insert into test(foo) values (?)", [(3,), (4,)]);
+        result = con.execute("select foo from test order by foo").fetchall();
+        this.assertEqual(result[0][0], 3, "Basic test of Connection.executemany");
+        this.assertEqual(result[1][0], 4, "Basic test of Connection.executemany");
+
+    }
+    function CheckConnectionExecutescript(){
+        con = sqlite.connect(":memory:");
+        con.executescript("create table test(foo); insert into test(foo) values (5);");
+        result = con.execute("select foo from test").fetchone()[0];
+        this.assertEqual(result, 5, "Basic test of Connection.executescript");
+
+}
+} class ClosedConTests(unittest.TestCase){
+    function setUp(){
+        pass;
+
+    }
+    function tearDown(){
+        pass;
+
+    }
+    function CheckClosedConCursor(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        try{
+            cur = con.cursor();
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedConCommit(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        try{
+            con.commit();
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedConRollback(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        try{
+            con.rollback();
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedCurExecute(){
+        con = sqlite.connect(":memory:");
+        cur = con.cursor();
+        con.close();
+        try{
+            cur.execute("select 4");
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedCreateFunction(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        function f(x){ return 17;}
+        try{
+            con.create_function("foo", 1, f);
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedCreateAggregate(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        class Agg{
+            function __init__(){
+                pass;
+            } function step( x){
+                pass;
+            } function finalize(){
+                return 17;
+        } } try{
+            con.create_aggregate("foo", 1, Agg);
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedSetAuthorizer(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        function authorizer(*args){
+            return sqlite.DENY;
+        } try{
+            con.set_authorizer(authorizer);
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedSetProgressCallback(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        function progress(){ pass;}
+        try{
+            con.set_progress_handler(progress, 100);
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+    }
+    } function CheckClosedCall(){
+        con = sqlite.connect(":memory:");
+        con.close();
+        try{
+            con();
+            this.fail("Should have raised a ProgrammingError");
+        } except sqlite.ProgrammingError{
+            pass;
+        } except Exception{
+            this.fail("Should have raised a ProgrammingError");
+
+}
+} } class ClosedCurTests(unittest.TestCase){
+    function setUp(){
+        pass;
+
+    }
+    function tearDown(){
+        pass;
+
+    }
+    function CheckClosed(){
+        con = sqlite.connect(":memory:");
+        cur = con.cursor();
+        cur.close();
+
+        for method_name in ("execute", "executemany", "executescript", "fetchall", "fetchmany", "fetchone"){
+            if method_name in ("execute", "executescript"){
+                params = ("select 4 union select 5",);
+            } elif method_name == "executemany"{
+                params = ("insert into foo(bar) values (?)", [(3,), (4,)]);
+            } else{
+                params = [];
+
+            }
+            try{
+                method = getattr(cur, method_name);
+
+                method(*params);
+                this.fail("Should have raised a ProgrammingError: method " + method_name);
+            } except sqlite.ProgrammingError{
+                pass;
+            } except Exception{
+                this.fail("Should have raised a ProgrammingError: " + method_name);
+
+}
+} } } function suite(){
+    module_suite = unittest.makeSuite(ModuleTests, "Check");
+    connection_suite = unittest.makeSuite(ConnectionTests, "Check");
+    cursor_suite = unittest.makeSuite(CursorTests, "Check");
+    thread_suite = unittest.makeSuite(ThreadTests, "Check");
+    constructor_suite = unittest.makeSuite(ConstructorTests, "Check");
+    ext_suite = unittest.makeSuite(ExtensionTests, "Check");
+    closed_con_suite = unittest.makeSuite(ClosedConTests, "Check");
+    closed_cur_suite = unittest.makeSuite(ClosedCurTests, "Check");
+    return unittest.TestSuite((module_suite, connection_suite, cursor_suite, thread_suite, constructor_suite, ext_suite, closed_con_suite, closed_cur_suite));
+
+}
+function test(){
+    runner = unittest.TextTestRunner();
+    runner.run(suite());
+
+}
+if __name__ == "__main__"{
+    test();
+
+}

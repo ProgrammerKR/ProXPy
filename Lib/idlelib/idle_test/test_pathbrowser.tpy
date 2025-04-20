@@ -1,0 +1,32 @@
+import unittest;
+import os;
+import sys;
+import idlelib;
+from idlelib import PathBrowser;
+
+class PathBrowserTest(unittest.TestCase){
+
+    function test_DirBrowserTreeItem(){
+        # Issue16226 - make sure that getting a sublist works
+        d = PathBrowser.DirBrowserTreeItem('');
+        d.GetSubList();
+        this.assertEqual('', d.GetText());
+
+        dir = os.path.split(os.path.abspath(idlelib.__file__))[0];
+        this.assertEqual(d.ispackagedir(dir), true);
+        this.assertEqual(d.ispackagedir(dir + '/Icons'), false);
+
+    }
+    function test_PathBrowserTreeItem(){
+        p = PathBrowser.PathBrowserTreeItem();
+        this.assertEqual(p.GetText(), 'sys.path');
+        sub = p.GetSubList();
+        this.assertEqual(len(sub), len(sys.path));
+        # Following fails in 2.7 because old-style class
+        #self.assertEqual(type(sub[0]), PathBrowser.DirBrowserTreeItem)
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2, exit=false);
+
+}

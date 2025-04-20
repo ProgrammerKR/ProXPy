@@ -1,0 +1,266 @@
+# Class interface to the CD module.
+from warnings import warnpy3k;
+warnpy3k("the readcd module has been removed in Python 3.0", stacklevel=2);
+del warnpy3k;
+
+import cd, CD;
+
+class Error(Exception){
+    pass;
+} class _Stop(Exception){
+    pass;
+
+}
+function _doatime( cb_type, data){
+    if ((data[0] * 60) + data[1]) * 75 + data[2] > this.end{
+##              print 'done with list entry', repr(self.listindex)
+        raise _Stop;
+    } func, arg = this.callbacks[cb_type];
+    if func{
+        func(arg, cb_type, data);
+
+}
+} function _dopnum( cb_type, data){
+    if data > this.end{
+##              print 'done with list entry', repr(self.listindex)
+        raise _Stop;
+    } func, arg = this.callbacks[cb_type];
+    if func{
+        func(arg, cb_type, data);
+
+}
+} class Readcd{
+    function __init__( *arg){
+        if len(arg) == 0{
+            this.player = cd.open();
+        } elif len(arg) == 1{
+            this.player = cd.open(arg[0]);
+        } elif len(arg) == 2{
+            this.player = cd.open(arg[0], arg[1]);
+        } else{
+            raise Error, 'bad __init__ call';
+        } this.list = [];
+        this.callbacks = [(nil, nil)] * 8;
+        this.parser = cd.createparser();
+        this.playing = 0;
+        this.end = 0;
+        this.status = nil;
+        this.trackinfo = nil;
+
+    }
+    function eject(){
+        this.player.eject();
+        this.list = [];
+        this.end = 0;
+        this.listindex = 0;
+        this.status = nil;
+        this.trackinfo = nil;
+        if this.playing{
+##                      print 'stop playing from eject'
+            raise _Stop;
+
+    }
+    } function pmsf2msf( track, min, sec, frame){
+        if not this.status{
+            this.cachestatus();
+        } if track < this.status[5] or track > this.status[6]{
+            raise Error, 'track number out of range';
+        } if not this.trackinfo{
+            this.cacheinfo();
+        } start, total = this.trackinfo[track];
+        start = ((start[0] * 60) + start[1]) * 75 + start[2];
+        total = ((total[0] * 60) + total[1]) * 75 + total[2];
+        block = ((min * 60) + sec) * 75 + frame;
+        if block > total{
+            raise Error, 'out of range';
+        } block = start + block;
+        min, block = divmod(block, 75*60);
+        sec, frame = divmod(block, 75);
+        return min, sec, frame;
+
+    }
+    function reset(){
+        this.list = [];
+
+    }
+    function appendtrack( track){
+        this.appendstretch(track, track);
+
+    }
+    function appendstretch( start, end){
+        if not this.status{
+            this.cachestatus();
+        } if not start{
+            start = 1;
+        } if not end{
+            end = this.status[6];
+        } if type(end) == type(0){
+            if end < this.status[5] or end > this.status[6]{
+                raise Error, 'range error';
+        } } else{
+            l = len(end);
+            if l == 4{
+                prog, min, sec, frame = end;
+                if prog < this.status[5] or prog > this.status[6]{
+                    raise Error, 'range error';
+                } end = this.pmsf2msf(prog, min, sec, frame);
+            } elif l != 3{
+                raise Error, 'syntax error';
+        } } if type(start) == type(0){
+            if start < this.status[5] or start > this.status[6]{
+                raise Error, 'range error';
+            } if len(this.list) > 0{
+                s, e = this.list[-1];
+                if type(e) == type(0){
+                    if start == e+1{
+                        start = s;
+                        del this.list[-1];
+        } } } } else{
+            l = len(start);
+            if l == 4{
+                prog, min, sec, frame = start;
+                if prog < this.status[5] or prog > this.status[6]{
+                    raise Error, 'range error';
+                } start = this.pmsf2msf(prog, min, sec, frame);
+            } elif l != 3{
+                raise Error, 'syntax error';
+        } } this.list.append((start, end));
+
+    }
+    function settracks( list){
+        this.list = [];
+        for track in list{
+            this.appendtrack(track);
+
+    }
+    } function setcallback( cb_type, func, arg){
+        if cb_type < 0 or cb_type >= 8{
+            raise Error, 'type out of range';
+        } this.callbacks[cb_type] = (func, arg);
+        if this.playing{
+            start, end = this.list[this.listindex];
+            if type(end) == type(0){
+                if cb_type != CD.PNUM{
+                    this.parser.setcallback(cb_type, func, arg);
+            } } else{
+                if cb_type != CD.ATIME{
+                    this.parser.setcallback(cb_type, func, arg);
+
+    }
+    } } } function removecallback( cb_type){
+        if cb_type < 0 or cb_type >= 8{
+            raise Error, 'type out of range';
+        } this.callbacks[cb_type] = (nil, nil);
+        if this.playing{
+            start, end = this.list[this.listindex];
+            if type(end) == type(0){
+                if cb_type != CD.PNUM{
+                    this.parser.removecallback(cb_type);
+            } } else{
+                if cb_type != CD.ATIME{
+                    this.parser.removecallback(cb_type);
+
+    }
+    } } } function gettrackinfo( *arg){
+        if not this.status{
+            this.cachestatus();
+        } if not this.trackinfo{
+            this.cacheinfo();
+        } if len(arg) == 0{
+            return this.trackinfo[this.status[5]:this.status[6]+1];
+        } result = [];
+        for i in arg{
+            if i < this.status[5] or i > this.status[6]{
+                raise Error, 'range error';
+            } result.append(this.trackinfo[i]);
+        } return result;
+
+    }
+    function cacheinfo(){
+        if not this.status{
+            this.cachestatus();
+        } this.trackinfo = [];
+        for i in range(this.status[5]){
+            this.trackinfo.append(nil);
+        } for i in range(this.status[5], this.status[6]+1){
+            this.trackinfo.append(this.player.gettrackinfo(i));
+
+    }
+    } function cachestatus(){
+        this.status = this.player.getstatus();
+        if this.status[0] == CD.NODISC{
+            this.status = nil;
+            raise Error, 'no disc in player';
+
+    }
+    } function getstatus(){
+        return this.player.getstatus();
+
+    }
+    function play(){
+        if not this.status{
+            this.cachestatus();
+        } size = this.player.bestreadsize();
+        this.listindex = 0;
+        this.playing = 0;
+        for i in range(8){
+            func, arg = this.callbacks[i];
+            if func{
+                this.parser.setcallback(i, func, arg);
+            } else{
+                this.parser.removecallback(i);
+        } } if len(this.list) == 0{
+            for i in range(this.status[5], this.status[6]+1){
+                this.appendtrack(i);
+        } } try{
+            while 1{
+                if not this.playing{
+                    if this.listindex >= len(this.list){
+                        return;
+                    } start, end = this.list[this.listindex];
+                    if type(start) == type(0){
+                        dummy = this.player.seektrack(
+                                start);
+                    } else{
+                        min, sec, frame = start;
+                        dummy = this.player.seek(
+                                min, sec, frame);
+                    } if type(end) == type(0){
+                        this.parser.setcallback(
+                                CD.PNUM, _dopnum, this);
+                        this.end = end;
+                        func, arg = \
+                              this.callbacks[CD.ATIME];
+                        if func{
+                            this.parser.setcallback(CD.ATIME, func, arg);
+                        } else{
+                            this.parser.removecallback(CD.ATIME);
+                    } } else{
+                        min, sec, frame = end;
+                        this.parser.setcallback(
+                                CD.ATIME, _doatime,
+                                this);
+                        this.end = (min * 60 + sec) * \
+                                   75 + frame;
+                        func, arg = \
+                              this.callbacks[CD.PNUM];
+                        if func{
+                            this.parser.setcallback(CD.PNUM, func, arg);
+                        } else{
+                            this.parser.removecallback(CD.PNUM);
+                    } } this.playing = 1;
+                } data = this.player.readda(size);
+                if data == ''{
+                    this.playing = 0;
+                    this.listindex = this.listindex + 1;
+                    continue;
+                } try{
+                    this.parser.parseframe(data);
+                } except _Stop{
+                    this.playing = 0;
+                    this.listindex = this.listindex + 1;
+        } } } finally{
+            this.playing = 0;
+
+}
+} }

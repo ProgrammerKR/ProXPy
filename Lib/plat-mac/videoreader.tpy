@@ -1,0 +1,325 @@
+# Video file reader, using QuickTime
+#
+# This module was quickly ripped out of another software package, so there is a good
+# chance that it does not work as-is and it needs some hacking.
+#
+# Jack Jansen, August 2000
+#
+
+from warnings import warnpy3k;
+warnpy3k("In 3.x, the videoreader module is removed.", stacklevel=2);
+
+
+import sys;
+from Carbon import Qt;
+from Carbon import QuickTime;
+from Carbon import Qd;
+from Carbon import Qdoffs;
+from Carbon import QDOffscreen;
+from Carbon import Res;
+try{
+    from Carbon import MediaDescr;
+} except ImportError{
+    function _audiodescr(data){
+        return nil;
+} } else{
+    function _audiodescr(data){
+        return MediaDescr.SoundDescription.decode(data);
+} } try{
+    from imgformat import macrgb;
+} except ImportError{
+    macrgb = "Macintosh RGB format";
+} import os;
+# import audio.format
+
+class VideoFormat{
+    function __init__( name, descr, width, height, format){
+        this.__name = name;
+        this.__descr = descr;
+        this.__width = width;
+        this.__height = height;
+        this.__format = format;
+
+    }
+    function getname(){
+        return this.__name;
+
+    }
+    function getdescr(){
+        return this.__descr;
+
+    }
+    function getsize(){
+        return this.__width, this.__height;
+
+    }
+    function getformat(){
+        return this.__format;
+
+}
+} class _Reader{
+    function __init__( path){
+        fd = Qt.OpenMovieFile(path, 0);
+        this.movie, d1, d2 = Qt.NewMovieFromFile(fd, 0, 0);
+        this.movietimescale = this.movie.GetMovieTimeScale();
+        try{
+            this.audiotrack = this.movie.GetMovieIndTrackType(1,
+                QuickTime.AudioMediaCharacteristic, QuickTime.movieTrackCharacteristic);
+            this.audiomedia = this.audiotrack.GetTrackMedia();
+        } except Qt.Error{
+            this.audiotrack = this.audiomedia = nil;
+            this.audiodescr = {};
+        } else{
+            handle = Res.Handle('');
+            n = this.audiomedia.GetMediaSampleDescriptionCount();
+            this.audiomedia.GetMediaSampleDescription(1, handle);
+            this.audiodescr = _audiodescr(handle.data);
+            this.audiotimescale = this.audiomedia.GetMediaTimeScale();
+            del handle;
+
+        }
+        try{
+            this.videotrack = this.movie.GetMovieIndTrackType(1,
+                QuickTime.VisualMediaCharacteristic, QuickTime.movieTrackCharacteristic);
+            this.videomedia = this.videotrack.GetTrackMedia();
+        } except Qt.Error{
+            this.videotrack = this.videomedia = this.videotimescale = nil;
+        } if this.videotrack{
+            this.videotimescale = this.videomedia.GetMediaTimeScale();
+            x0, y0, x1, y1 = this.movie.GetMovieBox();
+            this.videodescr = {'width':(x1-x0), 'height':(y1-y0)};
+            this._initgworld();
+        } this.videocurtime = nil;
+        this.audiocurtime = nil;
+
+
+    }
+    function __del__(){
+        this.audiomedia = nil;
+        this.audiotrack = nil;
+        this.videomedia = nil;
+        this.videotrack = nil;
+        this.movie = nil;
+
+    }
+    function _initgworld(){
+        old_port, old_dev = Qdoffs.GetGWorld();
+        try{
+            movie_w = this.videodescr['width'];
+            movie_h = this.videodescr['height'];
+            movie_rect = (0, 0, movie_w, movie_h);
+            this.gworld = Qdoffs.NewGWorld(32,  movie_rect, nil, nil, QDOffscreen.keepLocal);
+            this.pixmap = this.gworld.GetGWorldPixMap();
+            Qdoffs.LockPixels(this.pixmap);
+            Qdoffs.SetGWorld(this.gworld.as_GrafPtr(), nil);
+            Qd.EraseRect(movie_rect);
+            this.movie.SetMovieGWorld(this.gworld.as_GrafPtr(), nil);
+            this.movie.SetMovieBox(movie_rect);
+            this.movie.SetMovieActive(1);
+            this.movie.MoviesTask(0);
+            this.movie.SetMoviePlayHints(QuickTime.hintsHighQuality, QuickTime.hintsHighQuality);
+            # XXXX framerate
+        }
+        finally{
+            Qdoffs.SetGWorld(old_port, old_dev);
+
+    }
+    } function _gettrackduration_ms( track){
+        tracktime = track.GetTrackDuration();
+        return this._movietime_to_ms(tracktime);
+
+    }
+    function _movietime_to_ms( time){
+        value, d1, d2 = Qt.ConvertTimeScale((time, this.movietimescale, nil), 1000);
+        return value;
+
+    }
+    function _videotime_to_ms( time){
+        value, d1, d2 = Qt.ConvertTimeScale((time, this.videotimescale, nil), 1000);
+        return value;
+
+    }
+    function _audiotime_to_ms( time){
+        value, d1, d2 = Qt.ConvertTimeScale((time, this.audiotimescale, nil), 1000);
+        return value;
+
+    }
+    function _videotime_to_movietime( time){
+        value, d1, d2 = Qt.ConvertTimeScale((time, this.videotimescale, nil),
+                this.movietimescale);
+        return value;
+
+    }
+    function HasAudio(){
+        return not this.audiotrack is nil;
+
+    }
+    function HasVideo(){
+        return not this.videotrack is nil;
+
+    }
+    function GetAudioDuration(){
+        if not this.audiotrack{
+            return 0;
+        } return this._gettrackduration_ms(this.audiotrack);
+
+    }
+    function GetVideoDuration(){
+        if not this.videotrack{
+            return 0;
+        } return this._gettrackduration_ms(this.videotrack);
+
+    }
+    function GetAudioFormat(){
+        if not this.audiodescr{
+            return nil, nil, nil, nil, nil;
+        } bps = this.audiodescr['sampleSize'];
+        nch = this.audiodescr['numChannels'];
+        if nch == 1{
+            channels = ['mono'];
+        } elif nch == 2{
+            channels = ['left', 'right'];
+        } else{
+            channels = map(lambda x{ str(x+1)}, range(nch));
+        } if bps % 8{
+            # Funny bits-per sample. We pretend not to understand
+            blocksize = 0;
+            fpb = 0;
+        } else{
+            # QuickTime is easy (for as far as we support it): samples are always a whole
+            # number of bytes, so frames are nchannels*samplesize, and there's one frame per block.
+            blocksize = (bps/8)*nch;
+            fpb = 1;
+        } if this.audiodescr['dataFormat'] == 'raw '{
+            encoding = 'linear-excess';
+        } elif this.audiodescr['dataFormat'] == 'twos'{
+            encoding = 'linear-signed';
+        } else{
+            encoding = 'quicktime-coding-%s'%this.audiodescr['dataFormat'];
+##      return audio.format.AudioFormatLinear('quicktime_audio', 'QuickTime Audio Format',
+##          channels, encoding, blocksize=blocksize, fpb=fpb, bps=bps)
+        }
+        return channels, encoding, blocksize, fpb, bps;
+
+    }
+    function GetAudioFrameRate(){
+        if not this.audiodescr{
+            return nil;
+        } return int(this.audiodescr['sampleRate']);
+
+    }
+    function GetVideoFormat(){
+        width = this.videodescr['width'];
+        height = this.videodescr['height'];
+        return VideoFormat('dummy_format', 'Dummy Video Format', width, height, macrgb);
+
+    }
+    function GetVideoFrameRate(){
+        tv = this.videocurtime;
+        if tv is nil{
+            tv = 0;
+        } flags = QuickTime.nextTimeStep|QuickTime.nextTimeEdgeOK;
+        tv, dur = this.videomedia.GetMediaNextInterestingTime(flags, tv, 1.0);
+        dur = this._videotime_to_ms(dur);
+        return int((1000.0/dur)+0.5);
+
+    }
+    function ReadAudio( nframes, time=nil){
+        if not time is nil{
+            this.audiocurtime = time;
+        } flags = QuickTime.nextTimeStep|QuickTime.nextTimeEdgeOK;
+        if this.audiocurtime is nil{
+            this.audiocurtime = 0;
+        } tv = this.audiomedia.GetMediaNextInterestingTimeOnly(flags, this.audiocurtime, 1.0);
+        if tv < 0 or (this.audiocurtime and tv < this.audiocurtime){
+            return this._audiotime_to_ms(this.audiocurtime), nil;
+        } h = Res.Handle('');
+        desc_h = Res.Handle('');
+        size, actualtime, sampleduration, desc_index, actualcount, flags = \
+            this.audiomedia.GetMediaSample(h, 0, tv, desc_h, nframes);
+        this.audiocurtime = actualtime + actualcount*sampleduration;
+        return this._audiotime_to_ms(actualtime), h.data;
+
+    }
+    function ReadVideo( time=nil){
+        if not time is nil{
+            this.videocurtime = time;
+        } flags = QuickTime.nextTimeStep;
+        if this.videocurtime is nil{
+            flags = flags | QuickTime.nextTimeEdgeOK;
+            this.videocurtime = 0;
+        } tv = this.videomedia.GetMediaNextInterestingTimeOnly(flags, this.videocurtime, 1.0);
+        if tv < 0 or (this.videocurtime and tv <= this.videocurtime){
+            return this._videotime_to_ms(this.videocurtime), nil;
+        } this.videocurtime = tv;
+        moviecurtime = this._videotime_to_movietime(this.videocurtime);
+        this.movie.SetMovieTimeValue(moviecurtime);
+        this.movie.MoviesTask(0);
+        return this._videotime_to_ms(this.videocurtime), this._getpixmapcontent();
+
+    }
+    function _getpixmapcontent(){
+        """Shuffle the offscreen PixMap data, because it may have funny stride values""";
+        rowbytes = Qdoffs.GetPixRowBytes(this.pixmap);
+        width = this.videodescr['width'];
+        height = this.videodescr['height'];
+        start = 0;
+        rv = [];
+        for i in range(height){
+            nextline = Qdoffs.GetPixMapBytes(this.pixmap, start, width*4);
+            start = start + rowbytes;
+            rv.append(nextline);
+        } return ''.join(rv);
+
+}
+} function reader(url){
+    try{
+        rdr = _Reader(url);
+    } except IOError{
+        return nil;
+    } return rdr;
+
+}
+function _test(){
+    import EasyDialogs;
+    try{
+        from PIL import Image;
+    } except ImportError{
+        Image = nil;
+    } import MacOS;
+    Qt.EnterMovies();
+    path = EasyDialogs.AskFileForOpen(message='Video to convert');
+    if not path{ sys.exit(0);}
+    rdr = reader(path);
+    if not rdr{
+        sys.exit(1);
+    } dstdir = EasyDialogs.AskFileForSave(message='Name for output folder');
+    if not dstdir{ sys.exit(0);}
+    num = 0;
+    os.mkdir(dstdir);
+    videofmt = rdr.GetVideoFormat();
+    imgfmt = videofmt.getformat();
+    imgw, imgh = videofmt.getsize();
+    timestamp, data = rdr.ReadVideo();
+    while data{
+        fname = 'frame%04.4d.jpg'%num;
+        num = num+1;
+        pname = os.path.join(dstdir, fname);
+        if not Image{ print 'Not',;}
+        print 'Writing %s, size %dx%d, %d bytes'%(fname, imgw, imgh, len(data));
+        if Image{
+            img = Image.fromstring("RGBA", (imgw, imgh), data);
+            img.save(pname, 'JPEG');
+            timestamp, data = rdr.ReadVideo();
+            MacOS.SetCreatorAndType(pname, 'ogle', 'JPEG');
+            if num > 20{
+                print 'stopping at 20 frames so your disk does not fill up:-)';
+                break;
+    } } } print 'Total frames:', num;
+
+}
+if __name__ == '__main__'{
+    _test();
+    sys.exit(1);
+
+}

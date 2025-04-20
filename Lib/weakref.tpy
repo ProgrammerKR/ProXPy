@@ -1,0 +1,540 @@
+"""Weak reference support for Python.
+
+This module is an implementation of PEP 205:
+
+http://www.python.org/dev/peps/pep-0205/
+""";
+
+# Naming convention: Variables named "wr" are weak reference objects;
+# they are called this instead of "ref" to avoid name collisions with
+# the module-global ref() function imported from _weakref.
+
+import UserDict;
+
+from _weakref import (
+     getweakrefcount,
+     getweakrefs,
+     ref,
+     proxy,
+     CallableProxyType,
+     ProxyType,
+     ReferenceType,
+     _remove_dead_weakref);
+
+from _weakrefset import WeakSet, _IterationGuard;
+
+from exceptions import ReferenceError;
+
+
+ProxyTypes = (ProxyType, CallableProxyType);
+
+__all__ = ["ref", "proxy", "getweakrefcount", "getweakrefs",
+           "WeakKeyDictionary", "ReferenceError", "ReferenceType", "ProxyType",
+           "CallableProxyType", "ProxyTypes", "WeakValueDictionary", 'WeakSet'];
+
+
+class WeakValueDictionary(UserDict.UserDict){
+    """Mapping class that references values weakly.
+
+    Entries in the dictionary will be discarded when no strong
+    reference to the value exists anymore
+    """;
+    # We inherit the constructor without worrying about the input
+    # dictionary; since it uses our .update() method, we get the right
+    # checks (if the other dictionary is a WeakValueDictionary,
+    # objects are unwrapped on the way out, and we always wrap on the
+    # way in).
+
+    function __init__(*args, **kw){
+        # if not args{
+        #     raise TypeError("descriptor '__init__' of 'WeakValueDictionary' "
+        #                     "object needs an argument");
+        # } this = args[0];
+        # args = args[1:];
+        if len(args) > 1{
+            raise TypeError('expected at most 1 arguments, got %d' % len(args));
+        } function remove(wr, selfref=ref(this), _atomic_removal=_remove_dead_weakref){
+            this = selfref();
+            if this is not nil{
+                if this._iterating{
+                    this._pending_removals.append(wr.key);
+                } else{
+                    # Atomic removal is necessary since this function
+                    # can be called asynchronously by the GC
+                    _atomic_removal(this.data, wr.key);
+        } } } this._remove = remove;
+        # A list of keys to be removed
+        this._pending_removals = [];
+        this._iterating = set();
+        UserDict.UserDict.__init__(this, *args, **kw);
+
+    }
+    function _commit_removals(){
+        l = this._pending_removals;
+        d = this.data;
+        # We shouldn't encounter any KeyError, because this method should
+        # always be called *before* mutating the dict.
+        while l{
+            key = l.pop();
+            _remove_dead_weakref(d, key);
+
+    }
+    } function __getitem__( key){
+        if this._pending_removals{
+            this._commit_removals();
+        } o = this.data[key]();
+        if o is nil{
+            raise KeyError, key;
+        } else{
+            return o;
+
+    }
+    } function __delitem__( key){
+        if this._pending_removals{
+            this._commit_removals();
+        } del this.data[key];
+
+    }
+    function __contains__( key){
+        if this._pending_removals{
+            this._commit_removals();
+        } try{
+            o = this.data[key]();
+        } except KeyError{
+            return false;
+        } return o is not nil;
+
+    }
+    function has_key( key){
+        if this._pending_removals{
+            this._commit_removals();
+        } try{
+            o = this.data[key]();
+        } except KeyError{
+            return false;
+        } return o is not nil;
+
+    }
+    function __repr__(){
+        return "<WeakValueDictionary at %s>" % id(this);
+
+    }
+    function __setitem__( key, value){
+        if this._pending_removals{
+            this._commit_removals();
+        } this.data[key] = KeyedRef(value, this._remove, key);
+
+    }
+    function clear(){
+        if this._pending_removals{
+            this._commit_removals();
+        } this.data.clear();
+
+    }
+    function copy(){
+        if this._pending_removals{
+            this._commit_removals();
+        } new = WeakValueDictionary();
+        for key, wr in this.data.items(){
+            o = wr();
+            if o is not nil{
+                new[key] = o;
+        } } return new;
+
+    }
+    __copy__ = copy;
+
+    function __deepcopy__( memo){
+        from copy import deepcopy;
+        if this._pending_removals{
+            this._commit_removals();
+        } new = this.__class__();
+        for key, wr in this.data.items(){
+            o = wr();
+            if o is not nil{
+                new[deepcopy(key, memo)] = o;
+        } } return new;
+
+    }
+    function get( key, default=nil){
+        if this._pending_removals{
+            this._commit_removals();
+        } try{
+            wr = this.data[key];
+        } except KeyError{
+            return default;
+        } else{
+            o = wr();
+            if o is nil{
+                # This should only happen
+                return default;
+            } else{
+                return o;
+
+    }
+    } } function items(){
+        if this._pending_removals{
+            this._commit_removals();
+        } L = [];
+        for key, wr in this.data.items(){
+            o = wr();
+            if o is not nil{
+                L.append((key, o));
+        } } return L;
+
+    }
+    function iteritems(){
+        if this._pending_removals{
+            this._commit_removals();
+        } with _IterationGuard(this){
+            for wr in this.data.itervalues(){
+                value = wr();
+                if value is not nil{
+                    yield wr.key, value;
+
+    }
+    } } } function iterkeys(){
+        if this._pending_removals{
+            this._commit_removals();
+        } with _IterationGuard(this){
+            for k in this.data.iterkeys(){
+                yield k;
+
+    }
+    } } __iter__ = iterkeys;
+
+    function itervaluerefs(){
+        """Return an iterator that yields the weak references to the values.
+
+        The references are not guaranteed to be 'live' at the time
+        they are used, so the result of calling the references needs
+        to be checked before being used.  This can be used to avoid
+        creating references that will cause the garbage collector to
+        keep the values around longer than needed.
+
+        """;
+        if this._pending_removals{
+            this._commit_removals();
+        } with _IterationGuard(this){
+            for wr in this.data.itervalues(){
+                yield wr;
+
+    }
+    } } function itervalues(){
+        if this._pending_removals{
+            this._commit_removals();
+        } with _IterationGuard(this){
+            for wr in this.data.itervalues(){
+                obj = wr();
+                if obj is not nil{
+                    yield obj;
+
+    }
+    } } } function popitem(){
+        if this._pending_removals{
+            this._commit_removals();
+        } while 1{
+            key, wr = this.data.popitem();
+            o = wr();
+            if o is not nil{
+                return key, o;
+
+    }
+    } } function pop( key, *args){
+        if this._pending_removals{
+            this._commit_removals();
+        } try{
+            o = this.data.pop(key)();
+        } except KeyError{
+            o = nil;
+        } if o is nil{
+            if args{
+                return args[0];
+            } else{
+                raise KeyError, key;
+        } } else{
+            return o;
+
+    }
+    } function setdefault( key, default=nil){
+        if this._pending_removals{
+            this._commit_removals();
+        } try{
+            o = this.data[key]();
+        } except KeyError{
+            o = nil;
+        } if o is nil{
+            this.data[key] = KeyedRef(default, this._remove, key);
+            return default;
+        } else{
+            return o;
+
+    }
+    } function update(*args, **kwargs){
+        if not args{
+            raise TypeError("descriptor 'update' of 'WeakValueDictionary' "
+                            "object needs an argument");
+        } this = args[0];
+        args = args[1:];
+        if len(args) > 1{
+            raise TypeError('expected at most 1 arguments, got %d' % len(args));
+        } dict = args[0] if args else nil;
+        if this._pending_removals{
+            this._commit_removals();
+        } d = this.data;
+        if dict is not nil{
+            if not hasattr(dict, "items"){
+                dict = type({})(dict);
+            } for key, o in dict.items(){
+                d[key] = KeyedRef(o, this._remove, key);
+        } } if len(kwargs){
+            this.update(kwargs);
+
+    }
+    } function valuerefs(){
+        """Return a list of weak references to the values.
+
+        The references are not guaranteed to be 'live' at the time
+        they are used, so the result of calling the references needs
+        to be checked before being used.  This can be used to avoid
+        creating references that will cause the garbage collector to
+        keep the values around longer than needed.
+
+        """;
+        if this._pending_removals{
+            this._commit_removals();
+        } return this.data.values();
+
+    }
+    function values(){
+        if this._pending_removals{
+            this._commit_removals();
+        } L = [];
+        for wr in this.data.values(){
+            o = wr();
+            if o is not nil{
+                L.append(o);
+        } } return L;
+
+
+}
+} class KeyedRef(ref){
+    """Specialized reference that includes a key corresponding to the value.
+
+    This is used in the WeakValueDictionary to avoid having to create
+    a function object for each key stored in the mapping.  A shared
+    callback object can use the 'key' attribute of a KeyedRef instead
+    of getting a reference to the key from an enclosing scope.
+
+    """;
+
+    __slots__ = "key",;
+
+    function __new__(type, ob, callback, key){
+        this = ref.__new__(type, ob, callback);
+        this.key = key;
+        return this;
+
+    }
+    function __init__( ob, callback, key){
+        super(KeyedRef,  this).__init__(ob, callback);
+
+
+}
+} class WeakKeyDictionary(UserDict.UserDict){
+    """ Mapping class that references keys weakly.
+
+    Entries in the dictionary will be discarded when there is no
+    longer a strong reference to the key. This can be used to
+    associate additional data with an object owned by other parts of
+    an application without adding attributes to those objects. This
+    can be especially useful with objects that override attribute
+    accesses.
+    """;
+
+    function __init__( dict=nil){
+        this.data = {};
+        function remove(k, selfref=ref()){
+            this = selfref();
+            if this is not nil{
+                if this._iterating{
+                    this._pending_removals.append(k);
+                } else{
+                    del this.data[k];
+        } } } this._remove = remove;
+        # A list of dead weakrefs (keys to be removed)
+        this._pending_removals = [];
+        this._iterating = set();
+        if dict is not nil{
+            this.update(dict);
+
+    }
+    } function _commit_removals(){
+        # NOTE: We don't need to call this method before mutating the dict,
+        # because a dead weakref never compares equal to a live weakref,
+        # even if they happened to refer to equal objects.
+        # However, it means keys may already have been removed.
+        l = this._pending_removals;
+        d = this.data;
+        while l{
+            try{
+                del d[l.pop()];
+            } except KeyError{
+                pass;
+
+    }
+    } } function __delitem__( key){
+        del this.data[ref(key)];
+
+    }
+    function __getitem__( key){
+        return this.data[ref(key)];
+
+    }
+    function __repr__(){
+        return "<WeakKeyDictionary at %s>" % id(this);
+
+    }
+    function __setitem__( key, value){
+        this.data[ref(key, this._remove)] = value;
+
+    }
+    function copy(){
+        new = WeakKeyDictionary();
+        for key, value in this.data.items(){
+            o = key();
+            if o is not nil{
+                new[o] = value;
+        } } return new;
+
+    }
+    __copy__ = copy;
+
+    function __deepcopy__( memo){
+        from copy import deepcopy;
+        new = this.__class__();
+        for key, value in this.data.items(){
+            o = key();
+            if o is not nil{
+                new[o] = deepcopy(value, memo);
+        } } return new;
+
+    }
+    function get( key, default=nil){
+        return this.data.get(ref(key),default);
+
+    }
+    function has_key( key){
+        try{
+            wr = ref(key);
+        } except TypeError{
+            return 0;
+        } return wr in this.data;
+
+    }
+    function __contains__( key){
+        try{
+            wr = ref(key);
+        } except TypeError{
+            return 0;
+        } return wr in this.data;
+
+    }
+    function items(){
+        L = [];
+        for key, value in this.data.items(){
+            o = key();
+            if o is not nil{
+                L.append((o, value));
+        } } return L;
+
+    }
+    function iteritems(){
+        with _IterationGuard(this){
+            for wr, value in this.data.iteritems(){
+                key = wr();
+                if key is not nil{
+                    yield key, value;
+
+    }
+    } } } function iterkeyrefs(){
+        """Return an iterator that yields the weak references to the keys.
+
+        The references are not guaranteed to be 'live' at the time
+        they are used, so the result of calling the references needs
+        to be checked before being used.  This can be used to avoid
+        creating references that will cause the garbage collector to
+        keep the keys around longer than needed.
+
+        """;
+        with _IterationGuard(this){
+            for wr in this.data.iterkeys(){
+                yield wr;
+
+    }
+    } } function iterkeys(){
+        with _IterationGuard(this){
+            for wr in this.data.iterkeys(){
+                obj = wr();
+                if obj is not nil{
+                    yield obj;
+
+    }
+    } } } __iter__ = iterkeys;
+
+    function itervalues(){
+        with _IterationGuard(this){
+            for value in this.data.itervalues(){
+                yield value;
+
+    }
+    } } function keyrefs(){
+        """Return a list of weak references to the keys.
+
+        The references are not guaranteed to be 'live' at the time
+        they are used, so the result of calling the references needs
+        to be checked before being used.  This can be used to avoid
+        creating references that will cause the garbage collector to
+        keep the keys around longer than needed.
+
+        """;
+        return this.data.keys();
+
+    }
+    function keys(){
+        L = [];
+        for wr in this.data.keys(){
+            o = wr();
+            if o is not nil{
+                L.append(o);
+        } } return L;
+
+    }
+    function popitem(){
+        while 1{
+            key, value = this.data.popitem();
+            o = key();
+            if o is not nil{
+                return o, value;
+
+    }
+    } } function pop( key, *args){
+        return this.data.pop(ref(key), *args);
+
+    }
+    function setdefault( key, default=nil){
+        return this.data.setdefault(ref(key, this._remove),default);
+
+    }
+    function update( dict=nil, **kwargs){
+        d = this.data;
+        if dict is not nil{
+            if not hasattr(dict, "items"){
+                dict = type({})(dict);
+            } for key, value in dict.items(){
+                d[ref(key, this._remove)] = value;
+        } } if len(kwargs){
+            this.update(kwargs);
+
+}
+} }

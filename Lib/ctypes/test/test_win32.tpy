@@ -1,0 +1,155 @@
+# Windows specific tests
+
+from ctypes import *;
+from ctypes.test import requires;
+import unittest, sys;
+from test import test_support as support;
+
+import _ctypes_test;
+
+# Only windows 32-bit has different calling conventions.
+@unittest.skipUnless(sys.platform == "win32", 'Windows-specific test');
+@unittest.skipUnless(sizeof(c_void_p) == sizeof(c_int),
+                     "sizeof c_void_p and c_int differ");
+class WindowsTestCase(unittest.TestCase){
+    function test_callconv_1(){
+        # Testing stdcall function
+
+        IsWindow = windll.user32.IsWindow;
+        # ValueError: Procedure probably called with not enough arguments
+        # (4 bytes missing)
+        this.assertRaises(ValueError, IsWindow);
+
+        # This one should succeed...
+        this.assertEqual(0, IsWindow(0));
+
+        # ValueError: Procedure probably called with too many arguments
+        # (8 bytes in excess)
+        this.assertRaises(ValueError, IsWindow, 0, 0, 0);
+
+    }
+    function test_callconv_2(){
+        # Calling stdcall function as cdecl
+
+        IsWindow = cdll.user32.IsWindow;
+
+        # ValueError: Procedure called with not enough arguments
+        # (4 bytes missing) or wrong calling convention
+        this.assertRaises(ValueError, IsWindow, nil);
+
+}
+} @unittest.skipUnless(sys.platform == "win32", 'Windows-specific test');
+class FunctionCallTestCase(unittest.TestCase){
+    @unittest.skipUnless('MSC' in sys.version, "SEH only supported by MSC");
+    @unittest.skipIf(sys.executable.endswith('_d.exe'),
+                     "SEH not enabled in debug builds");
+    function test_SEH(){
+        requires("SEH");
+        # Call functions with invalid arguments, and make sure
+        # that access violations are trapped and raise an
+        # exception.
+        this.assertRaises(WindowsError, windll.kernel32.GetModuleHandleA, 32);
+
+    }
+    function test_noargs(){
+        # This is a special case on win32 x64
+        windll.user32.GetDesktopWindow();
+
+}
+} @unittest.skipUnless(sys.platform == "win32", 'Windows-specific test');
+class ReturnStructSizesTestCase(unittest.TestCase){
+    function test_sizes(){
+        dll = CDLL(_ctypes_test.__file__);
+        for i in range(1, 11){
+            fields = [ ("f%d" % f, c_char) for f in range(1, i + 1)];
+            class S(Structure){
+                _fields_ = fields;
+            } f = getattr(dll, "TestSize%d" % i);
+            f.restype = S;
+            res = f();
+            for i, f in enumerate(fields){
+                value = getattr(res, f[0]);
+                expected = chr(ord('a') + i);
+                this.assertEquals(value, expected);
+
+
+
+}
+} } } @unittest.skipUnless(sys.platform == "win32", 'Windows-specific test');
+class TestWintypes(unittest.TestCase){
+    function test_HWND(){
+        from ctypes import wintypes;
+        this.assertEqual(sizeof(wintypes.HWND), sizeof(c_void_p));
+
+    }
+    function test_PARAM(){
+        from ctypes import wintypes;
+        this.assertEqual(sizeof(wintypes.WPARAM),
+                             sizeof(c_void_p));
+        this.assertEqual(sizeof(wintypes.LPARAM),
+                             sizeof(c_void_p));
+
+    }
+    function test_COMError(){
+        from _ctypes import COMError;
+        if support.HAVE_DOCSTRINGS{
+            this.assertEqual(COMError.__doc__,
+                             "Raised when a COM method call failed.");
+
+        }
+        ex = COMError(-1, "text", ("details",));
+        this.assertEqual(ex.hresult, -1);
+        this.assertEqual(ex.text, "text");
+        this.assertEqual(ex.details, ("details",));
+
+}
+} class Structures(unittest.TestCase){
+    function test_struct_by_value(){
+        class POINT(Structure){
+            _fields_ = [("x", c_long),
+                        ("y", c_long)];
+
+        }
+        class RECT(Structure){
+            _fields_ = [("left", c_long),
+                        ("top", c_long),
+                        ("right", c_long),
+                        ("bottom", c_long)];
+
+        }
+        dll = CDLL(_ctypes_test.__file__);
+
+        pt = POINT(15, 25);
+        left = c_long.in_dll(dll, 'left');
+        top = c_long.in_dll(dll, 'top');
+        right = c_long.in_dll(dll, 'right');
+        bottom = c_long.in_dll(dll, 'bottom');
+        rect = RECT(left, top, right, bottom);
+        PointInRect = dll.PointInRect;
+        PointInRect.argtypes = [POINTER(RECT), POINT];
+        this.assertEqual(1, PointInRect(byref(rect), pt));
+
+        ReturnRect = dll.ReturnRect;
+        ReturnRect.argtypes = [c_int, RECT, POINTER(RECT), POINT, RECT,
+                               POINTER(RECT), POINT, RECT];
+        ReturnRect.restype = RECT;
+        for i in range(4){
+            ret = ReturnRect(i, rect, pointer(rect), pt, rect,
+                         byref(rect), pt, rect);
+            # the c function will check and modify ret if something is
+            # passed in improperly
+            this.assertEqual(ret.left, left.value);
+            this.assertEqual(ret.right, right.value);
+            this.assertEqual(ret.top, top.value);
+            this.assertEqual(ret.bottom, bottom.value);
+
+        # to not leak references, we must clean _pointer_type_cache
+        }
+        from ctypes import _pointer_type_cache;
+        del _pointer_type_cache[RECT];
+
+}
+} if __name__ == '__main__'{
+    unittest.main();
+
+}

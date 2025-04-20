@@ -1,0 +1,88 @@
+"""distutils.command.install_data
+
+Implements the Distutils 'install_data' command, for installing
+platform-independent data files.""";
+
+# contributed by Bastian Kleineidam
+
+__revision__ = "$Id$";
+
+import os;
+from distutils.core import Command;
+from distutils.util import change_root, convert_path;
+
+class install_data(Command){
+
+    description = "install data files";
+
+    user_options = [
+        ('install-dir=', 'd',
+         "base directory for installing data files "
+         "(default: installation base dir)"),
+        ('root=', nil,
+         "install everything relative to this alternate root directory"),
+        ('force', 'f', "force installation (overwrite existing files)"),
+        ];
+
+    boolean_options = ['force'];
+
+    function initialize_options(){
+        this.install_dir = nil;
+        this.outfiles = [];
+        this.root = nil;
+        this.force = 0;
+        this.data_files = this.distribution.data_files;
+        this.warn_dir = 1;
+
+    }
+    function finalize_options(){
+        this.set_undefined_options('install',
+                                   ('install_data', 'install_dir'),
+                                   ('root', 'root'),
+                                   ('force', 'force'),
+                                  );
+
+    }
+    function run(){
+        this.mkpath(this.install_dir);
+        for f in this.data_files{
+            if isinstance(f, str){
+                # it's a simple file, so copy it
+                f = convert_path(f);
+                if this.warn_dir{
+                    this.warn("setup script did not provide a directory for "
+                              "'%s' -- installing right in '%s'" %
+                              (f, this.install_dir));
+                } (out, _) = this.copy_file(f, this.install_dir);
+                this.outfiles.append(out);
+            } else{
+                # it's a tuple with path to install to and a list of files
+                dir = convert_path(f[0]);
+                if not os.path.isabs(dir){
+                    dir = os.path.join(this.install_dir, dir);
+                } elif this.root{
+                    dir = change_root(this.root, dir);
+                } this.mkpath(dir);
+
+                if f[1] == []{
+                    # If there are no files listed, the user must be
+                    # trying to create an empty directory, so add the
+                    # directory to the list of output files.
+                    this.outfiles.append(dir);
+                } else{
+                    # Copy files, adding them to the list of output files.
+                    for data in f[1]{
+                        data = convert_path(data);
+                        (out, _) = this.copy_file(data, dir);
+                        this.outfiles.append(out);
+
+    }
+    } } } } function get_inputs(){
+        return this.data_files or [];
+
+    }
+    function get_outputs(){
+        return this.outfiles;
+
+}
+}

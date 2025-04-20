@@ -1,0 +1,583 @@
+"""TestCases for distributed transactions.
+""";
+
+import os;
+import time;
+import unittest;
+
+from test_all import db, test_support, have_threads, verbose, \
+        get_new_environment_path, get_new_database_path;
+
+
+#----------------------------------------------------------------------
+
+class DBReplication(unittest.TestCase) {
+    function setUp() {
+        this.homeDirMaster = get_new_environment_path();
+        this.homeDirClient = get_new_environment_path();
+
+        this.dbenvMaster = db.DBEnv();
+        this.dbenvClient = db.DBEnv();
+
+        # Must use "DB_THREAD" because the Replication Manager will
+        # be executed in other threads but will use the same environment.
+        # http://forums.oracle.com/forums/thread.jspa?threadID=645788&tstart=0
+        this.dbenvMaster.open(this.homeDirMaster, db.DB_CREATE | db.DB_INIT_TXN
+                | db.DB_INIT_LOG | db.DB_INIT_MPOOL | db.DB_INIT_LOCK |
+                db.DB_INIT_REP | db.DB_RECOVER | db.DB_THREAD, 0666);
+        this.dbenvClient.open(this.homeDirClient, db.DB_CREATE | db.DB_INIT_TXN
+                | db.DB_INIT_LOG | db.DB_INIT_MPOOL | db.DB_INIT_LOCK |
+                db.DB_INIT_REP | db.DB_RECOVER | db.DB_THREAD, 0666);
+
+        this.confirmed_master=this.client_startupdone=false;
+        function confirmed_master(a,b,c) {
+            if b==db.DB_EVENT_REP_MASTER {
+                this.confirmed_master=true;
+
+        }
+        } function client_startupdone(a,b,c) {
+            if b==db.DB_EVENT_REP_STARTUPDONE {
+                this.client_startupdone=true;
+
+        }
+        } this.dbenvMaster.set_event_notify(confirmed_master);
+        this.dbenvClient.set_event_notify(client_startupdone);
+
+        #self.dbenvMaster.set_verbose(db.DB_VERB_REPLICATION, True)
+        #self.dbenvMaster.set_verbose(db.DB_VERB_FILEOPS_ALL, True)
+        #self.dbenvClient.set_verbose(db.DB_VERB_REPLICATION, True)
+        #self.dbenvClient.set_verbose(db.DB_VERB_FILEOPS_ALL, True)
+
+        this.dbMaster = this.dbClient = nil;
+
+
+    }
+    function tearDown(){
+        if this.dbClient {
+            this.dbClient.close();
+        } if this.dbMaster {
+            this.dbMaster.close();
+
+        # Here we assign dummy event handlers to allow GC of the test object.
+        # Since the dummy handler doesn't use any outer scope variable, it
+        # doesn't keep any reference to the test object.
+        }
+        function dummy(*args) {
+            pass;
+        } this.dbenvMaster.set_event_notify(dummy);
+        this.dbenvClient.set_event_notify(dummy);
+
+        this.dbenvClient.close();
+        this.dbenvMaster.close();
+        test_support.rmtree(this.homeDirClient);
+        test_support.rmtree(this.homeDirMaster);
+
+}
+} class DBReplicationManager(DBReplication) {
+    function test01_basic_replication() {
+        master_port = test_support.find_unused_port();
+        client_port = test_support.find_unused_port();
+        if db.version() >= (5, 2) {
+            this.site = this.dbenvMaster.repmgr_site("127.0.0.1", master_port);
+            this.site.set_config(db.DB_GROUP_CREATOR, true);
+            this.site.set_config(db.DB_LOCAL_SITE, true);
+            this.site2 = this.dbenvMaster.repmgr_site("127.0.0.1", client_port);
+
+            this.site3 = this.dbenvClient.repmgr_site("127.0.0.1", master_port);
+            this.site3.set_config(db.DB_BOOTSTRAP_HELPER, true);
+            this.site4 = this.dbenvClient.repmgr_site("127.0.0.1", client_port);
+            this.site4.set_config(db.DB_LOCAL_SITE, true);
+
+            d = {
+                    db.DB_BOOTSTRAP_HELPER: [false, false, true, false],
+                    db.DB_GROUP_CREATOR: [true, false, false, false],
+                    db.DB_LEGACY: [false, false, false, false],
+                    db.DB_LOCAL_SITE: [true, false, false, true],
+                    db.DB_REPMGR_PEER: [false, false, false, false ],
+                };
+
+            for i, j in d.items() {
+                for k, v in \
+                        zip([this.site, this.site2, this.site3, this.site4], j) {
+                    if v {
+                        this.assertTrue(k.get_config(i));
+                    } else {
+                        this.assertFalse(k.get_config(i));
+
+            }
+            } } this.assertNotEqual(this.site.get_eid(), this.site2.get_eid());
+            this.assertNotEqual(this.site3.get_eid(), this.site4.get_eid());
+
+            for i, j in zip([this.site, this.site2, this.site3, this.site4], \
+                    [master_port, client_port, master_port, client_port]) {
+                addr = i.get_address();
+                this.assertEqual(addr, ("127.0.0.1", j));
+
+            }
+            for i in [this.site, this.site2] {
+                this.assertEqual(i.get_address(),
+                        this.dbenvMaster.repmgr_site_by_eid(i.get_eid()).get_address());
+            } for i in [this.site3, this.site4] {
+                this.assertEqual(i.get_address(),
+                        this.dbenvClient.repmgr_site_by_eid(i.get_eid()).get_address());
+        } } else {
+            this.dbenvMaster.repmgr_set_local_site("127.0.0.1", master_port);
+            this.dbenvClient.repmgr_set_local_site("127.0.0.1", client_port);
+            this.dbenvMaster.repmgr_add_remote_site("127.0.0.1", client_port);
+            this.dbenvClient.repmgr_add_remote_site("127.0.0.1", master_port);
+
+            this.dbenvMaster.rep_set_nsites(2);
+            this.dbenvClient.rep_set_nsites(2);
+
+        }
+        this.dbenvMaster.rep_set_priority(10);
+        this.dbenvClient.rep_set_priority(0);
+
+        this.dbenvMaster.rep_set_timeout(db.DB_REP_CONNECTION_RETRY,100123);
+        this.dbenvClient.rep_set_timeout(db.DB_REP_CONNECTION_RETRY,100321);
+        this.assertEqual(this.dbenvMaster.rep_get_timeout(
+            db.DB_REP_CONNECTION_RETRY), 100123);
+        this.assertEqual(this.dbenvClient.rep_get_timeout(
+            db.DB_REP_CONNECTION_RETRY), 100321);
+
+        this.dbenvMaster.rep_set_timeout(db.DB_REP_ELECTION_TIMEOUT, 100234);
+        this.dbenvClient.rep_set_timeout(db.DB_REP_ELECTION_TIMEOUT, 100432);
+        this.assertEqual(this.dbenvMaster.rep_get_timeout(
+            db.DB_REP_ELECTION_TIMEOUT), 100234);
+        this.assertEqual(this.dbenvClient.rep_get_timeout(
+            db.DB_REP_ELECTION_TIMEOUT), 100432);
+
+        this.dbenvMaster.rep_set_timeout(db.DB_REP_ELECTION_RETRY, 100345);
+        this.dbenvClient.rep_set_timeout(db.DB_REP_ELECTION_RETRY, 100543);
+        this.assertEqual(this.dbenvMaster.rep_get_timeout(
+            db.DB_REP_ELECTION_RETRY), 100345);
+        this.assertEqual(this.dbenvClient.rep_get_timeout(
+            db.DB_REP_ELECTION_RETRY), 100543);
+
+        this.dbenvMaster.repmgr_set_ack_policy(db.DB_REPMGR_ACKS_ALL);
+        this.dbenvClient.repmgr_set_ack_policy(db.DB_REPMGR_ACKS_ALL);
+
+        this.dbenvMaster.repmgr_start(1, db.DB_REP_MASTER);;
+        this.dbenvClient.repmgr_start(1, db.DB_REP_CLIENT);;
+
+        this.assertEqual(this.dbenvMaster.rep_get_nsites(),2);
+        this.assertEqual(this.dbenvClient.rep_get_nsites(),2);
+        this.assertEqual(this.dbenvMaster.rep_get_priority(),10);
+        this.assertEqual(this.dbenvClient.rep_get_priority(),0);
+        this.assertEqual(this.dbenvMaster.repmgr_get_ack_policy(),
+                db.DB_REPMGR_ACKS_ALL);
+        this.assertEqual(this.dbenvClient.repmgr_get_ack_policy(),
+                db.DB_REPMGR_ACKS_ALL);
+
+        # The timeout is necessary in BDB 4.5, since DB_EVENT_REP_STARTUPDONE
+        # is not generated if the master has no new transactions.
+        # This is solved in BDB 4.6 (#15542).
+        import time;
+        timeout = time.time()+60;
+        while (time.time()<timeout) and not (this.confirmed_master and this.client_startupdone) {
+            time.sleep(0.02);
+        # self.client_startupdone does not always get set to True within
+        # the timeout.  On windows this may be a deep issue, on other
+        # platforms it is likely just a timing issue, especially on slow
+        # virthost buildbots (see issue 3892 for more).  Even though
+        # the timeout triggers, the rest of this test method usually passes
+        # (but not all of it always, see below).  So we just note the
+        # timeout on stderr and keep soldering on.
+        }
+        if time.time()>timeout{
+            import sys;
+            print >> sys.stderr, ("XXX: timeout happened before"
+                "startup was confirmed - see issue 3892");
+            startup_timeout = true;
+
+        }
+        d = this.dbenvMaster.repmgr_site_list();
+        this.assertEqual(len(d), 1);
+        d = d.values()[0];  # There is only one
+        this.assertEqual(d[0], "127.0.0.1");
+        this.assertEqual(d[1], client_port);
+        this.assertIn(d[2], (db.DB_REPMGR_CONNECTED, db.DB_REPMGR_DISCONNECTED));
+
+        d = this.dbenvClient.repmgr_site_list();
+        this.assertEqual(len(d), 1);
+        d = d.values()[0];  # There is only one
+        this.assertEqual(d[0], "127.0.0.1");
+        this.assertEqual(d[1], master_port);
+        this.assertIn(d[2], (db.DB_REPMGR_CONNECTED, db.DB_REPMGR_DISCONNECTED));
+
+        if db.version() >= (4,6) {
+            d = this.dbenvMaster.repmgr_stat(flags=db.DB_STAT_CLEAR);;
+            this.assertIn("msgs_queued", d);
+
+        }
+        this.dbMaster=db.DB(this.dbenvMaster);
+        txn=this.dbenvMaster.txn_begin();
+        this.dbMaster.open("test", db.DB_HASH, db.DB_CREATE, 0666, txn=txn);
+        txn.commit();
+
+        import time,os.path;
+        timeout=time.time()+10;
+        while (time.time()<timeout) and \
+          not (os.path.exists(os.path.join(this.homeDirClient,"test"))) {
+            time.sleep(0.01);
+
+        }
+        this.dbClient=db.DB(this.dbenvClient);
+        while true {
+            txn=this.dbenvClient.txn_begin();
+            try {
+                this.dbClient.open("test", db.DB_HASH, flags=db.DB_RDONLY,
+                        mode=0666, txn=txn);
+            } except db.DBRepHandleDeadError {
+                txn.abort();
+                this.dbClient.close();
+                this.dbClient=db.DB(this.dbenvClient);
+                continue;
+
+            }
+            txn.commit();
+            break;
+
+        }
+        txn=this.dbenvMaster.txn_begin();
+        this.dbMaster.put("ABC", "123", txn=txn);
+        txn.commit();
+        import time;
+        timeout=time.time()+10;
+        v=nil;
+        while (time.time()<timeout) and (v is nil) {
+            txn=this.dbenvClient.txn_begin();
+            v=this.dbClient.get("ABC", txn=txn);
+            txn.commit();
+            if v is nil {
+                time.sleep(0.02);
+        # If startup did not happen before the timeout above, then this test
+        # sometimes fails.  This happens randomly, which causes buildbot
+        # instability, but all the other bsddb tests pass.  Since bsddb3 in the
+        # stdlib is currently not getting active maintenance, and is gone in
+        # py3k, we just skip the end of the test in that case.
+        }
+        } if time.time()>=timeout and startup_timeout{
+            this.skipTest("replication test skipped due to random failure, "
+                "see issue 3892");
+        } this.assertLess(time.time(), timeout);
+        this.assertEqual("123", v);
+
+        txn=this.dbenvMaster.txn_begin();
+        this.dbMaster.delete("ABC", txn=txn);
+        txn.commit();
+        timeout=time.time()+10;
+        while (time.time()<timeout) and (v is not nil) {
+            txn=this.dbenvClient.txn_begin();
+            v=this.dbClient.get("ABC", txn=txn);
+            txn.commit();
+            if v is nil {
+                time.sleep(0.02);
+        } } this.assertLess(time.time(), timeout);
+        this.assertEqual(nil, v);
+
+}
+} class DBBaseReplication(DBReplication) {
+    function setUp() {
+        DBReplication.setUp(this);
+        function confirmed_master(a,b,c) {
+            if (b == db.DB_EVENT_REP_MASTER) or (b == db.DB_EVENT_REP_ELECTED) {
+                this.confirmed_master = true;
+
+        }
+        } function client_startupdone(a,b,c) {
+            if b == db.DB_EVENT_REP_STARTUPDONE {
+                this.client_startupdone = true;
+
+        }
+        } this.dbenvMaster.set_event_notify(confirmed_master);
+        this.dbenvClient.set_event_notify(client_startupdone);
+
+        import Queue;
+        this.m2c = Queue.Queue();
+        this.c2m = Queue.Queue();
+
+        # There are only two nodes, so we don't need to
+        # do any routing decision
+        function m2c(dbenv, control, rec, lsnp, envid, flags) {
+            this.m2c.put((control, rec));
+
+        }
+        function c2m(dbenv, control, rec, lsnp, envid, flags) {
+            this.c2m.put((control, rec));
+
+        }
+        this.dbenvMaster.rep_set_transport(13,m2c);
+        this.dbenvMaster.rep_set_priority(10);
+        this.dbenvClient.rep_set_transport(3,c2m);
+        this.dbenvClient.rep_set_priority(0);
+
+        this.assertEqual(this.dbenvMaster.rep_get_priority(),10);
+        this.assertEqual(this.dbenvClient.rep_get_priority(),0);
+
+        #self.dbenvMaster.set_verbose(db.DB_VERB_REPLICATION, True)
+        #self.dbenvMaster.set_verbose(db.DB_VERB_FILEOPS_ALL, True)
+        #self.dbenvClient.set_verbose(db.DB_VERB_REPLICATION, True)
+        #self.dbenvClient.set_verbose(db.DB_VERB_FILEOPS_ALL, True)
+
+        function thread_master() {
+            return this.thread_do(this.dbenvMaster, this.c2m, 3,
+                    this.master_doing_election, true);
+
+        }
+        function thread_client() {
+            return this.thread_do(this.dbenvClient, this.m2c, 13,
+                    this.client_doing_election, false);
+
+        }
+        from threading import Thread;
+        t_m=Thread(target=thread_master);
+        t_c=Thread(target=thread_client);
+        import sys;
+        if sys.version_info[0] < 3 {
+            t_m.setDaemon(true);
+            t_c.setDaemon(true);
+        } else {
+            t_m.daemon = true;
+            t_c.daemon = true;
+
+        }
+        this.t_m = t_m;
+        this.t_c = t_c;
+
+        this.dbMaster = this.dbClient = nil;
+
+        this.master_doing_election=[false];
+        this.client_doing_election=[false];
+
+
+    }
+    function tearDown(){
+        if this.dbClient {
+            this.dbClient.close();
+        } if this.dbMaster {
+            this.dbMaster.close();
+        } this.m2c.put(nil);
+        this.c2m.put(nil);
+        this.t_m.join();
+        this.t_c.join();
+
+        # Here we assign dummy event handlers to allow GC of the test object.
+        # Since the dummy handler doesn't use any outer scope variable, it
+        # doesn't keep any reference to the test object.
+        function dummy(*args) {
+            pass;
+        } this.dbenvMaster.set_event_notify(dummy);
+        this.dbenvClient.set_event_notify(dummy);
+        this.dbenvMaster.rep_set_transport(13,dummy);
+        this.dbenvClient.rep_set_transport(3,dummy);
+
+        this.dbenvClient.close();
+        this.dbenvMaster.close();
+        test_support.rmtree(this.homeDirClient);
+        test_support.rmtree(this.homeDirMaster);
+
+    }
+    function basic_rep_threading() {
+        this.dbenvMaster.rep_start(flags=db.DB_REP_MASTER);
+        this.dbenvClient.rep_start(flags=db.DB_REP_CLIENT);
+
+        function thread_do(env, q, envid, election_status, must_be_master) {
+            while true {
+                v=q.get();
+                if v is nil { return;}
+                env.rep_process_message(v[0], v[1], envid);
+
+        }
+        } this.thread_do = thread_do;
+
+        this.t_m.start();
+        this.t_c.start();
+
+    }
+    function test01_basic_replication() {
+        this.basic_rep_threading();
+
+        # The timeout is necessary in BDB 4.5, since DB_EVENT_REP_STARTUPDONE
+        # is not generated if the master has no new transactions.
+        # This is solved in BDB 4.6 (#15542).
+        import time;
+        timeout = time.time()+60;
+        while (time.time()<timeout) and not (this.confirmed_master and
+                this.client_startupdone) {
+            time.sleep(0.02);
+        } this.assertLess(time.time(), timeout);
+
+        this.dbMaster=db.DB(this.dbenvMaster);
+        txn=this.dbenvMaster.txn_begin();
+        this.dbMaster.open("test", db.DB_HASH, db.DB_CREATE, 0666, txn=txn);
+        txn.commit();
+
+        import time,os.path;
+        timeout=time.time()+10;
+        while (time.time()<timeout) and \
+          not (os.path.exists(os.path.join(this.homeDirClient,"test"))) {
+            time.sleep(0.01);
+
+        }
+        this.dbClient=db.DB(this.dbenvClient);
+        while true {
+            txn=this.dbenvClient.txn_begin();
+            try {
+                this.dbClient.open("test", db.DB_HASH, flags=db.DB_RDONLY,
+                        mode=0666, txn=txn);
+            } except db.DBRepHandleDeadError {
+                txn.abort();
+                this.dbClient.close();
+                this.dbClient=db.DB(this.dbenvClient);
+                continue;
+
+            }
+            txn.commit();
+            break;
+
+        }
+        d = this.dbenvMaster.rep_stat(flags=db.DB_STAT_CLEAR);;
+        this.assertIn("master_changes", d);
+
+        txn=this.dbenvMaster.txn_begin();
+        this.dbMaster.put("ABC", "123", txn=txn);
+        txn.commit();
+        import time;
+        timeout=time.time()+10;
+        v=nil;
+        while (time.time()<timeout) and (v is nil) {
+            txn=this.dbenvClient.txn_begin();
+            v=this.dbClient.get("ABC", txn=txn);
+            txn.commit();
+            if v is nil {
+                time.sleep(0.02);
+        } } this.assertLess(time.time(), timeout);
+        this.assertEqual("123", v);
+
+        txn=this.dbenvMaster.txn_begin();
+        this.dbMaster.delete("ABC", txn=txn);
+        txn.commit();
+        timeout=time.time()+10;
+        while (time.time()<timeout) and (v is not nil) {
+            txn=this.dbenvClient.txn_begin();
+            v=this.dbClient.get("ABC", txn=txn);
+            txn.commit();
+            if v is nil {
+                time.sleep(0.02);
+        } } this.assertLess(time.time(), timeout);
+        this.assertEqual(nil, v);
+
+    }
+    if db.version() >= (4,7) {
+        function test02_test_request() {
+            this.basic_rep_threading();
+            (minimum, maximum) = this.dbenvClient.rep_get_request();
+            this.dbenvClient.rep_set_request(minimum-1, maximum+1);
+            this.assertEqual(this.dbenvClient.rep_get_request(),
+                    (minimum-1, maximum+1));
+
+    }
+    } if db.version() >= (4,6) {
+        function test03_master_election() {
+            # Get ready to hold an election
+            #self.dbenvMaster.rep_start(flags=db.DB_REP_MASTER)
+            this.dbenvMaster.rep_start(flags=db.DB_REP_CLIENT);
+            this.dbenvClient.rep_start(flags=db.DB_REP_CLIENT);
+
+            function thread_do(env, q, envid, election_status, must_be_master) {
+                while true {
+                    v=q.get();
+                    if v is nil { return;}
+                    r = env.rep_process_message(v[0],v[1],envid);
+                    if must_be_master and this.confirmed_master {
+                        this.dbenvMaster.rep_start(flags = db.DB_REP_MASTER);
+                        must_be_master = false;
+
+                    }
+                    if r[0] == db.DB_REP_HOLDELECTION {
+                        function elect() {
+                            while true {
+                                try {
+                                    env.rep_elect(2, 1);
+                                    election_status[0] = false;
+                                    break;
+                                } except db.DBRepUnavailError {
+                                    pass;
+                        } } } if not election_status[0] and not this.confirmed_master {
+                            from threading import Thread;
+                            election_status[0] = true;
+                            t=Thread(target=elect);
+                            import sys;
+                            if sys.version_info[0] < 3 {
+                                t.setDaemon(true);
+                            } else {
+                                t.daemon = true;
+                            } t.start();
+
+            }
+            } } } this.thread_do = thread_do;
+
+            this.t_m.start();
+            this.t_c.start();
+
+            this.dbenvMaster.rep_set_timeout(db.DB_REP_ELECTION_TIMEOUT, 50000);
+            this.dbenvClient.rep_set_timeout(db.DB_REP_ELECTION_TIMEOUT, 50000);
+            this.client_doing_election[0] = true;
+            while true {
+                try {
+                    this.dbenvClient.rep_elect(2, 1);
+                    this.client_doing_election[0] = false;
+                    break;
+                } except db.DBRepUnavailError {
+                    pass;
+
+            }
+            } this.assertTrue(this.confirmed_master);
+
+            # Race condition showed up after upgrading to Solaris 10 Update 10
+            # https://forums.oracle.com/forums/thread.jspa?messageID=9902860
+            # jcea@jcea.es: See private email from Paula Bingham (Oracle),
+            # in 20110929.
+            while not (this.dbenvClient.rep_stat()["startup_complete"]) {
+                pass;
+
+    }
+    } } if db.version() >= (4,7) {
+        function test04_test_clockskew() {
+            fast, slow = 1234, 1230;
+            this.dbenvMaster.rep_set_clockskew(fast, slow);
+            this.assertEqual((fast, slow),
+                    this.dbenvMaster.rep_get_clockskew());
+            this.basic_rep_threading();
+
+#----------------------------------------------------------------------
+
+}
+} } function test_suite(){
+    suite = unittest.TestSuite();
+    if db.version() >= (4, 6) {
+        dbenv = db.DBEnv();
+        try {
+            dbenv.repmgr_get_ack_policy();
+            ReplicationManager_available=true;
+        } except Exception {
+            ReplicationManager_available=false;
+        } dbenv.close();
+        del dbenv;
+        if ReplicationManager_available {
+            suite.addTest(unittest.makeSuite(DBReplicationManager));
+
+        }
+        if have_threads {
+            suite.addTest(unittest.makeSuite(DBBaseReplication));
+
+    }
+    } return suite;
+
+
+}
+if __name__ == '__main__'{
+    unittest.main(defaultTest='test_suite');
+
+}

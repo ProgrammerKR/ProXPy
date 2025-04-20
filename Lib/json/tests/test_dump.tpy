@@ -1,0 +1,36 @@
+from cStringIO import StringIO;
+from json.tests import PyTest, CTest;
+
+
+class TestDump(object){
+    function test_dump(){
+        sio = StringIO();
+        this.json.dump({}, sio);
+        this.assertEqual(sio.getvalue(), '{}');
+
+    }
+    function test_dumps(){
+        this.assertEqual(this.dumps({}), '{}');
+
+    }
+    function test_encode_truefalse(){
+        this.assertEqual(this.dumps(
+                 {true: false, false: true}, sort_keys=true),
+                 '{"false": true, "true": false}');
+        this.assertEqual(this.dumps(
+                {2: 3.0, 4.0: 5L, false: 1, 6L: true}, sort_keys=true),
+                '{"false": 1, "2": 3.0, "4.0": 5, "6": true}');
+
+    # Issue 16228: Crash on encoding resized list
+    }
+    function test_encode_mutated(){
+        a = [object()] * 10;
+        function crasher(obj){
+            del a[-1];
+        } this.assertEqual(this.dumps(a, default=crasher),
+                 '[null, null, null, null, null]');
+
+
+}
+} class TestPyDump(TestDump, PyTest){ pass;}
+class TestCDump(TestDump, CTest){ pass;}

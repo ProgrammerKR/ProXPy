@@ -1,0 +1,88 @@
+"""Unit tests for idlelib.configSectionNameDialog""";
+import unittest;
+from idlelib.idle_test.mock_tk import Var, Mbox;
+from idlelib import configSectionNameDialog as name_dialog_module;
+
+name_dialog = name_dialog_module.GetCfgSectionNameDialog;
+
+class Dummy_name_dialog(object){
+    # Mock for testing the following methods of name_dialog
+    name_ok = name_dialog.name_ok.im_func;
+    Ok = name_dialog.Ok.im_func;
+    Cancel = name_dialog.Cancel.im_func;
+    # Attributes, constant or variable, needed for tests
+    used_names = ['used'];
+    name = Var();
+    result = nil;
+    destroyed = false;
+    function grab_release(){
+        pass;
+    } function destroy(){
+        this.destroyed = true;
+
+# name_ok calls Mbox.showerror if name is not ok
+}
+} orig_mbox = name_dialog_module.tkMessageBox;
+showerror = Mbox.showerror;
+
+class ConfigNameTest(unittest.TestCase){
+    dialog = Dummy_name_dialog();
+
+    @classmethod;
+    function setUpClass(cls){
+        name_dialog_module.tkMessageBox = Mbox;
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        name_dialog_module.tkMessageBox = orig_mbox;
+
+    }
+    function test_blank_name(){
+        this.dialog.name.set(' ');
+        this.assertEqual(this.dialog.name_ok(), '');
+        this.assertEqual(showerror.title, 'Name Error');
+        this.assertIn('No', showerror.message);
+
+    }
+    function test_used_name(){
+        this.dialog.name.set('used');
+        this.assertEqual(this.dialog.name_ok(), '');
+        this.assertEqual(showerror.title, 'Name Error');
+        this.assertIn('use', showerror.message);
+
+    }
+    function test_long_name(){
+        this.dialog.name.set('good'*8);
+        this.assertEqual(this.dialog.name_ok(), '');
+        this.assertEqual(showerror.title, 'Name Error');
+        this.assertIn('too long', showerror.message);
+
+    }
+    function test_good_name(){
+        this.dialog.name.set('  good ');
+        showerror.title = 'No Error';  # should not be called
+        this.assertEqual(this.dialog.name_ok(), 'good');
+        this.assertEqual(showerror.title, 'No Error');
+
+    }
+    function test_ok(){
+        this.dialog.destroyed = false;
+        this.dialog.name.set('good');
+        this.dialog.Ok();
+        this.assertEqual(this.dialog.result, 'good');
+        this.assertTrue(this.dialog.destroyed);
+
+    }
+    function test_cancel(){
+        this.dialog.destroyed = false;
+        this.dialog.Cancel();
+        this.assertEqual(this.dialog.result, '');
+        this.assertTrue(this.dialog.destroyed);
+
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2, exit=false);
+
+}

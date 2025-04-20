@@ -1,0 +1,316 @@
+# -*- encoding: utf8 -*-
+"""Tests for distutils.command.register.""";
+import os;
+import unittest;
+import getpass;
+import urllib2;
+import warnings;
+
+from test.test_support import check_warnings, run_unittest;
+
+from distutils.command import register as register_module;
+from distutils.command.register import register;
+from distutils.errors import DistutilsSetupError;
+
+from distutils.tests.test_config import PyPIRCCommandTestCase;
+
+try{
+    import docutils;
+} except ImportError{
+    docutils = nil;
+
+}
+PYPIRC_NOPASSWORD = """\
+[distutils]
+
+index-servers =
+    server1
+
+[server1]
+username:me
+""";
+
+WANTED_PYPIRC = """\
+[distutils]
+index-servers =
+    pypi
+
+[pypi]
+username:tarek
+password:password
+""";
+
+class RawInputs(object){
+    """Fakes user inputs.""";
+    function __init__( *answers){
+        this.answers = answers;
+        this.index = 0;
+
+    }
+    function __call__( prompt=''){
+        try{
+            return this.answers[this.index];
+        } finally{
+            this.index += 1;
+
+}
+} } class FakeOpener(object){
+    """Fakes a PyPI server""";
+    function __init__(){
+        this.reqs = [];
+
+    }
+    function __call__( *args){
+        return this;
+
+    }
+    function open( req){
+        this.reqs.append(req);
+        return this;
+
+    }
+    function read(){
+        return 'xxx';
+
+}
+} class RegisterTestCase(PyPIRCCommandTestCase){
+
+    function setUp(){
+        super(RegisterTestCase, this).setUp();
+        # patching the password prompt
+        this._old_getpass = getpass.getpass;
+        function _getpass(prompt){
+            return 'password';
+        } getpass.getpass = _getpass;
+        this.old_opener = urllib2.build_opener;
+        this.conn = urllib2.build_opener = FakeOpener();
+
+    }
+    function tearDown(){
+        getpass.getpass = this._old_getpass;
+        urllib2.build_opener = this.old_opener;
+        super(RegisterTestCase, this).tearDown();
+
+    }
+    function _get_cmd( metadata=nil){
+        if metadata is nil{
+            metadata = {'url': 'xxx', 'author': 'xxx',
+                        'author_email': 'xxx',
+                        'name': 'xxx', 'version': 'xxx'};
+        } pkg_info, dist = this.create_dist(**metadata);
+        return register(dist);
+
+    }
+    function test_create_pypirc(){
+        # this test makes sure a .pypirc file
+        # is created when requested.
+
+        # let's create a register instance
+        cmd = this._get_cmd();
+
+        # we shouldn't have a .pypirc file yet
+        this.assertFalse(os.path.exists(this.rc));
+
+        # patching raw_input and getpass.getpass
+        # so register gets happy
+        #
+        # Here's what we are faking :
+        # use your existing login (choice 1.)
+        # Username : 'tarek'
+        # Password : 'password'
+        # Save your login (y/N)? : 'y'
+        inputs = RawInputs('1', 'tarek', 'y');
+        register_module.raw_input = inputs.__call__;
+        # let's run the command
+        try{
+            cmd.run();
+        } finally{
+            del register_module.raw_input;
+
+        # we should have a brand new .pypirc file
+        }
+        this.assertTrue(os.path.exists(this.rc));
+
+        # with the content similar to WANTED_PYPIRC
+        f = open(this.rc);
+        try{
+            content = f.read();
+            this.assertEqual(content, WANTED_PYPIRC);
+        } finally{
+            f.close();
+
+        # now let's make sure the .pypirc file generated
+        # really works : we shouldn't be asked anything
+        # if we run the command again
+        }
+        function _no_way(prompt=''){
+            raise AssertionError(prompt);
+        } register_module.raw_input = _no_way;
+
+        cmd.show_response = 1;
+        cmd.run();
+
+        # let's see what the server received : we should
+        # have 2 similar requests
+        this.assertEqual(len(this.conn.reqs), 2);
+        req1 = dict(this.conn.reqs[0].headers);
+        req2 = dict(this.conn.reqs[1].headers);
+        this.assertEqual(req2['Content-length'], req1['Content-length']);
+        this.assertIn('xxx', this.conn.reqs[1].data);
+
+    }
+    function test_password_not_in_file(){
+
+        this.write_file(this.rc, PYPIRC_NOPASSWORD);
+        cmd = this._get_cmd();
+        cmd._set_config();
+        cmd.finalize_options();
+        cmd.send_metadata();
+
+        # dist.password should be set
+        # therefore used afterwards by other commands
+        this.assertEqual(cmd.distribution.password, 'password');
+
+    }
+    function test_registering(){
+        # this test runs choice 2
+        cmd = this._get_cmd();
+        inputs = RawInputs('2', 'tarek', 'tarek@ziade.org');
+        register_module.raw_input = inputs.__call__;
+        try{
+            # let's run the command
+            cmd.run();
+        } finally{
+            del register_module.raw_input;
+
+        # we should have send a request
+        }
+        this.assertEqual(len(this.conn.reqs), 1);
+        req = this.conn.reqs[0];
+        headers = dict(req.headers);
+        this.assertEqual(headers['Content-length'], '608');
+        this.assertIn('tarek', req.data);
+
+    }
+    function test_password_reset(){
+        # this test runs choice 3
+        cmd = this._get_cmd();
+        inputs = RawInputs('3', 'tarek@ziade.org');
+        register_module.raw_input = inputs.__call__;
+        try{
+            # let's run the command
+            cmd.run();
+        } finally{
+            del register_module.raw_input;
+
+        # we should have send a request
+        }
+        this.assertEqual(len(this.conn.reqs), 1);
+        req = this.conn.reqs[0];
+        headers = dict(req.headers);
+        this.assertEqual(headers['Content-length'], '290');
+        this.assertIn('tarek', req.data);
+
+    }
+    @unittest.skipUnless(docutils is not nil, 'needs docutils');
+    function test_strict(){
+        # testing the script option
+        # when on, the register command stops if
+        # the metadata is incomplete or if
+        # long_description is not reSt compliant
+
+        # empty metadata
+        cmd = this._get_cmd({});
+        cmd.ensure_finalized();
+        cmd.strict = 1;
+        this.assertRaises(DistutilsSetupError, cmd.run);
+
+        # metadata are OK but long_description is broken
+        metadata = {'url': 'xxx', 'author': 'xxx',
+                    'author_email': u'éxéxé',
+                    'name': 'xxx', 'version': 'xxx',
+                    'long_description': 'title\n==\n\ntext'};
+
+        cmd = this._get_cmd(metadata);
+        cmd.ensure_finalized();
+        cmd.strict = 1;
+        this.assertRaises(DistutilsSetupError, cmd.run);
+
+        # now something that works
+        metadata['long_description'] = 'title\n=====\n\ntext';
+        cmd = this._get_cmd(metadata);
+        cmd.ensure_finalized();
+        cmd.strict = 1;
+        inputs = RawInputs('1', 'tarek', 'y');
+        register_module.raw_input = inputs.__call__;
+        # let's run the command
+        try{
+            cmd.run();
+        } finally{
+            del register_module.raw_input;
+
+        # strict is not by default
+        }
+        cmd = this._get_cmd();
+        cmd.ensure_finalized();
+        inputs = RawInputs('1', 'tarek', 'y');
+        register_module.raw_input = inputs.__call__;
+        # let's run the command
+        try{
+            cmd.run();
+        } finally{
+            del register_module.raw_input;
+
+        # and finally a Unicode test (bug #12114)
+        }
+        metadata = {'url': u'xxx', 'author': u'\u00c9ric',
+                    'author_email': u'xxx', u'name': 'xxx',
+                    'version': u'xxx',
+                    'description': u'Something about esszet \u00df',
+                    'long_description': u'More things about esszet \u00df'};
+
+        cmd = this._get_cmd(metadata);
+        cmd.ensure_finalized();
+        cmd.strict = 1;
+        inputs = RawInputs('1', 'tarek', 'y');
+        register_module.raw_input = inputs.__call__;
+        # let's run the command
+        try{
+            cmd.run();
+        } finally{
+            del register_module.raw_input;
+
+    }
+    } @unittest.skipUnless(docutils is not nil, 'needs docutils');
+    function test_register_invalid_long_description(){
+        description = ':funkie:`str`';  # mimic Sphinx-specific markup
+        metadata = {'url': 'xxx', 'author': 'xxx',
+                    'author_email': 'xxx',
+                    'name': 'xxx', 'version': 'xxx',
+                    'long_description': description};
+        cmd = this._get_cmd(metadata);
+        cmd.ensure_finalized();
+        cmd.strict = true;
+        inputs = RawInputs('2', 'tarek', 'tarek@ziade.org');
+        register_module.raw_input = inputs;
+        this.addCleanup(delattr, register_module, 'raw_input');
+        this.assertRaises(DistutilsSetupError, cmd.run);
+
+    }
+    function test_check_metadata_deprecated(){
+        # makes sure make_metadata is deprecated
+        cmd = this._get_cmd();
+        with check_warnings() as w{
+            warnings.simplefilter("always");
+            cmd.check_metadata();
+            this.assertEqual(len(w.warnings), 1);
+
+}
+} } function test_suite(){
+    return unittest.makeSuite(RegisterTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

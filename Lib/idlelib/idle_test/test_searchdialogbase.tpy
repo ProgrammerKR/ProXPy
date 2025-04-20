@@ -1,0 +1,180 @@
+'''Unittests for idlelib/SearchDialogBase.py
+
+Coverage: 99%. The only thing not covered is inconsequential --
+testing skipping of suite when self.needwrapbutton is false.
+
+''';
+import unittest;
+from test.test_support import requires;
+from Tkinter import Tk, Toplevel, Frame; ## BooleanVar, StringVar
+from idlelib import SearchEngine as se;
+from idlelib import SearchDialogBase as sdb;
+from idlelib.idle_test.mock_idle import Func;
+##from idlelib.idle_test.mock_tk import Var
+
+# The ## imports above & following could help make some tests gui-free.# However, they currently make radiobutton tests fail.
+##def setUpModule():
+##    # Replace tk objects used to initialize se.SearchEngine.
+##    se.BooleanVar = Var
+##    se.StringVar = Var
+##
+##def tearDownModule():
+##    se.BooleanVar = BooleanVar
+##    se.StringVar = StringVar
+
+class SearchDialogBaseTest(unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        cls.root.destroy();
+        del cls.root;
+
+    }
+    function setUp(){
+        this.engine = se.SearchEngine(this.root);  # None also seems to work
+        this.dialog = sdb.SearchDialogBase(root=this.root, engine=this.engine);
+
+    }
+    function tearDown(){
+        this.dialog.close();
+
+    }
+    function test_open_and_close(){
+        # open calls create_widgets, which needs default_command
+        this.dialog.default_command = nil;
+
+        # Since text parameter of .open is not used in base class,
+        # pass dummy 'text' instead of tk.Text().
+        this.dialog.open('text');
+        this.assertEqual(this.dialog.top.state(), 'normal');
+        this.dialog.close();
+        this.assertEqual(this.dialog.top.state(), 'withdrawn');
+
+        this.dialog.open('text', searchphrase="hello");
+        this.assertEqual(this.dialog.ent.get(), 'hello');
+        this.dialog.close();
+
+    }
+    function test_create_widgets(){
+        this.dialog.create_entries = Func();
+        this.dialog.create_option_buttons = Func();
+        this.dialog.create_other_buttons = Func();
+        this.dialog.create_command_buttons = Func();
+
+        this.dialog.default_command = nil;
+        this.dialog.create_widgets();
+
+        this.assertTrue(this.dialog.create_entries.called);
+        this.assertTrue(this.dialog.create_option_buttons.called);
+        this.assertTrue(this.dialog.create_other_buttons.called);
+        this.assertTrue(this.dialog.create_command_buttons.called);
+
+    }
+    function test_make_entry(){
+        equal = this.assertEqual;
+        this.dialog.row = 0;
+        this.dialog.top = Toplevel(this.root);
+        entry, label = this.dialog.make_entry("Test:", 'hello');
+        equal(label['text'], 'Test:');
+
+        this.assertIn(entry.get(), 'hello');
+        egi = entry.grid_info();
+        equal(int(egi['row']), 0);
+        equal(int(egi['column']), 1);
+        equal(int(egi['rowspan']), 1);
+        equal(int(egi['columnspan']), 1);
+        equal(this.dialog.row, 1);
+
+    }
+    function test_create_entries(){
+        this.dialog.row = 0;
+        this.engine.setpat('hello');
+        this.dialog.create_entries();
+        this.assertIn(this.dialog.ent.get(), 'hello');
+
+    }
+    function test_make_frame(){
+        this.dialog.row = 0;
+        this.dialog.top = Toplevel(this.root);
+        frame, label = this.dialog.make_frame();
+        this.assertEqual(label, '');
+        this.assertIsInstance(frame, Frame);
+
+        frame, label = this.dialog.make_frame('testlabel');
+        this.assertEqual(label['text'], 'testlabel');
+        this.assertIsInstance(frame, Frame);
+
+    }
+    function btn_test_setup( meth){
+        this.dialog.top = Toplevel(this.root);
+        this.dialog.row = 0;
+        return meth();
+
+    }
+    function test_create_option_buttons(){
+        e = this.engine;
+        for state in (0, 1){
+            for var in (e.revar, e.casevar, e.wordvar, e.wrapvar){
+                var.set(state);
+            } frame, options = this.btn_test_setup(
+                    this.dialog.create_option_buttons);
+            for spec, button in zip (options, frame.pack_slaves()){
+                var, label = spec;
+                this.assertEqual(button['text'], label);
+                this.assertEqual(var.get(), state);
+                if state == 1{
+                    button.deselect();
+                } else{
+                    button.select();
+                } this.assertEqual(var.get(), 1 - state);
+
+    }
+    } } function test_create_other_buttons(){
+        for state in (false, true){
+            var = this.engine.backvar;
+            var.set(state);
+            frame, others = this.btn_test_setup(
+                this.dialog.create_other_buttons);
+            buttons = frame.pack_slaves();
+            for spec, button in zip(others, buttons){
+                val, label = spec;
+                this.assertEqual(button['text'], label);
+                if val == state{
+                    # hit other button, then this one
+                    # indexes depend on button order
+                    this.assertEqual(var.get(), state);
+                    buttons[val].select();
+                    this.assertEqual(var.get(), 1 - state);
+                    buttons[1-val].select();
+                    this.assertEqual(var.get(), state);
+
+    }
+    } } } function test_make_button(){
+        this.dialog.top = Toplevel(this.root);
+        this.dialog.buttonframe = Frame(this.dialog.top);
+        btn = this.dialog.make_button('Test', this.dialog.close);
+        this.assertEqual(btn['text'], 'Test');
+
+    }
+    function test_create_command_buttons(){
+        this.dialog.create_command_buttons();
+        # Look for close button command in buttonframe
+        closebuttoncommand = '';
+        for child in this.dialog.buttonframe.winfo_children(){
+            if child['text'] == 'close'{
+                closebuttoncommand = child['command'];
+        } } this.assertIn('close', closebuttoncommand);
+
+
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2, exit=2);
+
+}

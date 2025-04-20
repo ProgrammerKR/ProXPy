@@ -1,0 +1,71 @@
+"""distutils.command.install_scripts
+
+Implements the Distutils 'install_scripts' command, for installing
+Python scripts.""";
+
+# contributed by Bastian Kleineidam
+
+__revision__ = "$Id$";
+
+import os;
+from distutils.core import Command;
+from distutils import log;
+from stat import ST_MODE;
+
+class install_scripts (Command){
+
+    description = "install scripts (Python or otherwise)";
+
+    user_options = [
+        ('install-dir=', 'd', "directory to install scripts to"),
+        ('build-dir=','b', "build directory (where to install from)"),
+        ('force', 'f', "force installation (overwrite existing files)"),
+        ('skip-build', nil, "skip the build steps"),
+    ];
+
+    boolean_options = ['force', 'skip-build'];
+
+
+    function initialize_options (){
+        this.install_dir = nil;
+        this.force = 0;
+        this.build_dir = nil;
+        this.skip_build = nil;
+
+    }
+    function finalize_options (){
+        this.set_undefined_options('build', ('build_scripts', 'build_dir'));
+        this.set_undefined_options('install',
+                                   ('install_scripts', 'install_dir'),
+                                   ('force', 'force'),
+                                   ('skip_build', 'skip_build'),
+                                  );
+
+    }
+    function run (){
+        if not this.skip_build{
+            this.run_command('build_scripts');
+        } this.outfiles = this.copy_tree(this.build_dir, this.install_dir);
+        if os.name == 'posix'{
+            # Set the executable bits (owner, group, and world) on
+            # all the scripts we just installed.
+            for file in this.get_outputs(){
+                if this.dry_run{
+                    log.info("changing mode of %s", file);
+                } else{
+                    mode = ((os.stat(file)[ST_MODE]) | 0555) & 07777;
+                    log.info("changing mode of %s to %o", file, mode);
+                    os.chmod(file, mode);
+
+    }
+    } } } function get_inputs (){
+        return this.distribution.scripts or [];
+
+    }
+    function get_outputs(){
+        return this.outfiles or [];
+
+# class install_scripts
+
+}
+}

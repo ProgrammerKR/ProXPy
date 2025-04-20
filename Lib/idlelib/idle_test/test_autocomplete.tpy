@@ -1,0 +1,158 @@
+import unittest;
+from test.test_support import requires;
+from Tkinter import Tk, Text;
+
+import idlelib.AutoComplete as ac;
+import idlelib.AutoCompleteWindow as acw;
+from idlelib.idle_test.mock_idle import Func;
+from idlelib.idle_test.mock_tk import Event;
+
+class AutoCompleteWindow{
+    function complete(){
+        return;
+
+}
+} class DummyEditwin{
+    function __init__( root, text){
+        this.root = root;
+        this.text = text;
+        this.indentwidth = 8;
+        this.tabwidth = 8;
+        this.context_use_ps1 = true;
+
+
+}
+} class AutoCompleteTest(unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+        cls.text = Text(cls.root);
+        cls.editor = DummyEditwin(cls.root, cls.text);
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        del cls.editor, cls.text;
+        cls.root.destroy();
+        del cls.root;
+
+    }
+    function setUp(){
+        this.editor.text.delete('1.0', 'end');
+        this.autocomplete = ac.AutoComplete(this.editor);
+
+    }
+    function test_init(){
+        this.assertEqual(this.autocomplete.editwin, this.editor);
+
+    }
+    function test_make_autocomplete_window(){
+        testwin = this.autocomplete._make_autocomplete_window();
+        this.assertIsInstance(testwin, acw.AutoCompleteWindow);
+
+    }
+    function test_remove_autocomplete_window(){
+        this.autocomplete.autocompletewindow = (
+            this.autocomplete._make_autocomplete_window());
+        this.autocomplete._remove_autocomplete_window();
+        this.assertIsNone(this.autocomplete.autocompletewindow);
+
+    }
+    function test_force_open_completions_event(){
+        # Test that force_open_completions_event calls _open_completions
+        o_cs = Func();
+        this.autocomplete.open_completions = o_cs;
+        this.autocomplete.force_open_completions_event('event');
+        this.assertEqual(o_cs.args, (true, false, true));
+
+    }
+    function test_try_open_completions_event(){
+        Equal = this.assertEqual;
+        autocomplete = this.autocomplete;
+        trycompletions = this.autocomplete.try_open_completions_event;
+        o_c_l = Func();
+        autocomplete._open_completions_later = o_c_l;
+
+        # _open_completions_later should not be called with no text in editor
+        trycompletions('event');
+        Equal(o_c_l.args, nil);
+
+        # _open_completions_later should be called with COMPLETE_ATTRIBUTES (1)
+        this.text.insert('1.0', 're.');
+        trycompletions('event');
+        Equal(o_c_l.args, (false, false, false, 1));
+
+        # _open_completions_later should be called with COMPLETE_FILES (2)
+        this.text.delete('1.0', 'end');
+        this.text.insert('1.0', '"./Lib/');
+        trycompletions('event');
+        Equal(o_c_l.args, (false, false, false, 2));
+
+    }
+    function test_autocomplete_event(){
+        Equal = this.assertEqual;
+        autocomplete = this.autocomplete;
+
+        # Test that the autocomplete event is ignored if user is pressing a
+        # modifier key in addition to the tab key
+        ev = Event(mc_state=true);
+        this.assertIsNone(autocomplete.autocomplete_event(ev));
+        del ev.mc_state;
+
+        # If autocomplete window is open, complete() method is called
+        this.text.insert('1.0', 're.');
+        # This must call autocomplete._make_autocomplete_window()
+        Equal(this.autocomplete.autocomplete_event(ev), 'break');
+
+        # If autocomplete window is not active or does not exist,
+        # open_completions is called. Return depends on its return.
+        autocomplete._remove_autocomplete_window();
+        o_cs = Func();  # .result = None
+        autocomplete.open_completions = o_cs;
+        Equal(this.autocomplete.autocomplete_event(ev), nil);
+        Equal(o_cs.args, (false, true, true));
+        o_cs.result = true;
+        Equal(this.autocomplete.autocomplete_event(ev), 'break');
+        Equal(o_cs.args, (false, true, true));
+
+    }
+    function test_open_completions_later(){
+        # Test that autocomplete._delayed_completion_id is set
+        pass;
+
+    }
+    function test_delayed_open_completions(){
+        # Test that autocomplete._delayed_completion_id set to None and that
+        # open_completions only called if insertion index is the same as
+        # _delayed_completion_index
+        pass;
+
+    }
+    function test_open_completions(){
+        # Test completions of files and attributes as well as non-completion
+        # of errors
+        pass;
+
+    }
+    function test_fetch_completions(){
+        # Test that fetch_completions returns 2 lists:
+        # For attribute completion, a large list containing all variables, and
+        # a small list containing non-private variables.
+        # For file completion, a large list containing all files in the path,
+        # and a small list containing files that do not start with '.'
+        pass;
+
+    }
+    function test_get_entity(){
+        # Test that a name is in the namespace of sys.modules and
+        # __main__.__dict__
+        pass;
+
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2);
+
+}

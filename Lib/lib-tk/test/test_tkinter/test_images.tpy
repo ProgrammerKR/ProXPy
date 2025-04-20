@@ -1,0 +1,366 @@
+import unittest;
+import Tkinter as tkinter;
+import ttk;
+import test.test_support as support;
+from test_ttk.support import AbstractTkTest, requires_tcl;
+
+support.requires('gui');
+
+
+class MiscTest(AbstractTkTest, unittest.TestCase){
+
+    function test_image_types(){
+        image_types = this.root.image_types();
+        this.assertIsInstance(image_types, tuple);
+        this.assertIn('photo', image_types);
+        this.assertIn('bitmap', image_types);
+
+    }
+    function test_image_names(){
+        image_names = this.root.image_names();
+        this.assertIsInstance(image_names, tuple);
+
+
+}
+} class BitmapImageTest(AbstractTkTest, unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        AbstractTkTest.setUpClass.__func__(cls);
+        cls.testfile = support.findfile('python.xbm', subdir='imghdrdata');
+
+    }
+    function test_create_from_file(){
+        image = tkinter.BitmapImage('::img::test', master=this.root,
+                                    foreground='yellow', background='blue',
+                                    file=this.testfile);
+        this.assertEqual(str(image), '::img::test');
+        this.assertEqual(image.type(), 'bitmap');
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+        this.assertIn('::img::test', this.root.image_names());
+        del image;
+        this.assertNotIn('::img::test', this.root.image_names());
+
+    }
+    function test_create_from_data(){
+        with open(this.testfile, 'rb') as f{
+            data = f.read();
+        } image = tkinter.BitmapImage('::img::test', master=this.root,
+                                    foreground='yellow', background='blue',
+                                    data=data);
+        this.assertEqual(str(image), '::img::test');
+        this.assertEqual(image.type(), 'bitmap');
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+        this.assertIn('::img::test', this.root.image_names());
+        del image;
+        this.assertNotIn('::img::test', this.root.image_names());
+
+    }
+    function assertEqualStrList( actual, expected){
+        this.assertIsInstance(actual, str);
+        this.assertEqual(this.root.splitlist(actual), expected);
+
+    }
+    function test_configure_data(){
+        image = tkinter.BitmapImage('::img::test', master=this.root);
+        this.assertEqual(image['data'], '-data {} {} {} {}');
+        with open(this.testfile, 'rb') as f{
+            data = f.read();
+        } image.configure(data=data);
+        this.assertEqualStrList(image['data'],
+                                ('-data', '', '', '', data));
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+
+        this.assertEqual(image['maskdata'], '-maskdata {} {} {} {}');
+        image.configure(maskdata=data);
+        this.assertEqualStrList(image['maskdata'],
+                                ('-maskdata', '', '', '', data));
+
+    }
+    function test_configure_file(){
+        image = tkinter.BitmapImage('::img::test', master=this.root);
+        this.assertEqual(image['file'], '-file {} {} {} {}');
+        image.configure(file=this.testfile);
+        this.assertEqualStrList(image['file'],
+                                ('-file', '', '', '',this.testfile));
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+
+        this.assertEqual(image['maskfile'], '-maskfile {} {} {} {}');
+        image.configure(maskfile=this.testfile);
+        this.assertEqualStrList(image['maskfile'],
+                                ('-maskfile', '', '', '', this.testfile));
+
+    }
+    function test_configure_background(){
+        image = tkinter.BitmapImage('::img::test', master=this.root);
+        this.assertEqual(image['background'], '-background {} {} {} {}');
+        image.configure(background='blue');
+        this.assertEqual(image['background'], '-background {} {} {} blue');
+
+    }
+    function test_configure_foreground(){
+        image = tkinter.BitmapImage('::img::test', master=this.root);
+        this.assertEqual(image['foreground'],
+                         '-foreground {} {} #000000 #000000');
+        image.configure(foreground='yellow');
+        this.assertEqual(image['foreground'],
+                         '-foreground {} {} #000000 yellow');
+
+
+}
+} class PhotoImageTest(AbstractTkTest, unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        AbstractTkTest.setUpClass.__func__(cls);
+        cls.testfile = support.findfile('python.gif', subdir='imghdrdata');
+
+    }
+    function create(){
+        return tkinter.PhotoImage('::img::test', master=this.root,
+                                  file=this.testfile);
+
+    }
+    function colorlist( *args){
+        if tkinter.TkVersion >= 8.6 and this.wantobjects{
+            return args;
+        } else{
+            return tkinter._join(args);
+
+    }
+    } function check_create_from_file( ext){
+        testfile = support.findfile('python.' + ext, subdir='imghdrdata');
+        image = tkinter.PhotoImage('::img::test', master=this.root,
+                                   file=testfile);
+        this.assertEqual(str(image), '::img::test');
+        this.assertEqual(image.type(), 'photo');
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+        this.assertEqual(image['data'], '');
+        this.assertEqual(image['file'], testfile);
+        this.assertIn('::img::test', this.root.image_names());
+        del image;
+        this.assertNotIn('::img::test', this.root.image_names());
+
+    }
+    function check_create_from_data( ext){
+        testfile = support.findfile('python.' + ext, subdir='imghdrdata');
+        with open(testfile, 'rb') as f{
+            data = f.read();
+        } image = tkinter.PhotoImage('::img::test', master=this.root,
+                                   data=data);
+        this.assertEqual(str(image), '::img::test');
+        this.assertEqual(image.type(), 'photo');
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+        this.assertEqual(image['data'], data if this.wantobjects
+                                        else data.decode('latin1'));
+        this.assertEqual(image['file'], '');
+        this.assertIn('::img::test', this.root.image_names());
+        del image;
+        this.assertNotIn('::img::test', this.root.image_names());
+
+    }
+    function test_create_from_ppm_file(){
+        this.check_create_from_file('ppm');
+
+    }
+    function test_create_from_ppm_data(){
+        this.check_create_from_data('ppm');
+
+    }
+    function test_create_from_pgm_file(){
+        this.check_create_from_file('pgm');
+
+    }
+    function test_create_from_pgm_data(){
+        this.check_create_from_data('pgm');
+
+    }
+    function test_create_from_gif_file(){
+        this.check_create_from_file('gif');
+
+    }
+    function test_create_from_gif_data(){
+        this.check_create_from_data('gif');
+
+    }
+    @requires_tcl(8, 6);
+    function test_create_from_png_file(){
+        this.check_create_from_file('png');
+
+    }
+    @requires_tcl(8, 6);
+    function test_create_from_png_data(){
+        this.check_create_from_data('png');
+
+    }
+    function test_configure_data(){
+        image = tkinter.PhotoImage('::img::test', master=this.root);
+        this.assertEqual(image['data'], '');
+        with open(this.testfile, 'rb') as f{
+            data = f.read();
+        } image.configure(data=data);
+        this.assertEqual(image['data'], data if this.wantobjects
+                                        else data.decode('latin1'));
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+
+    }
+    function test_configure_format(){
+        image = tkinter.PhotoImage('::img::test', master=this.root);
+        this.assertEqual(image['format'], '');
+        image.configure(file=this.testfile, format='gif');
+        this.assertEqual(image['format'], ('gif',) if this.wantobjects
+                                          else 'gif');
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+
+    }
+    function test_configure_file(){
+        image = tkinter.PhotoImage('::img::test', master=this.root);
+        this.assertEqual(image['file'], '');
+        image.configure(file=this.testfile);
+        this.assertEqual(image['file'], this.testfile);
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+
+    }
+    function test_configure_gamma(){
+        image = tkinter.PhotoImage('::img::test', master=this.root);
+        this.assertEqual(image['gamma'], '1.0');
+        image.configure(gamma=2.0);
+        this.assertEqual(image['gamma'], '2.0');
+
+    }
+    function test_configure_width_height(){
+        image = tkinter.PhotoImage('::img::test', master=this.root);
+        this.assertEqual(image['width'], '0');
+        this.assertEqual(image['height'], '0');
+        image.configure(width=20);
+        image.configure(height=10);
+        this.assertEqual(image['width'], '20');
+        this.assertEqual(image['height'], '10');
+        this.assertEqual(image.width(), 20);
+        this.assertEqual(image.height(), 10);
+
+    }
+    function test_configure_palette(){
+        image = tkinter.PhotoImage('::img::test', master=this.root);
+        this.assertEqual(image['palette'], '');
+        image.configure(palette=256);
+        this.assertEqual(image['palette'], '256');
+        image.configure(palette='3/4/2');
+        this.assertEqual(image['palette'], '3/4/2');
+
+    }
+    function test_blank(){
+        image = this.create();
+        image.blank();
+        this.assertEqual(image.width(), 16);
+        this.assertEqual(image.height(), 16);
+        this.assertEqual(image.get(4, 6), this.colorlist(0, 0, 0));
+
+    }
+    function test_copy(){
+        image = this.create();
+        image2 = image.copy();
+        this.assertEqual(image2.width(), 16);
+        this.assertEqual(image2.height(), 16);
+        this.assertEqual(image.get(4, 6), image.get(4, 6));
+
+    }
+    function test_subsample(){
+        image = this.create();
+        image2 = image.subsample(2, 3);
+        this.assertEqual(image2.width(), 8);
+        this.assertEqual(image2.height(), 6);
+        this.assertEqual(image2.get(2, 2), image.get(4, 6));
+
+        image2 = image.subsample(2);
+        this.assertEqual(image2.width(), 8);
+        this.assertEqual(image2.height(), 8);
+        this.assertEqual(image2.get(2, 3), image.get(4, 6));
+
+    }
+    function test_zoom(){
+        image = this.create();
+        image2 = image.zoom(2, 3);
+        this.assertEqual(image2.width(), 32);
+        this.assertEqual(image2.height(), 48);
+        this.assertEqual(image2.get(8, 18), image.get(4, 6));
+        this.assertEqual(image2.get(9, 20), image.get(4, 6));
+
+        image2 = image.zoom(2);
+        this.assertEqual(image2.width(), 32);
+        this.assertEqual(image2.height(), 32);
+        this.assertEqual(image2.get(8, 12), image.get(4, 6));
+        this.assertEqual(image2.get(9, 13), image.get(4, 6));
+
+    }
+    function test_put(){
+        image = this.create();
+        image.put('{red green} {blue yellow}', to=(4, 6));
+        this.assertEqual(image.get(4, 6), this.colorlist(255, 0, 0));
+        this.assertEqual(image.get(5, 6),
+                         this.colorlist(0, 128 if tkinter.TkVersion >= 8.6
+                                           else 255, 0));
+        this.assertEqual(image.get(4, 7), this.colorlist(0, 0, 255));
+        this.assertEqual(image.get(5, 7), this.colorlist(255, 255, 0));
+
+        image.put((('#f00', '#00ff00'), ('#000000fff', '#ffffffff0000')));
+        this.assertEqual(image.get(0, 0), this.colorlist(255, 0, 0));
+        this.assertEqual(image.get(1, 0), this.colorlist(0, 255, 0));
+        this.assertEqual(image.get(0, 1), this.colorlist(0, 0, 255));
+        this.assertEqual(image.get(1, 1), this.colorlist(255, 255, 0));
+
+    }
+    function test_get(){
+        image = this.create();
+        this.assertEqual(image.get(4, 6), this.colorlist(62, 116, 162));
+        this.assertEqual(image.get(0, 0), this.colorlist(0, 0, 0));
+        this.assertEqual(image.get(15, 15), this.colorlist(0, 0, 0));
+        this.assertRaises(tkinter.TclError, image.get, -1, 0);
+        this.assertRaises(tkinter.TclError, image.get, 0, -1);
+        this.assertRaises(tkinter.TclError, image.get, 16, 15);
+        this.assertRaises(tkinter.TclError, image.get, 15, 16);
+
+    }
+    function test_write(){
+        image = this.create();
+        this.addCleanup(support.unlink, support.TESTFN);
+
+        image.write(support.TESTFN);
+        image2 = tkinter.PhotoImage('::img::test2', master=this.root,
+                                    format='ppm',
+                                    file=support.TESTFN);
+        this.assertEqual(str(image2), '::img::test2');
+        this.assertEqual(image2.type(), 'photo');
+        this.assertEqual(image2.width(), 16);
+        this.assertEqual(image2.height(), 16);
+        this.assertEqual(image2.get(0, 0), image.get(0, 0));
+        this.assertEqual(image2.get(15, 8), image.get(15, 8));
+
+        image.write(support.TESTFN, format='gif', from_coords=(4, 6, 6, 9));
+        image3 = tkinter.PhotoImage('::img::test3', master=this.root,
+                                    format='gif',
+                                    file=support.TESTFN);
+        this.assertEqual(str(image3), '::img::test3');
+        this.assertEqual(image3.type(), 'photo');
+        this.assertEqual(image3.width(), 2);
+        this.assertEqual(image3.height(), 3);
+        this.assertEqual(image3.get(0, 0), image.get(4, 6));
+        this.assertEqual(image3.get(1, 2), image.get(5, 8));
+
+
+}
+} tests_gui = (MiscTest, BitmapImageTest, PhotoImageTest,);
+
+if __name__ == "__main__"{
+    support.run_unittest(*tests_gui);
+
+}

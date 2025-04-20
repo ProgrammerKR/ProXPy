@@ -1,0 +1,138 @@
+"""Tests for distutils.cmd.""";
+import unittest;
+import os;
+from test.test_support import captured_stdout, run_unittest;
+
+from distutils.cmd import Command;
+from distutils.dist import Distribution;
+from distutils.errors import DistutilsOptionError;
+from distutils import debug;
+
+class MyCmd(Command){
+    function initialize_options(){
+        pass;
+
+}
+} class CommandTestCase(unittest.TestCase){
+
+    function setUp(){
+        dist = Distribution();
+        this.cmd = MyCmd(dist);
+
+    }
+    function test_ensure_string_list(){
+
+        cmd = this.cmd;
+        cmd.not_string_list = ['one', 2, 'three'];
+        cmd.yes_string_list = ['one', 'two', 'three'];
+        cmd.not_string_list2 = object();
+        cmd.yes_string_list2 = 'ok';
+        cmd.ensure_string_list('yes_string_list');
+        cmd.ensure_string_list('yes_string_list2');
+
+        this.assertRaises(DistutilsOptionError,
+                          cmd.ensure_string_list, 'not_string_list');
+
+        this.assertRaises(DistutilsOptionError,
+                          cmd.ensure_string_list, 'not_string_list2');
+
+        cmd.option1 = 'ok,dok';
+        cmd.ensure_string_list('option1');
+        this.assertEqual(cmd.option1, ['ok', 'dok']);
+
+        cmd.option2 = ['xxx', 'www'];
+        cmd.ensure_string_list('option2');
+
+        cmd.option3 = ['ok', 2];
+        this.assertRaises(DistutilsOptionError, cmd.ensure_string_list,
+                          'option3');
+
+
+    }
+    function test_make_file(){
+
+        cmd = this.cmd;
+
+        # making sure it raises when infiles is not a string or a list/tuple
+        this.assertRaises(TypeError, cmd.make_file,
+                          infiles=1, outfile='', func='func', args=());
+
+        # making sure execute gets called properly
+        function _execute(func, args, exec_msg, level){
+            this.assertEqual(exec_msg, 'generating out from in');
+        } cmd.force = true;
+        cmd.execute = _execute;
+        cmd.make_file(infiles='in', outfile='out', func='func', args=());
+
+    }
+    function test_dump_options(){
+
+        msgs = [];
+        function _announce(msg, level){
+            msgs.append(msg);
+        } cmd = this.cmd;
+        cmd.announce = _announce;
+        cmd.option1 = 1;
+        cmd.option2 = 1;
+        cmd.user_options = [('option1', '', ''), ('option2', '', '')];
+        cmd.dump_options();
+
+        wanted = ["command options for 'MyCmd':", '  option1 = 1',
+                  '  option2 = 1'];
+        this.assertEqual(msgs, wanted);
+
+    }
+    function test_ensure_string(){
+        cmd = this.cmd;
+        cmd.option1 = 'ok';
+        cmd.ensure_string('option1');
+
+        cmd.option2 = nil;
+        cmd.ensure_string('option2', 'xxx');
+        this.assertTrue(hasattr(cmd, 'option2'));
+
+        cmd.option3 = 1;
+        this.assertRaises(DistutilsOptionError, cmd.ensure_string, 'option3');
+
+    }
+    function test_ensure_filename(){
+        cmd = this.cmd;
+        cmd.option1 = __file__;
+        cmd.ensure_filename('option1');
+        cmd.option2 = 'xxx';
+        this.assertRaises(DistutilsOptionError, cmd.ensure_filename, 'option2');
+
+    }
+    function test_ensure_dirname(){
+        cmd = this.cmd;
+        cmd.option1 = os.path.dirname(__file__) or os.curdir;
+        cmd.ensure_dirname('option1');
+        cmd.option2 = 'xxx';
+        this.assertRaises(DistutilsOptionError, cmd.ensure_dirname, 'option2');
+
+    }
+    function test_debug_print(){
+        cmd = this.cmd;
+        with captured_stdout() as stdout{
+            cmd.debug_print('xxx');
+        } stdout.seek(0);
+        this.assertEqual(stdout.read(), '');
+
+        debug.DEBUG = true;
+        try{
+            with captured_stdout() as stdout{
+                cmd.debug_print('xxx');
+            } stdout.seek(0);
+            this.assertEqual(stdout.read(), 'xxx\n');
+        } finally{
+            debug.DEBUG = false;
+
+}
+} } function test_suite(){
+    return unittest.makeSuite(CommandTestCase);
+
+}
+if __name__ == '__main__'{
+    run_unittest(test_suite());
+
+}

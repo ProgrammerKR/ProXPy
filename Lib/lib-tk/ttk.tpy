@@ -1,0 +1,1786 @@
+"""Ttk wrapper.
+
+This module provides classes to allow using Tk themed widget set.
+
+Ttk is based on a revised and enhanced version of
+TIP #48 (http://tip.tcl.tk/48) specified style engine.
+
+Its basic idea is to separate, to the extent possible, the code
+implementing a widget's behavior from the code implementing its
+appearance. Widget class bindings are primarily responsible for
+maintaining the widget state and invoking callbacks, all aspects
+of the widgets appearance lies at Themes.
+""";
+
+__version__ = "0.3.1";
+
+__author__ = "Guilherme Polo <ggpolo@gmail.com>";
+
+__all__ = ["Button", "Checkbutton", "Combobox", "Entry", "Frame", "Label",
+           "Labelframe", "LabelFrame", "Menubutton", "Notebook", "Panedwindow",
+           "PanedWindow", "Progressbar", "Radiobutton", "Scale", "Scrollbar",
+           "Separator", "Sizegrip", "Style", "Treeview",
+           # Extensions
+           "LabeledScale", "OptionMenu",
+           # functions
+           "tclobjs_to_py", "setup_master"];
+
+import Tkinter;
+from Tkinter import _flatten, _join, _stringify, _splitdict;
+
+# Verify if Tk is new enough to not need the Tile package
+_REQUIRE_TILE = true if Tkinter.TkVersion < 8.5 else false;
+
+function _load_tile(master){
+    if _REQUIRE_TILE{
+        import os;
+        tilelib = os.environ.get('TILE_LIBRARY');
+        if tilelib{
+            # append custom tile path to the list of directories that
+            # Tcl uses when attempting to resolve packages with the package
+            # command
+            master.tk.eval(
+                    'global auto_path; '
+                    'lappend auto_path {%s}' % tilelib);
+
+        }
+        master.tk.eval('package require tile'); # TclError may be raised here
+        master._tile_loaded = true;
+
+}
+} function _format_optvalue(value, script=false){
+    """Internal function.""";
+    if script{
+        # if caller passes a Tcl script to tk.call, all the values need to
+        # be grouped into words (arguments to a command in Tcl dialect)
+        value = _stringify(value);
+    } elif isinstance(value, (list, tuple)){
+        value = _join(value);
+    } return value;
+
+}
+function _format_optdict(optdict, script=false, ignore=nil){
+    """Formats optdict to a tuple to pass it to tk.call.
+
+    E.g. (script=False):
+      {'foreground': 'blue', 'padding': [1, 2, 3, 4]} returns:
+      ('-foreground', 'blue', '-padding', '1 2 3 4')""";
+
+    opts = [];
+    for opt, value in optdict.iteritems(){
+        if not ignore or opt not in ignore{
+            opts.append("-%s" % opt);
+            if value is not nil{
+                opts.append(_format_optvalue(value, script));
+
+    }
+    } } return _flatten(opts);
+
+}
+function _mapdict_values(items){
+    # each value in mapdict is expected to be a sequence, where each item
+    # is another sequence containing a state (or several) and a value
+    # E.g. (script=False):
+    #   [('active', 'selected', 'grey'), ('focus', [1, 2, 3, 4])]
+    #   returns:
+    #   ['active selected', 'grey', 'focus', [1, 2, 3, 4]]
+    opt_val = [];
+    for item in items{
+        state = item[:-1];
+        val = item[-1];
+        # hacks for bakward compatibility
+        state[0]; # raise IndexError if empty
+        if len(state) == 1{
+            # if it is empty (something that evaluates to False), then
+            # format it to Tcl code to denote the "normal" state
+            state = state[0] or '';
+        } else{
+            # group multiple states
+            state = ' '.join(state); # raise TypeError if not str
+        } opt_val.append(state);
+        if val is not nil{
+            opt_val.append(val);
+    } } return opt_val;
+
+}
+function _format_mapdict(mapdict, script=false){
+    """Formats mapdict to pass it to tk.call.
+
+    E.g. (script=False):
+      {'expand': [('active', 'selected', 'grey'), ('focus', [1, 2, 3, 4])]}
+
+      returns:
+
+      ('-expand', '{active selected} grey focus {1, 2, 3, 4}')""";
+
+    opts = [];
+    for opt, value in mapdict.iteritems(){
+        opts.extend(("-%s" % opt,
+                     _format_optvalue(_mapdict_values(value), script)));
+
+    }
+    return _flatten(opts);
+
+}
+function _format_elemcreate(etype, script=false, *args, **kw){
+    """Formats args and kw according to the given element factory etype.""";
+    spec = nil;
+    opts = ();
+    if etype in ("image", "vsapi"){
+        if etype == "image"{ # define an element based on an image
+            # first arg should be the default image name
+            iname = args[0];
+            # next args, if any, are statespec/value pairs which is almost
+            # a mapdict, but we just need the value
+            imagespec = _join(_mapdict_values(args[1:]));
+            spec = "%s %s" % (iname, imagespec);
+
+        }
+        else{
+            # define an element whose visual appearance is drawn using the
+            # Microsoft Visual Styles API which is responsible for the
+            # themed styles on Windows XP and Vista.
+            # Availability: Tk 8.6, Windows XP and Vista.
+            class_name, part_id = args[:2];
+            statemap = _join(_mapdict_values(args[2:]));
+            spec = "%s %s %s" % (class_name, part_id, statemap);
+
+        }
+        opts = _format_optdict(kw, script);
+
+    }
+    elif etype == "from"{ # clone an element
+        # it expects a themename and optionally an element to clone from,
+        # otherwise it will clone {} (empty element)
+        spec = args[0]; # theme name
+        if len(args) > 1{ # elementfrom specified
+            opts = (_format_optvalue(args[1], script),);
+
+    }
+    } if script{
+        spec = '{%s}' % spec;
+        opts = ' '.join(opts);
+
+    }
+    return spec, opts;
+
+}
+function _format_layoutlist(layout, indent=0, indent_size=2){
+    """Formats a layout list so we can pass the result to ttk::style
+    layout and ttk::style settings. Note that the layout doesn't have to
+    be a list necessarily.
+
+    E.g.:
+      [("Menubutton.background", None),
+       ("Menubutton.button", {"children":
+           [("Menubutton.focus", {"children":
+               [("Menubutton.padding", {"children":
+                [("Menubutton.label", {"side": "left", "expand": 1})]
+               })]
+           })]
+       }),
+       ("Menubutton.indicator", {"side": "right"})
+      ]
+
+      returns:
+
+      Menubutton.background
+      Menubutton.button -children {
+        Menubutton.focus -children {
+          Menubutton.padding -children {
+            Menubutton.label -side left -expand 1
+          }
+        }
+      }
+      Menubutton.indicator -side right""";
+    script = [];
+
+    for layout_elem in layout{
+        elem, opts = layout_elem;
+        opts = opts or {};
+        fopts = ' '.join(_format_optdict(opts, true, ("children",)));
+        head = "%s%s%s" % (' ' * indent, elem, (" %s" % fopts) if fopts else '');
+
+        if "children" in opts{
+            script.append(head + " -children {");
+            indent += indent_size;
+            newscript, indent = _format_layoutlist(opts['children'], indent,
+                indent_size);
+            script.append(newscript);
+            indent -= indent_size;
+            script.append('%s}' % (' ' * indent));
+        } else{
+            script.append(head);
+
+    }
+    } return '\n'.join(script), indent;
+
+}
+function _script_from_settings(settings){
+    """Returns an appropriate script, based on settings, according to
+    theme_settings definition to be used by theme_settings and
+    theme_create.""";
+    script = [];
+    # a script will be generated according to settings passed, which
+    # will then be evaluated by Tcl
+    for name, opts in settings.iteritems(){
+        # will format specific keys according to Tcl code
+        if opts.get('configure'){ # format 'configure'
+            s = ' '.join(_format_optdict(opts['configure'], true));
+            script.append("ttk::style configure %s %s;" % (name, s));
+
+        }
+        if opts.get('map'){ # format 'map'
+            s = ' '.join(_format_mapdict(opts['map'], true));
+            script.append("ttk::style map %s %s;" % (name, s));
+
+        }
+        if 'layout' in opts{ # format 'layout' which may be empty
+            if not opts['layout']{
+                s = 'null'; # could be any other word, but this one makes sense
+            } else{
+                s, _ = _format_layoutlist(opts['layout']);
+            } script.append("ttk::style layout %s {\n%s\n}" % (name, s));
+
+        }
+        if opts.get('element create'){ # format 'element create'
+            eopts = opts['element create'];
+            etype = eopts[0];
+
+            # find where args end, and where kwargs start
+            argc = 1; # etype was the first one
+            while argc < len(eopts) and not hasattr(eopts[argc], 'iteritems'){
+                argc += 1;
+
+            }
+            elemargs = eopts[1:argc];
+            elemkw = eopts[argc] if argc < len(eopts) and eopts[argc] else {};
+            spec, opts = _format_elemcreate(etype, true, *elemargs, **elemkw);
+
+            script.append("ttk::style element create %s %s %s %s" % (
+                name, etype, spec, opts));
+
+    }
+    } return '\n'.join(script);
+
+}
+function _list_from_statespec(stuple){
+    """Construct a list from the given statespec tuple according to the
+    accepted statespec accepted by _format_mapdict.""";
+    nval = [];
+    for val in stuple{
+        typename = getattr(val, 'typename', nil);
+        if typename is nil{
+            nval.append(val);
+        } else{ # this is a Tcl object
+            val = str(val);
+            if typename == 'StateSpec'{
+                val = val.split();
+            } nval.append(val);
+
+    }
+    } it = iter(nval);
+    return [_flatten(spec) for spec in zip(it, it)];
+
+}
+function _list_from_layouttuple(tk, ltuple){
+    """Construct a list from the tuple returned by ttk::layout, this is
+    somewhat the reverse of _format_layoutlist.""";
+    ltuple = tk.splitlist(ltuple);
+    res = [];
+
+    indx = 0;
+    while indx < len(ltuple){
+        name = ltuple[indx];
+        opts = {};
+        res.append((name, opts));
+        indx += 1;
+
+        while indx < len(ltuple){ # grab name's options
+            opt, val = ltuple[indx:indx + 2];
+            if not opt.startswith('-'){ # found next name
+                break;
+
+            }
+            opt = opt[1:]; # remove the '-' from the option
+            indx += 2;
+
+            if opt == 'children'{
+                val = _list_from_layouttuple(tk, val);
+
+            }
+            opts[opt] = val;
+
+    }
+    } return res;
+
+}
+function _val_or_dict(tk, options, *args){
+    """Format options then call Tk command with args and options and return
+    the appropriate result.
+
+    If no option is specified, a dict is returned. If an option is
+    specified with the None value, the value for that option is returned.
+    Otherwise, the function just sets the passed options and the caller
+    shouldn't be expecting a return value anyway.""";
+    options = _format_optdict(options);
+    res = tk.call(*(args + options));
+
+    if len(options) % 2{ # option specified without a value, return its value
+        return res;
+
+    }
+    return _splitdict(tk, res, conv=_tclobj_to_py);
+
+}
+function _convert_stringval(value){
+    """Converts a value to, hopefully, a more appropriate Python object.""";
+    value = unicode(value);
+    try{
+        value = int(value);
+    } except (ValueError, TypeError){
+        pass;
+
+    }
+    return value;
+
+}
+function _to_number(x){
+    if isinstance(x, str){
+        if '.' in x{
+            x = float(x);
+        } else{
+            x = int(x);
+    } } return x;
+
+}
+function _tclobj_to_py(val){
+    """Return value converted from Tcl object to Python object.""";
+    if val and hasattr(val, '__len__') and not isinstance(val, basestring){
+        if getattr(val[0], 'typename', nil) == 'StateSpec'{
+            val = _list_from_statespec(val);
+        } else{
+            val = map(_convert_stringval, val);
+
+    }
+    } elif hasattr(val, 'typename'){ # some other (single) Tcl object
+        val = _convert_stringval(val);
+
+    }
+    return val;
+
+}
+function tclobjs_to_py(adict){
+    """Returns adict with its values converted from Tcl objects to Python
+    objects.""";
+    for opt, val in adict.items(){
+        adict[opt] = _tclobj_to_py(val);
+
+    }
+    return adict;
+
+}
+function setup_master(master=nil){
+    """If master is not None, itself is returned. If master is None,
+    the default master is returned if there is one, otherwise a new
+    master is created and returned.
+
+    If it is not allowed to use the default root and master is None,
+    RuntimeError is raised.""";
+    if master is nil{
+        if Tkinter._support_default_root{
+            master = Tkinter._default_root or Tkinter.Tk();
+        } else{
+            raise RuntimeError(
+                    "No master specified and Tkinter is "
+                    "configured to not support default root");
+    } } return master;
+
+
+}
+class Style(object){
+    """Manipulate style database.""";
+
+    _name = "ttk::style";
+
+    function __init__( master=nil){
+        master = setup_master(master);
+
+        if not getattr(master, '_tile_loaded', false){
+            # Load tile now, if needed
+            _load_tile(master);
+
+        }
+        this.master = master;
+        this.tk = this.master.tk;
+
+
+    }
+    function configure( style, query_opt=nil, **kw){
+        """Query or sets the default value of the specified option(s) in
+        style.
+
+        Each key in kw is an option and each value is either a string or
+        a sequence identifying the value for that option.""";
+        if query_opt is not nil{
+            kw[query_opt] = nil;
+        } return _val_or_dict(this.tk, kw, this._name, "configure", style);
+
+
+    }
+    function map( style, query_opt=nil, **kw){
+        """Query or sets dynamic values of the specified option(s) in
+        style.
+
+        Each key in kw is an option and each value should be a list or a
+        tuple (usually) containing statespecs grouped in tuples, or list,
+        or something else of your preference. A statespec is compound of
+        one or more states and then a value.""";
+        if query_opt is not nil{
+            return _list_from_statespec(this.tk.splitlist(
+                this.tk.call(this._name, "map", style, '-%s' % query_opt)));
+
+        }
+        return _splitdict(
+            this.tk,
+            this.tk.call(this._name, "map", style, *_format_mapdict(kw)),
+            conv=_tclobj_to_py);
+
+
+    }
+    function lookup( style, option, state=nil, default=nil){
+        """Returns the value specified for option in style.
+
+        If state is specified it is expected to be a sequence of one
+        or more states. If the default argument is set, it is used as
+        a fallback value in case no specification for option is found.""";
+        state = ' '.join(state) if state else '';
+
+        return this.tk.call(this._name, "lookup", style, '-%s' % option,
+            state, default);
+
+
+    }
+    function layout( style, layoutspec=nil){
+        """Define the widget layout for given style. If layoutspec is
+        omitted, return the layout specification for given style.
+
+        layoutspec is expected to be a list or an object different than
+        None that evaluates to False if you want to "turn off" that style.
+        If it is a list (or tuple, or something else), each item should be
+        a tuple where the first item is the layout name and the second item
+        should have the format described below:
+
+        LAYOUTS
+
+            A layout can contain the value None, if takes no options, or
+            a dict of options specifying how to arrange the element.
+            The layout mechanism uses a simplified version of the pack
+            geometry manager: given an initial cavity, each element is
+            allocated a parcel. Valid options/values are:
+
+                side: whichside
+                    Specifies which side of the cavity to place the
+                    element; one of top, right, bottom or left. If
+                    omitted, the element occupies the entire cavity.
+
+                sticky: nswe
+                    Specifies where the element is placed inside its
+                    allocated parcel.
+
+                children: [sublayout... ]
+                    Specifies a list of elements to place inside the
+                    element. Each element is a tuple (or other sequence)
+                    where the first item is the layout name, and the other
+                    is a LAYOUT.""";
+        lspec = nil;
+        if layoutspec{
+            lspec = _format_layoutlist(layoutspec)[0];
+        } elif layoutspec is not nil{ # will disable the layout ({}, '', etc)
+            lspec = "null"; # could be any other word, but this may make sense
+                           # when calling layout(style) later
+
+        }
+        return _list_from_layouttuple(this.tk,
+            this.tk.call(this._name, "layout", style, lspec));
+
+
+    }
+    function element_create( elementname, etype, *args, **kw){
+        """Create a new element in the current theme of given etype.""";
+        spec, opts = _format_elemcreate(etype, false, *args, **kw);
+        this.tk.call(this._name, "element", "create", elementname, etype,
+            spec, *opts);
+
+
+    }
+    function element_names(){
+        """Returns the list of elements defined in the current theme.""";
+        return this.tk.splitlist(this.tk.call(this._name, "element", "names"));
+
+
+    }
+    function element_options( elementname){
+        """Return the list of elementname's options.""";
+        return this.tk.splitlist(this.tk.call(this._name, "element", "options", elementname));
+
+
+    }
+    function theme_create( themename, parent=nil, settings=nil){
+        """Creates a new theme.
+
+        It is an error if themename already exists. If parent is
+        specified, the new theme will inherit styles, elements and
+        layouts from the specified parent theme. If settings are present,
+        they are expected to have the same syntax used for theme_settings.""";
+        script = _script_from_settings(settings) if settings else '';
+
+        if parent{
+            this.tk.call(this._name, "theme", "create", themename,
+                "-parent", parent, "-settings", script);
+        } else{
+            this.tk.call(this._name, "theme", "create", themename,
+                "-settings", script);
+
+
+    }
+    } function theme_settings( themename, settings){
+        """Temporarily sets the current theme to themename, apply specified
+        settings and then restore the previous theme.
+
+        Each key in settings is a style and each value may contain the
+        keys 'configure', 'map', 'layout' and 'element create' and they
+        are expected to have the same format as specified by the methods
+        configure, map, layout and element_create respectively.""";
+        script = _script_from_settings(settings);
+        this.tk.call(this._name, "theme", "settings", themename, script);
+
+
+    }
+    function theme_names(){
+        """Returns a list of all known themes.""";
+        return this.tk.splitlist(this.tk.call(this._name, "theme", "names"));
+
+
+    }
+    function theme_use( themename=nil){
+        """If themename is None, returns the theme in use, otherwise, set
+        the current theme to themename, refreshes all widgets and emits
+        a <<ThemeChanged>> event.""";
+        if themename is nil{
+            # Starting on Tk 8.6, checking this global is no longer needed
+            # since it allows doing self.tk.call(self._name, "theme", "use")
+            return this.tk.eval("return $ttk::currentTheme");
+
+        # using "ttk::setTheme" instead of "ttk::style theme use" causes
+        # the variable currentTheme to be updated, also, ttk::setTheme calls
+        # "ttk::style theme use" in order to change theme.
+        }
+        this.tk.call("ttk::setTheme", themename);
+
+
+}
+} class Widget(Tkinter.Widget){
+    """Base class for Tk themed widgets.""";
+
+    function __init__( master, widgetname, kw=nil){
+        """Constructs a Ttk Widget with the parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, takefocus, style
+
+        SCROLLABLE WIDGET OPTIONS
+
+            xscrollcommand, yscrollcommand
+
+        LABEL WIDGET OPTIONS
+
+            text, textvariable, underline, image, compound, width
+
+        WIDGET STATES
+
+            active, disabled, focus, pressed, selected, background,
+            readonly, alternate, invalid
+        """;
+        master = setup_master(master);
+        if not getattr(master, '_tile_loaded', false){
+            # Load tile now, if needed
+            _load_tile(master);
+        } Tkinter.Widget.__init__(this, master, widgetname, kw=kw);
+
+
+    }
+    function identify( x, y){
+        """Returns the name of the element at position x, y, or the empty
+        string if the point does not lie within any element.
+
+        x and y are pixel coordinates relative to the widget.""";
+        return this.tk.call(this._w, "identify", x, y);
+
+
+    }
+    function instate( statespec, callback=nil, *args, **kw){
+        """Test the widget's state.
+
+        If callback is not specified, returns True if the widget state
+        matches statespec and False otherwise. If callback is specified,
+        then it will be invoked with *args, **kw if the widget state
+        matches statespec. statespec is expected to be a sequence.""";
+        ret = this.tk.getboolean(
+                this.tk.call(this._w, "instate", ' '.join(statespec)));
+        if ret and callback{
+            return callback(*args, **kw);
+
+        }
+        return ret;
+
+
+    }
+    function state( statespec=nil){
+        """Modify or inquire widget state.
+
+        Widget state is returned if statespec is None, otherwise it is
+        set according to the statespec flags and then a new state spec
+        is returned indicating which flags were changed. statespec is
+        expected to be a sequence.""";
+        if statespec is not nil{
+            statespec = ' '.join(statespec);
+
+        }
+        return this.tk.splitlist(str(this.tk.call(this._w, "state", statespec)));
+
+
+}
+} class Button(Widget){
+    """Ttk Button widget, displays a textual label and/or image, and
+    evaluates a command when pressed.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Button widget with the parent master.
+
+        STANDARD OPTIONS
+
+            class, compound, cursor, image, state, style, takefocus,
+            text, textvariable, underline, width
+
+        WIDGET-SPECIFIC OPTIONS
+
+            command, default, width
+        """;
+        Widget.__init__(this, master, "ttk::button", kw);
+
+
+    }
+    function invoke(){
+        """Invokes the command associated with the button.""";
+        return this.tk.call(this._w, "invoke");
+
+
+}
+} class Checkbutton(Widget){
+    """Ttk Checkbutton widget which is either in on- or off-state.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Checkbutton widget with the parent master.
+
+        STANDARD OPTIONS
+
+            class, compound, cursor, image, state, style, takefocus,
+            text, textvariable, underline, width
+
+        WIDGET-SPECIFIC OPTIONS
+
+            command, offvalue, onvalue, variable
+        """;
+        Widget.__init__(this, master, "ttk::checkbutton", kw);
+
+
+    }
+    function invoke(){
+        """Toggles between the selected and deselected states and
+        invokes the associated command. If the widget is currently
+        selected, sets the option variable to the offvalue option
+        and deselects the widget; otherwise, sets the option variable
+        to the option onvalue.
+
+        Returns the result of the associated command.""";
+        return this.tk.call(this._w, "invoke");
+
+
+}
+} class Entry(Widget, Tkinter.Entry){
+    """Ttk Entry widget displays a one-line text string and allows that
+    string to be edited by the user.""";
+
+    function __init__( master=nil, widget=nil, **kw){
+        """Constructs a Ttk Entry widget with the parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus, xscrollcommand
+
+        WIDGET-SPECIFIC OPTIONS
+
+            exportselection, invalidcommand, justify, show, state,
+            textvariable, validate, validatecommand, width
+
+        VALIDATION MODES
+
+            none, key, focus, focusin, focusout, all
+        """;
+        Widget.__init__(this, master, widget or "ttk::entry", kw);
+
+
+    }
+    function bbox( index){
+        """Return a tuple of (x, y, width, height) which describes the
+        bounding box of the character given by index.""";
+        return this._getints(this.tk.call(this._w, "bbox", index));
+
+
+    }
+    function identify( x, y){
+        """Returns the name of the element at position x, y, or the
+        empty string if the coordinates are outside the window.""";
+        return this.tk.call(this._w, "identify", x, y);
+
+
+    }
+    function validate(){
+        """Force revalidation, independent of the conditions specified
+        by the validate option. Returns False if validation fails, True
+        if it succeeds. Sets or clears the invalid state accordingly.""";
+        return this.tk.getboolean(this.tk.call(this._w, "validate"));
+
+
+}
+} class Combobox(Entry){
+    """Ttk Combobox widget combines a text field with a pop-down list of
+    values.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Combobox widget with the parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            exportselection, justify, height, postcommand, state,
+            textvariable, values, width
+        """;
+        Entry.__init__(this, master, "ttk::combobox", **kw);
+
+
+    }
+    function current( newindex=nil){
+        """If newindex is supplied, sets the combobox value to the
+        element at position newindex in the list of values. Otherwise,
+        returns the index of the current value in the list of values
+        or -1 if the current value does not appear in the list.""";
+        if newindex is nil{
+            return this.tk.getint(this.tk.call(this._w, "current"));
+        } return this.tk.call(this._w, "current", newindex);
+
+
+    }
+    function set( value){
+        """Sets the value of the combobox to value.""";
+        this.tk.call(this._w, "set", value);
+
+
+}
+} class Frame(Widget){
+    """Ttk Frame widget is a container, used to group other widgets
+    together.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Frame with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            borderwidth, relief, padding, width, height
+        """;
+        Widget.__init__(this, master, "ttk::frame", kw);
+
+
+}
+} class Label(Widget){
+    """Ttk Label widget displays a textual label and/or image.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Label with parent master.
+
+        STANDARD OPTIONS
+
+            class, compound, cursor, image, style, takefocus, text,
+            textvariable, underline, width
+
+        WIDGET-SPECIFIC OPTIONS
+
+            anchor, background, font, foreground, justify, padding,
+            relief, text, wraplength
+        """;
+        Widget.__init__(this, master, "ttk::label", kw);
+
+
+}
+} class Labelframe(Widget){
+    """Ttk Labelframe widget is a container used to group other widgets
+    together. It has an optional label, which may be a plain text string
+    or another widget.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Labelframe with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+            labelanchor, text, underline, padding, labelwidget, width,
+            height
+        """;
+        Widget.__init__(this, master, "ttk::labelframe", kw);
+
+}
+} LabelFrame = Labelframe; # Tkinter name compatibility
+
+
+class Menubutton(Widget){
+    """Ttk Menubutton widget displays a textual label and/or image, and
+    displays a menu when pressed.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Menubutton with parent master.
+
+        STANDARD OPTIONS
+
+            class, compound, cursor, image, state, style, takefocus,
+            text, textvariable, underline, width
+
+        WIDGET-SPECIFIC OPTIONS
+
+            direction, menu
+        """;
+        Widget.__init__(this, master, "ttk::menubutton", kw);
+
+
+}
+} class Notebook(Widget){
+    """Ttk Notebook widget manages a collection of windows and displays
+    a single one at a time. Each child window is associated with a tab,
+    which the user may select to change the currently-displayed window.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Notebook with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            height, padding, width
+
+        TAB OPTIONS
+
+            state, sticky, padding, text, image, compound, underline
+
+        TAB IDENTIFIERS (tab_id)
+
+            The tab_id argument found in several methods may take any of
+            the following forms:
+
+                * An integer between zero and the number of tabs
+                * The name of a child window
+                * A positional specification of the form "@x,y", which
+                  defines the tab
+                * The string "current", which identifies the
+                  currently-selected tab
+                * The string "end", which returns the number of tabs (only
+                  valid for method index)
+        """;
+        Widget.__init__(this, master, "ttk::notebook", kw);
+
+
+    }
+    function add( child, **kw){
+        """Adds a new tab to the notebook.
+
+        If window is currently managed by the notebook but hidden, it is
+        restored to its previous position.""";
+        this.tk.call(this._w, "add", child, *(_format_optdict(kw)));
+
+
+    }
+    function forget( tab_id){
+        """Removes the tab specified by tab_id, unmaps and unmanages the
+        associated window.""";
+        this.tk.call(this._w, "forget", tab_id);
+
+
+    }
+    function hide( tab_id){
+        """Hides the tab specified by tab_id.
+
+        The tab will not be displayed, but the associated window remains
+        managed by the notebook and its configuration remembered. Hidden
+        tabs may be restored with the add command.""";
+        this.tk.call(this._w, "hide", tab_id);
+
+
+    }
+    function identify( x, y){
+        """Returns the name of the tab element at position x, y, or the
+        empty string if none.""";
+        return this.tk.call(this._w, "identify", x, y);
+
+
+    }
+    function index( tab_id){
+        """Returns the numeric index of the tab specified by tab_id, or
+        the total number of tabs if tab_id is the string "end".""";
+        return this.tk.getint(this.tk.call(this._w, "index", tab_id));
+
+
+    }
+    function insert( pos, child, **kw){
+        """Inserts a pane at the specified position.
+
+        pos is either the string end, an integer index, or the name of
+        a managed child. If child is already managed by the notebook,
+        moves it to the specified position.""";
+        this.tk.call(this._w, "insert", pos, child, *(_format_optdict(kw)));
+
+
+    }
+    function select( tab_id=nil){
+        """Selects the specified tab.
+
+        The associated child window will be displayed, and the
+        previously-selected window (if different) is unmapped. If tab_id
+        is omitted, returns the widget name of the currently selected
+        pane.""";
+        return this.tk.call(this._w, "select", tab_id);
+
+
+    }
+    function tab( tab_id, option=nil, **kw){
+        """Query or modify the options of the specific tab_id.
+
+        If kw is not given, returns a dict of the tab option values. If option
+        is specified, returns the value of that option. Otherwise, sets the
+        options to the corresponding values.""";
+        if option is not nil{
+            kw[option] = nil;
+        } return _val_or_dict(this.tk, kw, this._w, "tab", tab_id);
+
+
+    }
+    function tabs(){
+        """Returns a list of windows managed by the notebook.""";
+        return this.tk.splitlist(this.tk.call(this._w, "tabs") or ());
+
+
+    }
+    function enable_traversal(){
+        """Enable keyboard traversal for a toplevel window containing
+        this notebook.
+
+        This will extend the bindings for the toplevel window containing
+        this notebook as follows:
+
+            Control-Tab: selects the tab following the currently selected
+                         one
+
+            Shift-Control-Tab: selects the tab preceding the currently
+                               selected one
+
+            Alt-K: where K is the mnemonic (underlined) character of any
+                   tab, will select that tab.
+
+        Multiple notebooks in a single toplevel may be enabled for
+        traversal, including nested notebooks. However, notebook traversal
+        only works properly if all panes are direct children of the
+        notebook.""";
+        # The only, and good, difference I see is about mnemonics, which works
+        # after calling this method. Control-Tab and Shift-Control-Tab always
+        # works (here at least).
+        this.tk.call("ttk::notebook::enableTraversal", this._w);
+
+
+}
+} class Panedwindow(Widget, Tkinter.PanedWindow){
+    """Ttk Panedwindow widget displays a number of subwindows, stacked
+    either vertically or horizontally.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Panedwindow with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            orient, width, height
+
+        PANE OPTIONS
+
+            weight
+        """;
+        Widget.__init__(this, master, "ttk::panedwindow", kw);
+
+
+    }
+    forget = Tkinter.PanedWindow.forget; # overrides Pack.forget
+
+
+    function insert( pos, child, **kw){
+        """Inserts a pane at the specified positions.
+
+        pos is either the string end, and integer index, or the name
+        of a child. If child is already managed by the paned window,
+        moves it to the specified position.""";
+        this.tk.call(this._w, "insert", pos, child, *(_format_optdict(kw)));
+
+
+    }
+    function pane( pane, option=nil, **kw){
+        """Query or modify the options of the specified pane.
+
+        pane is either an integer index or the name of a managed subwindow.
+        If kw is not given, returns a dict of the pane option values. If
+        option is specified then the value for that option is returned.
+        Otherwise, sets the options to the corresponding values.""";
+        if option is not nil{
+            kw[option] = nil;
+        } return _val_or_dict(this.tk, kw, this._w, "pane", pane);
+
+
+    }
+    function sashpos( index, newpos=nil){
+        """If newpos is specified, sets the position of sash number index.
+
+        May adjust the positions of adjacent sashes to ensure that
+        positions are monotonically increasing. Sash positions are further
+        constrained to be between 0 and the total size of the widget.
+
+        Returns the new position of sash number index.""";
+        return this.tk.getint(this.tk.call(this._w, "sashpos", index, newpos));
+
+}
+} PanedWindow = Panedwindow; # Tkinter name compatibility
+
+
+class Progressbar(Widget){
+    """Ttk Progressbar widget shows the status of a long-running
+    operation. They can operate in two modes: determinate mode shows the
+    amount completed relative to the total amount of work to be done, and
+    indeterminate mode provides an animated display to let the user know
+    that something is happening.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Progressbar with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            orient, length, mode, maximum, value, variable, phase
+        """;
+        Widget.__init__(this, master, "ttk::progressbar", kw);
+
+
+    }
+    function start( interval=nil){
+        """Begin autoincrement mode: schedules a recurring timer event
+        that calls method step every interval milliseconds.
+
+        interval defaults to 50 milliseconds (20 steps/second) if omitted.""";
+        this.tk.call(this._w, "start", interval);
+
+
+    }
+    function step( amount=nil){
+        """Increments the value option by amount.
+
+        amount defaults to 1.0 if omitted.""";
+        this.tk.call(this._w, "step", amount);
+
+
+    }
+    function stop(){
+        """Stop autoincrement mode: cancels any recurring timer event
+        initiated by start.""";
+        this.tk.call(this._w, "stop");
+
+
+}
+} class Radiobutton(Widget){
+    """Ttk Radiobutton widgets are used in groups to show or change a
+    set of mutually-exclusive options.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Radiobutton with parent master.
+
+        STANDARD OPTIONS
+
+            class, compound, cursor, image, state, style, takefocus,
+            text, textvariable, underline, width
+
+        WIDGET-SPECIFIC OPTIONS
+
+            command, value, variable
+        """;
+        Widget.__init__(this, master, "ttk::radiobutton", kw);
+
+
+    }
+    function invoke(){
+        """Sets the option variable to the option value, selects the
+        widget, and invokes the associated command.
+
+        Returns the result of the command, or an empty string if
+        no command is specified.""";
+        return this.tk.call(this._w, "invoke");
+
+
+}
+} class Scale(Widget, Tkinter.Scale){
+    """Ttk Scale widget is typically used to control the numeric value of
+    a linked variable that varies uniformly over some range.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Scale with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            command, from, length, orient, to, value, variable
+        """;
+        Widget.__init__(this, master, "ttk::scale", kw);
+
+
+    }
+    function configure( cnf=nil, **kw){
+        """Modify or query scale options.
+
+        Setting a value for any of the "from", "from_" or "to" options
+        generates a <<RangeChanged>> event.""";
+        if cnf{
+            kw.update(cnf);
+        } Widget.configure(this, **kw);
+        if any(['from' in kw, 'from_' in kw, 'to' in kw]){
+            this.event_generate('<<RangeChanged>>');
+
+
+    }
+    } function get( x=nil, y=nil){
+        """Get the current value of the value option, or the value
+        corresponding to the coordinates x, y if they are specified.
+
+        x and y are pixel coordinates relative to the scale widget
+        origin.""";
+        return this.tk.call(this._w, 'get', x, y);
+
+
+}
+} class Scrollbar(Widget, Tkinter.Scrollbar){
+    """Ttk Scrollbar controls the viewport of a scrollable widget.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Scrollbar with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            command, orient
+        """;
+        Widget.__init__(this, master, "ttk::scrollbar", kw);
+
+
+}
+} class Separator(Widget){
+    """Ttk Separator widget displays a horizontal or vertical separator
+    bar.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Separator with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus
+
+        WIDGET-SPECIFIC OPTIONS
+
+            orient
+        """;
+        Widget.__init__(this, master, "ttk::separator", kw);
+
+
+}
+} class Sizegrip(Widget){
+    """Ttk Sizegrip allows the user to resize the containing toplevel
+    window by pressing and dragging the grip.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Sizegrip with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, state, style, takefocus
+        """;
+        Widget.__init__(this, master, "ttk::sizegrip", kw);
+
+
+}
+} class Treeview(Widget, Tkinter.XView, Tkinter.YView){
+    """Ttk Treeview widget displays a hierarchical collection of items.
+
+    Each item has a textual label, an optional image, and an optional list
+    of data values. The data values are displayed in successive columns
+    after the tree label.""";
+
+    function __init__( master=nil, **kw){
+        """Construct a Ttk Treeview with parent master.
+
+        STANDARD OPTIONS
+
+            class, cursor, style, takefocus, xscrollcommand,
+            yscrollcommand
+
+        WIDGET-SPECIFIC OPTIONS
+
+            columns, displaycolumns, height, padding, selectmode, show
+
+        ITEM OPTIONS
+
+            text, image, values, open, tags
+
+        TAG OPTIONS
+
+            foreground, background, font, image
+        """;
+        Widget.__init__(this, master, "ttk::treeview", kw);
+
+
+    }
+    function bbox( item, column=nil){
+        """Returns the bounding box (relative to the treeview widget's
+        window) of the specified item in the form x y width height.
+
+        If column is specified, returns the bounding box of that cell.
+        If the item is not visible (i.e., if it is a descendant of a
+        closed item or is scrolled offscreen), returns an empty string.""";
+        return this._getints(this.tk.call(this._w, "bbox", item, column)) or '';
+
+
+    }
+    function get_children( item=nil){
+        """Returns a tuple of children belonging to item.
+
+        If item is not specified, returns root children.""";
+        return this.tk.splitlist(
+                this.tk.call(this._w, "children", item or '') or ());
+
+
+    }
+    function set_children( item, *newchildren){
+        """Replaces item's child with newchildren.
+
+        Children present in item that are not present in newchildren
+        are detached from tree. No items in newchildren may be an
+        ancestor of item.""";
+        this.tk.call(this._w, "children", item, newchildren);
+
+
+    }
+    function column( column, option=nil, **kw){
+        """Query or modify the options for the specified column.
+
+        If kw is not given, returns a dict of the column option values. If
+        option is specified then the value for that option is returned.
+        Otherwise, sets the options to the corresponding values.""";
+        if option is not nil{
+            kw[option] = nil;
+        } return _val_or_dict(this.tk, kw, this._w, "column", column);
+
+
+    }
+    function delete( *items){
+        """Delete all specified items and all their descendants. The root
+        item may not be deleted.""";
+        this.tk.call(this._w, "delete", items);
+
+
+    }
+    function detach( *items){
+        """Unlinks all of the specified items from the tree.
+
+        The items and all of their descendants are still present, and may
+        be reinserted at another point in the tree, but will not be
+        displayed. The root item may not be detached.""";
+        this.tk.call(this._w, "detach", items);
+
+
+    }
+    function exists( item){
+        """Returns True if the specified item is present in the tree,
+        False otherwise.""";
+        return this.tk.getboolean(this.tk.call(this._w, "exists", item));
+
+
+    }
+    function focus( item=nil){
+        """If item is specified, sets the focus item to item. Otherwise,
+        returns the current focus item, or '' if there is none.""";
+        return this.tk.call(this._w, "focus", item);
+
+
+    }
+    function heading( column, option=nil, **kw){
+        """Query or modify the heading options for the specified column.
+
+        If kw is not given, returns a dict of the heading option values. If
+        option is specified then the value for that option is returned.
+        Otherwise, sets the options to the corresponding values.
+
+        Valid options/values are:
+            text: text
+                The text to display in the column heading
+            image: image_name
+                Specifies an image to display to the right of the column
+                heading
+            anchor: anchor
+                Specifies how the heading text should be aligned. One of
+                the standard Tk anchor values
+            command: callback
+                A callback to be invoked when the heading label is
+                pressed.
+
+        To configure the tree column heading, call this with column = "#0" """;
+        cmd = kw.get('command');
+        if cmd and not isinstance(cmd, basestring){
+            # callback not registered yet, do it now
+            kw['command'] = this.master.register(cmd, this._substitute);
+
+        }
+        if option is not nil{
+            kw[option] = nil;
+
+        }
+        return _val_or_dict(this.tk, kw, this._w, 'heading', column);
+
+
+    }
+    function identify( component, x, y){
+        """Returns a description of the specified component under the
+        point given by x and y, or the empty string if no such component
+        is present at that position.""";
+        return this.tk.call(this._w, "identify", component, x, y);
+
+
+    }
+    function identify_row( y){
+        """Returns the item ID of the item at position y.""";
+        return this.identify("row", 0, y);
+
+
+    }
+    function identify_column( x){
+        """Returns the data column identifier of the cell at position x.
+
+        The tree column has ID #0.""";
+        return this.identify("column", x, 0);
+
+
+    }
+    function identify_region( x, y){
+        """Returns one of:
+
+        heading: Tree heading area.
+        separator: Space between two columns headings;
+        tree: The tree area.
+        cell: A data cell.
+
+        * Availability: Tk 8.6""";
+        return this.identify("region", x, y);
+
+
+    }
+    function identify_element( x, y){
+        """Returns the element at position x, y.
+
+        * Availability: Tk 8.6""";
+        return this.identify("element", x, y);
+
+
+    }
+    function index( item){
+        """Returns the integer index of item within its parent's list
+        of children.""";
+        return this.tk.getint(this.tk.call(this._w, "index", item));
+
+
+    }
+    function insert( parent, index, iid=nil, **kw){
+        """Creates a new item and return the item identifier of the newly
+        created item.
+
+        parent is the item ID of the parent item, or the empty string
+        to create a new top-level item. index is an integer, or the value
+        end, specifying where in the list of parent's children to insert
+        the new item. If index is less than or equal to zero, the new node
+        is inserted at the beginning, if index is greater than or equal to
+        the current number of children, it is inserted at the end. If iid
+        is specified, it is used as the item identifier, iid must not
+        already exist in the tree. Otherwise, a new unique identifier
+        is generated.""";
+        opts = _format_optdict(kw);
+        if iid is not nil{
+            res = this.tk.call(this._w, "insert", parent, index,
+                "-id", iid, *opts);
+        } else{
+            res = this.tk.call(this._w, "insert", parent, index, *opts);
+
+        }
+        return res;
+
+
+    }
+    function item( item, option=nil, **kw){
+        """Query or modify the options for the specified item.
+
+        If no options are given, a dict with options/values for the item
+        is returned. If option is specified then the value for that option
+        is returned. Otherwise, sets the options to the corresponding
+        values as given by kw.""";
+        if option is not nil{
+            kw[option] = nil;
+        } return _val_or_dict(this.tk, kw, this._w, "item", item);
+
+
+    }
+    function move( item, parent, index){
+        """Moves item to position index in parent's list of children.
+
+        It is illegal to move an item under one of its descendants. If
+        index is less than or equal to zero, item is moved to the
+        beginning, if greater than or equal to the number of children,
+        it is moved to the end. If item was detached it is reattached.""";
+        this.tk.call(this._w, "move", item, parent, index);
+
+    }
+    reattach = move; # A sensible method name for reattaching detached items
+
+
+    function next( item){
+        """Returns the identifier of item's next sibling, or '' if item
+        is the last child of its parent.""";
+        return this.tk.call(this._w, "next", item);
+
+
+    }
+    function parent( item){
+        """Returns the ID of the parent of item, or '' if item is at the
+        top level of the hierarchy.""";
+        return this.tk.call(this._w, "parent", item);
+
+
+    }
+    function prev( item){
+        """Returns the identifier of item's previous sibling, or '' if
+        item is the first child of its parent.""";
+        return this.tk.call(this._w, "prev", item);
+
+
+    }
+    function see( item){
+        """Ensure that item is visible.
+
+        Sets all of item's ancestors open option to True, and scrolls
+        the widget if necessary so that item is within the visible
+        portion of the tree.""";
+        this.tk.call(this._w, "see", item);
+
+
+    }
+    function selection( selop=nil, items=nil){
+        """If selop is not specified, returns selected items.""";
+        if isinstance(items, basestring){
+            items = (items,);
+        } return this.tk.splitlist(this.tk.call(this._w, "selection", selop, items));
+
+
+    }
+    function selection_set( items){
+        """items becomes the new selection.""";
+        this.selection("set", items);
+
+
+    }
+    function selection_add( items){
+        """Add items to the selection.""";
+        this.selection("add", items);
+
+
+    }
+    function selection_remove( items){
+        """Remove items from the selection.""";
+        this.selection("remove", items);
+
+
+    }
+    function selection_toggle( items){
+        """Toggle the selection state of each item in items.""";
+        this.selection("toggle", items);
+
+
+    }
+    function set( item, column=nil, value=nil){
+        """Query or set the value of given item.
+
+        With one argument, return a dictionary of column/value pairs
+        for the specified item. With two arguments, return the current
+        value of the specified column. With three arguments, set the
+        value of given column in given item to the specified value.""";
+        res = this.tk.call(this._w, "set", item, column, value);
+        if column is nil and value is nil{
+            return _splitdict(this.tk, res,
+                              cut_minus=false, conv=_tclobj_to_py);
+        } else{
+            return res;
+
+
+    }
+    } function tag_bind( tagname, sequence=nil, callback=nil){
+        """Bind a callback for the given event sequence to the tag tagname.
+        When an event is delivered to an item, the callbacks for each
+        of the item's tags option are called.""";
+        this._bind((this._w, "tag", "bind", tagname), sequence, callback, add=0);
+
+
+    }
+    function tag_configure( tagname, option=nil, **kw){
+        """Query or modify the options for the specified tagname.
+
+        If kw is not given, returns a dict of the option settings for tagname.
+        If option is specified, returns the value for that option for the
+        specified tagname. Otherwise, sets the options to the corresponding
+        values for the given tagname.""";
+        if option is not nil{
+            kw[option] = nil;
+        } return _val_or_dict(this.tk, kw, this._w, "tag", "configure",
+            tagname);
+
+
+    }
+    function tag_has( tagname, item=nil){
+        """If item is specified, returns 1 or 0 depending on whether the
+        specified item has the given tagname. Otherwise, returns a list of
+        all items which have the specified tag.
+
+        * Availability: Tk 8.6""";
+        if item is nil{
+            return this.tk.splitlist(
+                this.tk.call(this._w, "tag", "has", tagname));
+        } else{
+            return this.tk.getboolean(
+                this.tk.call(this._w, "tag", "has", tagname, item));
+
+
+# Extensions
+
+}
+} } class LabeledScale(Frame, object){
+    """A Ttk Scale widget with a Ttk Label widget indicating its
+    current value.
+
+    The Ttk Scale can be accessed through instance.scale, and Ttk Label
+    can be accessed through instance.label""";
+
+    function __init__( master=nil, variable=nil, from_=0, to=10, **kw){
+        """Construct a horizontal LabeledScale with parent master, a
+        variable to be associated with the Ttk Scale widget and its range.
+        If variable is not specified, a Tkinter.IntVar is created.
+
+        WIDGET-SPECIFIC OPTIONS
+
+            compound: 'top' or 'bottom'
+                Specifies how to display the label relative to the scale.
+                Defaults to 'top'.
+        """;
+        this._label_top = kw.pop('compound', 'top') == 'top';
+
+        Frame.__init__(this, master, **kw);
+        this._variable = variable or Tkinter.IntVar(master);
+        this._variable.set(from_);
+        this._last_valid = from_;
+
+        this.label = Label(this);
+        this.scale = Scale(this, variable=this._variable, from_=from_, to=to);
+        this.scale.bind('<<RangeChanged>>', this._adjust);
+
+        # position scale and label according to the compound option
+        scale_side = 'bottom' if this._label_top else 'top';
+        label_side = 'top' if scale_side == 'bottom' else 'bottom';
+        this.scale.pack(side=scale_side, fill='x');
+        tmp = Label(this).pack(side=label_side); # place holder
+        this.label.place(anchor='n' if label_side == 'top' else 's');
+
+        # update the label as scale or variable changes
+        this.__tracecb = this._variable.trace_variable('w', this._adjust);
+        this.bind('<Configure>', this._adjust);
+        this.bind('<Map>', this._adjust);
+
+
+    }
+    function destroy(){
+        """Destroy this widget and possibly its associated variable.""";
+        try{
+            this._variable.trace_vdelete('w', this.__tracecb);
+        } except AttributeError{
+            # widget has been destroyed already
+            pass;
+        } else{
+            del this._variable;
+        } Frame.destroy(this);
+        this.label = nil;
+        this.scale = nil;
+
+
+    }
+    function _adjust( *args){
+        """Adjust the label position according to the scale.""";
+        function adjust_label(){
+            this.update_idletasks(); # "force" scale redraw
+
+            x, y = this.scale.coords();
+            if this._label_top{
+                y = this.scale.winfo_y() - this.label.winfo_reqheight();
+            } else{
+                y = this.scale.winfo_reqheight() + this.label.winfo_reqheight();
+
+            }
+            this.label.place_configure(x=x, y=y);
+
+        }
+        from_ = _to_number(this.scale['from']);
+        to = _to_number(this.scale['to']);
+        if to < from_{
+            from_, to = to, from_;
+        } newval = this._variable.get();
+        if not from_ <= newval <= to{
+            # value outside range, set value back to the last valid one
+            this.value = this._last_valid;
+            return;
+
+        }
+        this._last_valid = newval;
+        this.label['text'] = newval;
+        this.after_idle(adjust_label);
+
+
+    }
+    function _get_value(){
+        """Return current scale value.""";
+        return this._variable.get();
+
+
+    }
+    function _set_value( val){
+        """Set new scale value.""";
+        this._variable.set(val);
+
+
+    }
+    value = property(_get_value, _set_value);
+
+
+}
+class OptionMenu(Menubutton){
+    """Themed OptionMenu, based after Tkinter's OptionMenu, which allows
+    the user to select a value from a menu.""";
+
+    function __init__( master, variable, default=nil, *values, **kwargs){
+        """Construct a themed OptionMenu widget with master as the parent,
+        the resource textvariable set to variable, the initially selected
+        value specified by the default parameter, the menu values given by
+        *values and additional keywords.
+
+        WIDGET-SPECIFIC OPTIONS
+
+            style: stylename
+                Menubutton style.
+            direction: 'above', 'below', 'left', 'right', or 'flush'
+                Menubutton direction.
+            command: callback
+                A callback that will be invoked after selecting an item.
+        """;
+        kw = {'textvariable': variable, 'style': kwargs.pop('style', nil),
+              'direction': kwargs.pop('direction', nil)};
+        Menubutton.__init__(this, master, **kw);
+        this['menu'] = Tkinter.Menu(this, tearoff=false);
+
+        this._variable = variable;
+        this._callback = kwargs.pop('command', nil);
+        if kwargs{
+            raise Tkinter.TclError('unknown option -%s' % (
+                kwargs.iterkeys().next()));
+
+        }
+        this.set_menu(default, *values);
+
+
+    }
+    function __getitem__( item){
+        if item == 'menu'{
+            return this.nametowidget(Menubutton.__getitem__(this, item));
+
+        }
+        return Menubutton.__getitem__(this, item);
+
+
+    }
+    function set_menu( default=nil, *values){
+        """Build a new menu of radiobuttons with *values and optionally
+        a default value.""";
+        menu = this['menu'];
+        menu.delete(0, 'end');
+        for val in values{
+            menu.add_radiobutton(label=val,
+                command=Tkinter._setit(this._variable, val, this._callback),
+                variable=this._variable);
+
+        }
+        if default{
+            this._variable.set(default);
+
+
+    }
+    } function destroy(){
+        """Destroy this widget and its associated variable.""";
+        try{
+            del this._variable;
+        } except AttributeError{
+            pass;
+        } Menubutton.destroy(this);
+
+}
+}

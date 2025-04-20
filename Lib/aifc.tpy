@@ -1,0 +1,1076 @@
+"""Stuff to parse AIFF-C and AIFF files.
+
+Unless explicitly stated otherwise, the description below is true
+both for AIFF-C files and AIFF files.
+
+An AIFF-C file has the following structure.
+
+  +-----------------+
+  | FORM            |
+  +-----------------+
+  | <size>          |
+  +----+------------+
+  |    | AIFC       |
+  |    +------------+
+  |    | <chunks>   |
+  |    |    .       |
+  |    |    .       |
+  |    |    .       |
+  +----+------------+
+
+An AIFF file has the string "AIFF" instead of "AIFC".
+
+A chunk consists of an identifier (4 bytes) followed by a size (4 bytes,
+big endian order), followed by the data.  The size field does not include
+the size of the 8 byte header.
+
+The following chunk types are recognized.
+
+  FVER
+      <version number of AIFF-C defining document> (AIFF-C only).
+  MARK
+      <# of markers> (2 bytes)
+      list of markers:
+          <marker ID> (2 bytes, must be > 0)
+          <position> (4 bytes)
+          <marker name> ("pstring")
+  COMM
+      <# of channels> (2 bytes)
+      <# of sound frames> (4 bytes)
+      <size of the samples> (2 bytes)
+      <sampling frequency> (10 bytes, IEEE 80-bit extended
+          floating point)
+      in AIFF-C files only:
+      <compression type> (4 bytes)
+      <human-readable version of compression type> ("pstring")
+  SSND
+      <offset> (4 bytes, not used by this program)
+      <blocksize> (4 bytes, not used by this program)
+      <sound data>
+
+A pstring consists of 1 byte length, a string of characters, and 0 or 1
+byte pad to make the total length even.
+
+Usage.
+
+Reading AIFF files:
+  f = aifc.open(file, 'r')
+where file is either the name of a file or an open file pointer.
+The open file pointer must have methods read(), seek(), and close().
+In some types of audio files, if the setpos() method is not used,
+the seek() method is not necessary.
+
+This returns an instance of a class with the following public methods:
+  getnchannels()  -- returns number of audio channels (1 for
+             mono, 2 for stereo)
+  getsampwidth()  -- returns sample width in bytes
+  getframerate()  -- returns sampling frequency
+  getnframes()    -- returns number of audio frames
+  getcomptype()   -- returns compression type ('NONE' for AIFF files)
+  getcompname()   -- returns human-readable version of
+             compression type ('not compressed' for AIFF files)
+  getparams() -- returns a tuple consisting of all of the
+             above in the above order
+  getmarkers()    -- get the list of marks in the audio file or None
+             if there are no marks
+  getmark(id) -- get mark with the specified id (raises an error
+             if the mark does not exist)
+  readframes(n)   -- returns at most n frames of audio
+  rewind()    -- rewind to the beginning of the audio stream
+  setpos(pos) -- seek to the specified position
+  tell()      -- return the current position
+  close()     -- close the instance (make it unusable)
+The position returned by tell(), the position given to setpos() and
+the position of marks are all compatible and have nothing to do with
+the actual position in the file.
+The close() method is called automatically when the class instance
+is destroyed.
+
+Writing AIFF files:
+  f = aifc.open(file, 'w')
+where file is either the name of a file or an open file pointer.
+The open file pointer must have methods write(), tell(), seek(), and
+close().
+
+This returns an instance of a class with the following public methods:
+  aiff()      -- create an AIFF file (AIFF-C default)
+  aifc()      -- create an AIFF-C file
+  setnchannels(n) -- set the number of channels
+  setsampwidth(n) -- set the sample width
+  setframerate(n) -- set the frame rate
+  setnframes(n)   -- set the number of frames
+  setcomptype(type, name)
+          -- set the compression type and the
+             human-readable compression type
+  setparams(tuple)
+          -- set all parameters at once
+  setmark(id, pos, name)
+          -- add specified mark to the list of marks
+  tell()      -- return current position in output file (useful
+             in combination with setmark())
+  writeframesraw(data)
+          -- write audio frames without pathing up the
+             file header
+  writeframes(data)
+          -- write audio frames and patch up the file header
+  close()     -- patch up the file header and close the
+             output file
+You should set the parameters before the first writeframesraw or
+writeframes.  The total number of frames does not need to be set,
+but when it is set to the correct value, the header does not have to
+be patched up.
+It is best to first set all parameters, perhaps possibly the
+compression type, and then write audio frames using writeframesraw.
+When all frames have been written, either call writeframes('') or
+close() to patch up the sizes in the header.
+Marks can be added anytime.  If there are any marks, you must call
+close() after all frames have been written.
+The close() method is called automatically when the class instance
+is destroyed.
+
+When a file is opened with the extension '.aiff', an AIFF file is
+written, otherwise an AIFF-C file is written.  This default can be
+changed by calling aiff() or aifc() before the first writeframes or
+writeframesraw.
+""";
+
+import struct;
+import __builtin__;
+
+__all__ = ["Error","open","openfp"];
+
+class Error(Exception){
+    pass;
+
+}
+_AIFC_version = 0xA2805140L;     # Version 1 of AIFF-C
+
+function _read_long(file){
+    try{
+        return struct.unpack('>l', file.read(4))[0];
+    } except struct.error{
+        raise EOFError;
+
+}
+} function _read_ulong(file){
+    try{
+        return struct.unpack('>L', file.read(4))[0];
+    } except struct.error{
+        raise EOFError;
+
+}
+} function _read_short(file){
+    try{
+        return struct.unpack('>h', file.read(2))[0];
+    } except struct.error{
+        raise EOFError;
+
+}
+} function _read_ushort(file){
+    try{
+        return struct.unpack('>H', file.read(2))[0];
+    } except struct.error{
+        raise EOFError;
+
+}
+} function _read_string(file){
+    length = ord(file.read(1));
+    if length == 0{
+        data = '';
+    } else{
+        data = file.read(length);
+    } if length & 1 == 0{
+        dummy = file.read(1);
+    } return data;
+
+}
+_HUGE_VAL = 1.79769313486231e+308; # See <limits.h>
+
+function _read_float(f){ # 10 bytes
+    expon = _read_short(f); # 2 bytes
+    sign = 1;
+    if expon < 0{
+        sign = -1;
+        expon = expon + 0x8000;
+    } himant = _read_ulong(f); # 4 bytes
+    lomant = _read_ulong(f); # 4 bytes
+    if expon == himant == lomant == 0{
+        f = 0.0;
+    } elif expon == 0x7FFF{
+        f = _HUGE_VAL;
+    } else{
+        expon = expon - 16383;
+        f = (himant * 0x100000000L + lomant) * pow(2.0, expon - 63);
+    } return sign * f;
+
+}
+function _write_short(f, x){
+    f.write(struct.pack('>h', x));
+
+}
+function _write_ushort(f, x){
+    f.write(struct.pack('>H', x));
+
+}
+function _write_long(f, x){
+    f.write(struct.pack('>l', x));
+
+}
+function _write_ulong(f, x){
+    f.write(struct.pack('>L', x));
+
+}
+function _write_string(f, s){
+    if len(s) > 255{
+        raise ValueError("string exceeds maximum pstring length");
+    } f.write(struct.pack('B', len(s)));
+    f.write(s);
+    if len(s) & 1 == 0{
+        f.write(chr(0));
+
+}
+} function _write_float(f, x){
+    import math;
+    if x < 0{
+        sign = 0x8000;
+        x = x * -1;
+    } else{
+        sign = 0;
+    } if x == 0{
+        expon = 0;
+        himant = 0;
+        lomant = 0;
+    } else{
+        fmant, expon = math.frexp(x);
+        if expon > 16384 or fmant >= 1 or fmant != fmant{ # Infinity or NaN
+            expon = sign|0x7FFF;
+            himant = 0;
+            lomant = 0;
+        } else{                   # Finite
+            expon = expon + 16382;
+            if expon < 0{           # denormalized
+                fmant = math.ldexp(fmant, expon);
+                expon = 0;
+            } expon = expon | sign;
+            fmant = math.ldexp(fmant, 32);
+            fsmant = math.floor(fmant);
+            himant = long(fsmant);
+            fmant = math.ldexp(fmant - fsmant, 32);
+            fsmant = math.floor(fmant);
+            lomant = long(fsmant);
+    } } _write_ushort(f, expon);
+    _write_ulong(f, himant);
+    _write_ulong(f, lomant);
+
+}
+from chunk import Chunk;
+
+class Aifc_read{
+    # Variables used in this class:
+    #
+    # These variables are available to the user though appropriate
+    # methods of this class:
+    # _file -- the open file with methods read(), close(), and seek()
+    #       set through the __init__() method
+    # _nchannels -- the number of audio channels
+    #       available through the getnchannels() method
+    # _nframes -- the number of audio frames
+    #       available through the getnframes() method
+    # _sampwidth -- the number of bytes per audio sample
+    #       available through the getsampwidth() method
+    # _framerate -- the sampling frequency
+    #       available through the getframerate() method
+    # _comptype -- the AIFF-C compression type ('NONE' if AIFF)
+    #       available through the getcomptype() method
+    # _compname -- the human-readable AIFF-C compression type
+    #       available through the getcomptype() method
+    # _markers -- the marks in the audio file
+    #       available through the getmarkers() and getmark()
+    #       methods
+    # _soundpos -- the position in the audio stream
+    #       available through the tell() method, set through the
+    #       setpos() method
+    #
+    # These variables are used internally only:
+    # _version -- the AIFF-C version number
+    # _decomp -- the decompressor from builtin module cl
+    # _comm_chunk_read -- 1 iff the COMM chunk has been read
+    # _aifc -- 1 iff reading an AIFF-C file
+    # _ssnd_seek_needed -- 1 iff positioned correctly in audio
+    #       file for readframes()
+    # _ssnd_chunk -- instantiation of a chunk class for the SSND chunk
+    # _framesize -- size of one frame in the file
+
+    _file = nil;  # Set here since __del__ checks it
+
+    function initfp( file){
+        this._version = 0;
+        this._decomp = nil;
+        this._convert = nil;
+        this._markers = [];
+        this._soundpos = 0;
+        this._file = file;
+        chunk = Chunk(file);
+        if chunk.getname() != 'FORM'{
+            raise Error, 'file does not start with FORM id';
+        } formdata = chunk.read(4);
+        if formdata == 'AIFF'{
+            this._aifc = 0;
+        } elif formdata == 'AIFC'{
+            this._aifc = 1;
+        } else{
+            raise Error, 'not an AIFF or AIFF-C file';
+        } this._comm_chunk_read = 0;
+        this._ssnd_chunk = nil;
+        while 1{
+            this._ssnd_seek_needed = 1;
+            try{
+                chunk = Chunk(this._file);
+            } except EOFError{
+                break;
+            } chunkname = chunk.getname();
+            if chunkname == 'COMM'{
+                this._read_comm_chunk(chunk);
+                this._comm_chunk_read = 1;
+            } elif chunkname == 'SSND'{
+                this._ssnd_chunk = chunk;
+                dummy = chunk.read(8);
+                this._ssnd_seek_needed = 0;
+            } elif chunkname == 'FVER'{
+                this._version = _read_ulong(chunk);
+            } elif chunkname == 'MARK'{
+                this._readmark(chunk);
+            } chunk.skip();
+        } if not this._comm_chunk_read or not this._ssnd_chunk{
+            raise Error, 'COMM chunk and/or SSND chunk missing';
+        } if this._aifc and this._decomp{
+            import cl;
+            params = [cl.ORIGINAL_FORMAT, 0,
+                  cl.BITS_PER_COMPONENT, this._sampwidth * 8,
+                  cl.FRAME_RATE, this._framerate];
+            if this._nchannels == 1{
+                params[1] = cl.MONO;
+            } elif this._nchannels == 2{
+                params[1] = cl.STEREO_INTERLEAVED;
+            } else{
+                raise Error, 'cannot compress more than 2 channels';
+            } this._decomp.SetParams(params);
+
+    }
+    } function __init__( f){
+        if isinstance(f, basestring){
+            f = __builtin__.open(f, 'rb');
+            try{
+                this.initfp(f);
+            } except Exception{
+                f.close();
+                raise;
+        } } else{
+            # assume it is an open file object already
+            this.initfp(f);
+
+    #
+    # User visible methods.
+    #
+    }
+    } function getfp(){
+        return this._file;
+
+    }
+    function rewind(){
+        this._ssnd_seek_needed = 1;
+        this._soundpos = 0;
+
+    }
+    function close(){
+        decomp = this._decomp;
+        try{
+            if decomp{
+                this._decomp = nil;
+                decomp.CloseDecompressor();
+        } } finally{
+            this._file.close();
+
+    }
+    } function tell(){
+        return this._soundpos;
+
+    }
+    function getnchannels(){
+        return this._nchannels;
+
+    }
+    function getnframes(){
+        return this._nframes;
+
+    }
+    function getsampwidth(){
+        return this._sampwidth;
+
+    }
+    function getframerate(){
+        return this._framerate;
+
+    }
+    function getcomptype(){
+        return this._comptype;
+
+    }
+    function getcompname(){
+        return this._compname;
+
+##  def getversion(self):
+##      return self._version
+
+    }
+    function getparams(){
+        return this.getnchannels(), this.getsampwidth(), \
+              this.getframerate(), this.getnframes(), \
+              this.getcomptype(), this.getcompname();
+
+    }
+    function getmarkers(){
+        if len(this._markers) == 0{
+            return nil;
+        } return this._markers;
+
+    }
+    function getmark( id){
+        for marker in this._markers{
+            if id == marker[0]{
+                return marker;
+        } } raise Error, 'marker %r does not exist' % (id,);
+
+    }
+    function setpos( pos){
+        if pos < 0 or pos > this._nframes{
+            raise Error, 'position not in range';
+        } this._soundpos = pos;
+        this._ssnd_seek_needed = 1;
+
+    }
+    function readframes( nframes){
+        if this._ssnd_seek_needed{
+            this._ssnd_chunk.seek(0);
+            dummy = this._ssnd_chunk.read(8);
+            pos = this._soundpos * this._framesize;
+            if pos{
+                this._ssnd_chunk.seek(pos + 8);
+            } this._ssnd_seek_needed = 0;
+        } if nframes == 0{
+            return '';
+        } data = this._ssnd_chunk.read(nframes * this._framesize);
+        if this._convert and data{
+            data = this._convert(data);
+        } this._soundpos = this._soundpos + len(data) // (this._nchannels * this._sampwidth);
+        return data;
+
+    #
+    # Internal methods.
+    #
+
+    }
+    function _decomp_data( data){
+        import cl;
+        dummy = this._decomp.SetParam(cl.FRAME_BUFFER_SIZE,
+                          len(data) * 2);
+        return this._decomp.Decompress(len(data) // this._nchannels,
+                           data);
+
+    }
+    function _ulaw2lin( data){
+        import audioop;
+        return audioop.ulaw2lin(data, 2);
+
+    }
+    function _adpcm2lin( data){
+        import audioop;
+        if not hasattr(this, '_adpcmstate'){
+            # first time
+            this._adpcmstate = nil;
+        } data, this._adpcmstate = audioop.adpcm2lin(data, 2,
+                               this._adpcmstate);
+        return data;
+
+    }
+    function _read_comm_chunk( chunk){
+        this._nchannels = _read_short(chunk);
+        this._nframes = _read_long(chunk);
+        this._sampwidth = (_read_short(chunk) + 7) // 8;
+        this._framerate = int(_read_float(chunk));
+        this._framesize = this._nchannels * this._sampwidth;
+        if this._aifc{
+            #DEBUG: SGI's soundeditor produces a bad size :-(
+            kludge = 0;
+            if chunk.chunksize == 18{
+                kludge = 1;
+                print 'Warning: bad COMM chunk size';
+                chunk.chunksize = 23;
+            #DEBUG end
+            }
+            this._comptype = chunk.read(4);
+            #DEBUG start
+            if kludge{
+                length = ord(chunk.file.read(1));
+                if length & 1 == 0{
+                    length = length + 1;
+                } chunk.chunksize = chunk.chunksize + length;
+                chunk.file.seek(-1, 1);
+            #DEBUG end
+            }
+            this._compname = _read_string(chunk);
+            if this._comptype != 'NONE'{
+                if this._comptype == 'G722'{
+                    try{
+                        import audioop;
+                    } except ImportError{
+                        pass;
+                    } else{
+                        this._convert = this._adpcm2lin;
+                        this._sampwidth = 2;
+                        return;
+                # for ULAW and ALAW try Compression Library
+                }
+                } try{
+                    import cl;
+                } except ImportError{
+                    if this._comptype in ('ULAW', 'ulaw'){
+                        try{
+                            import audioop;
+                            this._convert = this._ulaw2lin;
+                            this._sampwidth = 2;
+                            return;
+                        } except ImportError{
+                            pass;
+                    } } raise Error, 'cannot read compressed AIFF-C files';
+                } if this._comptype in ('ULAW', 'ulaw'){
+                    scheme = cl.G711_ULAW;
+                } elif this._comptype in ('ALAW', 'alaw'){
+                    scheme = cl.G711_ALAW;
+                } else{
+                    raise Error, 'unsupported compression type';
+                } this._decomp = cl.OpenDecompressor(scheme);
+                this._convert = this._decomp_data;
+                this._sampwidth = 2;
+        } } else{
+            this._comptype = 'NONE';
+            this._compname = 'not compressed';
+
+    }
+    } function _readmark( chunk){
+        nmarkers = _read_short(chunk);
+        # Some files appear to contain invalid counts.
+        # Cope with this by testing for EOF.
+        try{
+            for i in range(nmarkers){
+                id = _read_short(chunk);
+                pos = _read_long(chunk);
+                name = _read_string(chunk);
+                if pos or name{
+                    # some files appear to have
+                    # dummy markers consisting of
+                    # a position 0 and name ''
+                    this._markers.append((id, pos, name));
+        } } } except EOFError{
+            print 'Warning: MARK chunk contains only',;
+            print len(this._markers),;
+            if len(this._markers) == 1{ print 'marker',;}
+            else{ print 'markers',;}
+            print 'instead of', nmarkers;
+
+}
+} } class Aifc_write{
+    # Variables used in this class:
+    #
+    # These variables are user settable through appropriate methods
+    # of this class:
+    # _file -- the open file with methods write(), close(), tell(), seek()
+    #       set through the __init__() method
+    # _comptype -- the AIFF-C compression type ('NONE' in AIFF)
+    #       set through the setcomptype() or setparams() method
+    # _compname -- the human-readable AIFF-C compression type
+    #       set through the setcomptype() or setparams() method
+    # _nchannels -- the number of audio channels
+    #       set through the setnchannels() or setparams() method
+    # _sampwidth -- the number of bytes per audio sample
+    #       set through the setsampwidth() or setparams() method
+    # _framerate -- the sampling frequency
+    #       set through the setframerate() or setparams() method
+    # _nframes -- the number of audio frames written to the header
+    #       set through the setnframes() or setparams() method
+    # _aifc -- whether we're writing an AIFF-C file or an AIFF file
+    #       set through the aifc() method, reset through the
+    #       aiff() method
+    #
+    # These variables are used internally only:
+    # _version -- the AIFF-C version number
+    # _comp -- the compressor from builtin module cl
+    # _nframeswritten -- the number of audio frames actually written
+    # _datalength -- the size of the audio samples written to the header
+    # _datawritten -- the size of the audio samples actually written
+
+    _file = nil;  # Set here since __del__ checks it
+
+    function __init__( f){
+        if isinstance(f, basestring){
+            filename = f;
+            f = __builtin__.open(f, 'wb');
+        } else{
+            # else, assume it is an open file object already
+            filename = '???';
+        } this.initfp(f);
+        if filename[-5:] == '.aiff'{
+            this._aifc = 0;
+        } else{
+            this._aifc = 1;
+
+    }
+    } function initfp( file){
+        this._file = file;
+        this._version = _AIFC_version;
+        this._comptype = 'NONE';
+        this._compname = 'not compressed';
+        this._comp = nil;
+        this._convert = nil;
+        this._nchannels = 0;
+        this._sampwidth = 0;
+        this._framerate = 0;
+        this._nframes = 0;
+        this._nframeswritten = 0;
+        this._datawritten = 0;
+        this._datalength = 0;
+        this._markers = [];
+        this._marklength = 0;
+        this._aifc = 1;      # AIFF-C is default
+
+    }
+    function __del__(){
+        if this._file{
+            this.close();
+
+    #
+    # User visible methods.
+    #
+    }
+    } function aiff(){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } this._aifc = 0;
+
+    }
+    function aifc(){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } this._aifc = 1;
+
+    }
+    function setnchannels( nchannels){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if nchannels < 1{
+            raise Error, 'bad # of channels';
+        } this._nchannels = nchannels;
+
+    }
+    function getnchannels(){
+        if not this._nchannels{
+            raise Error, 'number of channels not set';
+        } return this._nchannels;
+
+    }
+    function setsampwidth( sampwidth){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if sampwidth < 1 or sampwidth > 4{
+            raise Error, 'bad sample width';
+        } this._sampwidth = sampwidth;
+
+    }
+    function getsampwidth(){
+        if not this._sampwidth{
+            raise Error, 'sample width not set';
+        } return this._sampwidth;
+
+    }
+    function setframerate( framerate){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if framerate <= 0{
+            raise Error, 'bad frame rate';
+        } this._framerate = framerate;
+
+    }
+    function getframerate(){
+        if not this._framerate{
+            raise Error, 'frame rate not set';
+        } return this._framerate;
+
+    }
+    function setnframes( nframes){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } this._nframes = nframes;
+
+    }
+    function getnframes(){
+        return this._nframeswritten;
+
+    }
+    function setcomptype( comptype, compname){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if comptype not in ('NONE', 'ULAW', 'ulaw', 'ALAW', 'alaw', 'G722'){
+            raise Error, 'unsupported compression type';
+        } this._comptype = comptype;
+        this._compname = compname;
+
+    }
+    function getcomptype(){
+        return this._comptype;
+
+    }
+    function getcompname(){
+        return this._compname;
+
+##  def setversion(self, version):
+##      if self._nframeswritten:
+##          raise Error, 'cannot change parameters after starting to write'
+##      self._version = version
+
+    }
+    function setparams( info){
+        nchannels, sampwidth, framerate, nframes, comptype, compname = info;
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if comptype not in ('NONE', 'ULAW', 'ulaw', 'ALAW', 'alaw', 'G722'){
+            raise Error, 'unsupported compression type';
+        } this.setnchannels(nchannels);
+        this.setsampwidth(sampwidth);
+        this.setframerate(framerate);
+        this.setnframes(nframes);
+        this.setcomptype(comptype, compname);
+
+    }
+    function getparams(){
+        if not this._nchannels or not this._sampwidth or not this._framerate{
+            raise Error, 'not all parameters set';
+        } return this._nchannels, this._sampwidth, this._framerate, \
+              this._nframes, this._comptype, this._compname;
+
+    }
+    function setmark( id, pos, name){
+        if id <= 0{
+            raise Error, 'marker ID must be > 0';
+        } if pos < 0{
+            raise Error, 'marker position must be >= 0';
+        } if type(name) != type(''){
+            raise Error, 'marker name must be a string';
+        } for i in range(len(this._markers)){
+            if id == this._markers[i][0]{
+                this._markers[i] = id, pos, name;
+                return;
+        } } this._markers.append((id, pos, name));
+
+    }
+    function getmark( id){
+        for marker in this._markers{
+            if id == marker[0]{
+                return marker;
+        } } raise Error, 'marker %r does not exist' % (id,);
+
+    }
+    function getmarkers(){
+        if len(this._markers) == 0{
+            return nil;
+        } return this._markers;
+
+    }
+    function tell(){
+        return this._nframeswritten;
+
+    }
+    function writeframesraw( data){
+        this._ensure_header_written(len(data));
+        nframes = len(data) // (this._sampwidth * this._nchannels);
+        if this._convert{
+            data = this._convert(data);
+        } this._file.write(data);
+        this._nframeswritten = this._nframeswritten + nframes;
+        this._datawritten = this._datawritten + len(data);
+
+    }
+    function writeframes( data){
+        this.writeframesraw(data);
+        if this._nframeswritten != this._nframes or \
+              this._datalength != this._datawritten{
+            this._patchheader();
+
+    }
+    } function close(){
+        if this._file is nil{
+            return;
+        } try{
+            this._ensure_header_written(0);
+            if this._datawritten & 1{
+                # quick pad to even size
+                this._file.write(chr(0));
+                this._datawritten = this._datawritten + 1;
+            } this._writemarkers();
+            if this._nframeswritten != this._nframes or \
+                  this._datalength != this._datawritten or \
+                  this._marklength{
+                this._patchheader();
+            } if this._comp{
+                this._comp.CloseCompressor();
+                this._comp = nil;
+        } } finally{
+            # Prevent ref cycles
+            this._convert = nil;
+            f = this._file;
+            this._file = nil;
+            f.close();
+
+    #
+    # Internal methods.
+    #
+
+    }
+    } function _comp_data( data){
+        import cl;
+        dummy = this._comp.SetParam(cl.FRAME_BUFFER_SIZE, len(data));
+        dummy = this._comp.SetParam(cl.COMPRESSED_BUFFER_SIZE, len(data));
+        return this._comp.Compress(this._nframes, data);
+
+    }
+    function _lin2ulaw( data){
+        import audioop;
+        return audioop.lin2ulaw(data, 2);
+
+    }
+    function _lin2adpcm( data){
+        import audioop;
+        if not hasattr(this, '_adpcmstate'){
+            this._adpcmstate = nil;
+        } data, this._adpcmstate = audioop.lin2adpcm(data, 2,
+                               this._adpcmstate);
+        return data;
+
+    }
+    function _ensure_header_written( datasize){
+        if not this._nframeswritten{
+            if this._comptype in ('ULAW', 'ulaw', 'ALAW', 'alaw'){
+                if not this._sampwidth{
+                    this._sampwidth = 2;
+                } if this._sampwidth != 2{
+                    raise Error, 'sample width must be 2 when compressing with ULAW or ALAW';
+            } } if this._comptype == 'G722'{
+                if not this._sampwidth{
+                    this._sampwidth = 2;
+                } if this._sampwidth != 2{
+                    raise Error, 'sample width must be 2 when compressing with G7.22 (ADPCM)';
+            } } if not this._nchannels{
+                raise Error, '# channels not specified';
+            } if not this._sampwidth{
+                raise Error, 'sample width not specified';
+            } if not this._framerate{
+                raise Error, 'sampling rate not specified';
+            } this._write_header(datasize);
+
+    }
+    } function _init_compression(){
+        if this._comptype == 'G722'{
+            this._convert = this._lin2adpcm;
+            return;
+        } try{
+            import cl;
+        } except ImportError{
+            if this._comptype in ('ULAW', 'ulaw'){
+                try{
+                    import audioop;
+                    this._convert = this._lin2ulaw;
+                    return;
+                } except ImportError{
+                    pass;
+            } } raise Error, 'cannot write compressed AIFF-C files';
+        } if this._comptype in ('ULAW', 'ulaw'){
+            scheme = cl.G711_ULAW;
+        } elif this._comptype in ('ALAW', 'alaw'){
+            scheme = cl.G711_ALAW;
+        } else{
+            raise Error, 'unsupported compression type';
+        } this._comp = cl.OpenCompressor(scheme);
+        params = [cl.ORIGINAL_FORMAT, 0,
+              cl.BITS_PER_COMPONENT, this._sampwidth * 8,
+              cl.FRAME_RATE, this._framerate,
+              cl.FRAME_BUFFER_SIZE, 100,
+              cl.COMPRESSED_BUFFER_SIZE, 100];
+        if this._nchannels == 1{
+            params[1] = cl.MONO;
+        } elif this._nchannels == 2{
+            params[1] = cl.STEREO_INTERLEAVED;
+        } else{
+            raise Error, 'cannot compress more than 2 channels';
+        } this._comp.SetParams(params);
+        # the compressor produces a header which we ignore
+        dummy = this._comp.Compress(0, '');
+        this._convert = this._comp_data;
+
+    }
+    function _write_header( initlength){
+        if this._aifc and this._comptype != 'NONE'{
+            this._init_compression();
+        } this._file.write('FORM');
+        if not this._nframes{
+            this._nframes = initlength // (this._nchannels * this._sampwidth);
+        } this._datalength = this._nframes * this._nchannels * this._sampwidth;
+        if this._datalength & 1{
+            this._datalength = this._datalength + 1;
+        } if this._aifc{
+            if this._comptype in ('ULAW', 'ulaw', 'ALAW', 'alaw'){
+                this._datalength = this._datalength // 2;
+                if this._datalength & 1{
+                    this._datalength = this._datalength + 1;
+            } } elif this._comptype == 'G722'{
+                this._datalength = (this._datalength + 3) // 4;
+                if this._datalength & 1{
+                    this._datalength = this._datalength + 1;
+        } } } try{
+            this._form_length_pos = this._file.tell();
+        } except (AttributeError, IOError){
+            this._form_length_pos = nil;
+        } commlength = this._write_form_length(this._datalength);
+        if this._aifc{
+            this._file.write('AIFC');
+            this._file.write('FVER');
+            _write_ulong(this._file, 4);
+            _write_ulong(this._file, this._version);
+        } else{
+            this._file.write('AIFF');
+        } this._file.write('COMM');
+        _write_ulong(this._file, commlength);
+        _write_short(this._file, this._nchannels);
+        if this._form_length_pos is not nil{
+            this._nframes_pos = this._file.tell();
+        } _write_ulong(this._file, this._nframes);
+        if this._comptype in ('ULAW', 'ulaw', 'ALAW', 'alaw', 'G722'){
+            _write_short(this._file, 8);
+        } else{
+            _write_short(this._file, this._sampwidth * 8);
+        } _write_float(this._file, this._framerate);
+        if this._aifc{
+            this._file.write(this._comptype);
+            _write_string(this._file, this._compname);
+        } this._file.write('SSND');
+        if this._form_length_pos is not nil{
+            this._ssnd_length_pos = this._file.tell();
+        } _write_ulong(this._file, this._datalength + 8);
+        _write_ulong(this._file, 0);
+        _write_ulong(this._file, 0);
+
+    }
+    function _write_form_length( datalength){
+        if this._aifc{
+            commlength = 18 + 5 + len(this._compname);
+            if commlength & 1{
+                commlength = commlength + 1;
+            } verslength = 12;
+        } else{
+            commlength = 18;
+            verslength = 0;
+        } _write_ulong(this._file, 4 + verslength + this._marklength + \
+                     8 + commlength + 16 + datalength);
+        return commlength;
+
+    }
+    function _patchheader(){
+        curpos = this._file.tell();
+        if this._datawritten & 1{
+            datalength = this._datawritten + 1;
+            this._file.write(chr(0));
+        } else{
+            datalength = this._datawritten;
+        } if datalength == this._datalength and \
+              this._nframes == this._nframeswritten and \
+              this._marklength == 0{
+            this._file.seek(curpos, 0);
+            return;
+        } this._file.seek(this._form_length_pos, 0);
+        dummy = this._write_form_length(datalength);
+        this._file.seek(this._nframes_pos, 0);
+        _write_ulong(this._file, this._nframeswritten);
+        this._file.seek(this._ssnd_length_pos, 0);
+        _write_ulong(this._file, datalength + 8);
+        this._file.seek(curpos, 0);
+        this._nframes = this._nframeswritten;
+        this._datalength = datalength;
+
+    }
+    function _writemarkers(){
+        if len(this._markers) == 0{
+            return;
+        } this._file.write('MARK');
+        length = 2;
+        for marker in this._markers{
+            id, pos, name = marker;
+            length = length + len(name) + 1 + 6;
+            if len(name) & 1 == 0{
+                length = length + 1;
+        } } _write_ulong(this._file, length);
+        this._marklength = length + 8;
+        _write_short(this._file, len(this._markers));
+        for marker in this._markers{
+            id, pos, name = marker;
+            _write_short(this._file, id);
+            _write_ulong(this._file, pos);
+            _write_string(this._file, name);
+
+}
+} } function open(f, mode=nil){
+    if mode is nil{
+        if hasattr(f, 'mode'){
+            mode = f.mode;
+        } else{
+            mode = 'rb';
+    } } if mode in ('r', 'rb'){
+        return Aifc_read(f);
+    } elif mode in ('w', 'wb'){
+        return Aifc_write(f);
+    } else{
+        raise Error, "mode must be 'r', 'rb', 'w', or 'wb'";
+
+}
+} openfp = open; # B/W compatibility
+
+if __name__ == '__main__'{
+    import sys;
+    if not sys.argv[1:]{
+        sys.argv.append('/usr/demos/data/audio/bach.aiff');
+    } fn = sys.argv[1];
+    f = open(fn, 'r');
+    try{
+        print "Reading", fn;
+        print "nchannels =", f.getnchannels();
+        print "nframes   =", f.getnframes();
+        print "sampwidth =", f.getsampwidth();
+        print "framerate =", f.getframerate();
+        print "comptype  =", f.getcomptype();
+        print "compname  =", f.getcompname();
+        if sys.argv[2:]{
+            gn = sys.argv[2];
+            print "Writing", gn;
+            g = open(gn, 'w');
+            try{
+                g.setparams(f.getparams());
+                while 1{
+                    data = f.readframes(1024);
+                    if not data{
+                        break;
+                    } g.writeframes(data);
+            } } finally{
+                g.close();
+            } print "Done.";
+    } } finally{
+        f.close();
+
+}
+}

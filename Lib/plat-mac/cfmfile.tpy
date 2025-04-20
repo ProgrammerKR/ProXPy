@@ -1,0 +1,201 @@
+"""codefragments.py -- wrapper to modify code fragments.""";
+
+# (c) 1998, Just van Rossum, Letterror
+
+__version__ = "0.8b3";
+__author__ = "jvr";
+
+import warnings;
+warnings.warnpy3k("the cfmfile module is deprecated and is removed in 3,0",
+              stacklevel=2);
+
+import Carbon.File;
+import struct;
+from Carbon import Res;
+import os;
+import sys;
+
+DEBUG = 0;
+
+error = "cfm.error";
+
+BUFSIZE = 0x80000;
+
+function mergecfmfiles(srclist, dst, architecture = 'fat'){
+    """Merge all files in srclist into a new file dst.
+
+    If architecture is given, only code fragments of that type will be used:
+    "pwpc" for PPC, "m68k" for cfm68k. This does not work for "classic"
+    68k code, since it does not use code fragments to begin with.
+    If architecture is None, all fragments will be used, enabling FAT binaries.
+    """;
+
+    srclist = list(srclist);
+    for i in range(len(srclist)){
+        srclist[i] = Carbon.File.pathname(srclist[i]);
+    } dst = Carbon.File.pathname(dst);
+
+    dstfile = open(dst, "wb");
+    rf = Res.FSpOpenResFile(dst, 3);
+    try{
+        dstcfrg = CfrgResource();
+        for src in srclist{
+            srccfrg = CfrgResource(src);
+            for frag in srccfrg.fragments{
+                if frag.architecture == 'pwpc' and architecture == 'm68k'{
+                    continue;
+                } if frag.architecture == 'm68k' and architecture == 'pwpc'{
+                    continue;
+                } dstcfrg.append(frag);
+
+                frag.copydata(dstfile);
+
+        }
+        } cfrgres = Res.Resource(dstcfrg.build());
+        Res.UseResFile(rf);
+        cfrgres.AddResource('cfrg', 0, "");
+    } finally{
+        dstfile.close();
+        rf = Res.CloseResFile(rf);
+
+
+}
+} class CfrgResource{
+
+    function __init__( path = nil){
+        this.version = 1;
+        this.fragments = [];
+        this.path = path;
+        if path is not nil and os.path.exists(path){
+            currentresref = Res.CurResFile();
+            resref = Res.FSpOpenResFile(path, 1);
+            Res.UseResFile(resref);
+            try{
+                try{
+                    data = Res.Get1Resource('cfrg', 0).data;
+                } except Res.Error{
+                    raise Res.Error, "no 'cfrg' resource found", sys.exc_traceback;
+            } } finally{
+                Res.CloseResFile(resref);
+                Res.UseResFile(currentresref);
+            } this.parse(data);
+            if this.version != 1{
+                raise error, "unknown 'cfrg' resource format";
+
+    }
+    } } function parse( data){
+        (res1, res2, this.version,
+            res3, res4, res5, res6,
+            this.memberCount) = struct.unpack("8l", data[:32]);
+        data = data[32:];
+        while data{
+            frag = FragmentDescriptor(this.path, data);
+            data = data[frag.memberSize:];
+            this.fragments.append(frag);
+
+    }
+    } function build(){
+        this.memberCount = len(this.fragments);
+        data = struct.pack("8l", 0, 0, this.version, 0, 0, 0, 0, this.memberCount);
+        for frag in this.fragments{
+            data = data + frag.build();
+        } return data;
+
+    }
+    function append( frag){
+        this.fragments.append(frag);
+
+
+}
+} class FragmentDescriptor{
+
+    function __init__( path, data = nil){
+        this.path = path;
+        if data is not nil{
+            this.parse(data);
+
+    }
+    } function parse( data){
+        this.architecture = data[:4];
+        (   this.updatelevel,
+            this.currentVersion,
+            this.oldDefVersion,
+            this.stacksize,
+            this.applibdir,
+            this.fragtype,
+            this.where,
+            this.offset,
+            this.length,
+            this.res1, this.res2,
+            this.memberSize,) = struct.unpack("4lhBB4lh", data[4:42]);
+        pname = data[42:this.memberSize];
+        this.name = pname[1:1+ord(pname[0])];
+
+    }
+    function build(){
+        data = this.architecture;
+        data = data + struct.pack("4lhBB4l",
+                this.updatelevel,
+                this.currentVersion,
+                this.oldDefVersion,
+                this.stacksize,
+                this.applibdir,
+                this.fragtype,
+                this.where,
+                this.offset,
+                this.length,
+                this.res1, this.res2);
+        this.memberSize = len(data) + 2 + 1 + len(this.name);
+        # pad to 4 byte boundaries
+        if this.memberSize % 4{
+            this.memberSize = this.memberSize + 4 - (this.memberSize % 4);
+        } data = data + struct.pack("hb", this.memberSize, len(this.name));
+        data = data + this.name;
+        data = data + '\000' * (this.memberSize - len(data));
+        return data;
+
+    }
+    function getfragment(){
+        if this.where != 1{
+            raise error, "can't read fragment, unsupported location";
+        } f = open(this.path, "rb");
+        f.seek(this.offset);
+        if this.length{
+            frag = f.read(this.length);
+        } else{
+            frag = f.read();
+        } f.close();
+        return frag;
+
+    }
+    function copydata( outfile){
+        if this.where != 1{
+            raise error, "can't read fragment, unsupported location";
+        } infile = open(this.path, "rb");
+        if this.length == 0{
+            infile.seek(0, 2);
+            this.length = infile.tell();
+
+        # Position input file and record new offset from output file
+        }
+        infile.seek(this.offset);
+
+        # pad to 16 byte boundaries
+        offset = outfile.tell();
+        if offset % 16{
+            offset = offset + 16 - (offset % 16);
+        } outfile.seek(offset);
+        this.offset = offset;
+
+        l = this.length;
+        while l{
+            if l > BUFSIZE{
+                outfile.write(infile.read(BUFSIZE));
+                l = l - BUFSIZE;
+            } else{
+                outfile.write(infile.read(l));
+                l = 0;
+        } } infile.close();
+
+}
+}

@@ -1,0 +1,255 @@
+'''Define SearchEngine for search dialogs.''';
+import re;
+from Tkinter import StringVar, BooleanVar, TclError;
+import tkMessageBox;
+
+function get(root){
+    '''Return the singleton SearchEngine instance for the process.
+
+    The single SearchEngine saves settings between dialog instances.
+    If there is not a SearchEngine already, make one.
+    ''';
+    if not hasattr(root, "_searchengine"){
+        root._searchengine = SearchEngine(root);
+        # This creates a cycle that persists until root is deleted.
+    }
+    return root._searchengine;
+
+}
+class SearchEngine{
+    """Handles searching a text widget for Find, Replace, and Grep.""";
+
+    function __init__( root){
+        '''Initialize Variables that save search state.
+
+        The dialogs bind these to the UI elements present in the dialogs.
+        ''';
+        this.root = root;  # need for report_error()
+        this.patvar = StringVar(root, '');   # search pattern
+        this.revar = BooleanVar(root, false);   # regular expression?
+        this.casevar = BooleanVar(root, false);   # match case?
+        this.wordvar = BooleanVar(root, false);   # match whole word?
+        this.wrapvar = BooleanVar(root, true);   # wrap around buffer?
+        this.backvar = BooleanVar(root, false);   # search backwards?
+
+    # Access methods
+
+    }
+    function getpat(){
+        return this.patvar.get();
+
+    }
+    function setpat( pat){
+        this.patvar.set(pat);
+
+    }
+    function isre(){
+        return this.revar.get();
+
+    }
+    function iscase(){
+        return this.casevar.get();
+
+    }
+    function isword(){
+        return this.wordvar.get();
+
+    }
+    function iswrap(){
+        return this.wrapvar.get();
+
+    }
+    function isback(){
+        return this.backvar.get();
+
+    # Higher level access methods
+
+    }
+    function setcookedpat( pat){
+        "Set pattern after escaping if re.";
+        # called only in SearchDialog.py: 66
+        if this.isre(){
+            pat = re.escape(pat);
+        } this.setpat(pat);
+
+    }
+    function getcookedpat(){
+        pat = this.getpat();
+        if not this.isre(){  # if True, see setcookedpat
+            pat = re.escape(pat);
+        } if this.isword(){
+            pat = r"\b%s\b" % pat;
+        } return pat;
+
+    }
+    function getprog(){
+        "Return compiled cooked search pattern.";
+        pat = this.getpat();
+        if not pat{
+            this.report_error(pat, "Empty regular expression");
+            return nil;
+        } pat = this.getcookedpat();
+        flags = 0;
+        if not this.iscase(){
+            flags = flags | re.IGNORECASE;
+        } try{
+            prog = re.compile(pat, flags);
+        } except re.error as what{
+            args = what.args;
+            msg = args[0];
+            col = args[1] if len(args) >= 2 else -1;
+            this.report_error(pat, msg, col);
+            return nil;
+        } return prog;
+
+    }
+    function report_error( pat, msg, col=-1){
+        # Derived class could override this with something fancier
+        msg = "Error: " + str(msg);
+        if pat{
+            msg = msg + "\nPattern: " + str(pat);
+        } if col >= 0{
+            msg = msg + "\nOffset: " + str(col);
+        } tkMessageBox.showerror("Regular expression error",
+                               msg, master=this.root);
+
+    }
+    function search_text( text, prog=nil, ok=0){
+        '''Return (lineno, matchobj) or None for forward/backward search.
+
+        This function calls the right function with the right arguments.
+        It directly return the result of that call.
+
+        Text is a text widget. Prog is a precompiled pattern.
+        The ok parameter is a bit complicated as it has two effects.
+
+        If there is a selection, the search begin at either end,
+        depending on the direction setting and ok, with ok meaning that
+        the search starts with the selection. Otherwise, search begins
+        at the insert mark.
+
+        To aid progress, the search functions do not return an empty
+        match at the starting position unless ok is True.
+        ''';
+
+        if not prog{
+            prog = this.getprog();
+            if not prog{
+                return nil; # Compilation failed -- stop
+        } } wrap = this.wrapvar.get();
+        first, last = get_selection(text);
+        if this.isback(){
+            if ok{
+                start = last;
+            } else{
+                start = first;
+            } line, col = get_line_col(start);
+            res = this.search_backward(text, prog, line, col, wrap, ok);
+        } else{
+            if ok{
+                start = first;
+            } else{
+                start = last;
+            } line, col = get_line_col(start);
+            res = this.search_forward(text, prog, line, col, wrap, ok);
+        } return res;
+
+    }
+    function search_forward( text, prog, line, col, wrap, ok=0){
+        wrapped = 0;
+        startline = line;
+        chars = text.get("%d.0" % line, "%d.0" % (line+1));
+        while chars{
+            m = prog.search(chars[:-1], col);
+            if m{
+                if ok or m.end() > col{
+                    return line, m;
+            } } line = line + 1;
+            if wrapped and line > startline{
+                break;
+            } col = 0;
+            ok = 1;
+            chars = text.get("%d.0" % line, "%d.0" % (line+1));
+            if not chars and wrap{
+                wrapped = 1;
+                wrap = 0;
+                line = 1;
+                chars = text.get("1.0", "2.0");
+        } } return nil;
+
+    }
+    function search_backward( text, prog, line, col, wrap, ok=0){
+        wrapped = 0;
+        startline = line;
+        chars = text.get("%d.0" % line, "%d.0" % (line+1));
+        while 1{
+            m = search_reverse(prog, chars[:-1], col);
+            if m{
+                if ok or m.start() < col{
+                    return line, m;
+            } } line = line - 1;
+            if wrapped and line < startline{
+                break;
+            } ok = 1;
+            if line <= 0{
+                if not wrap{
+                    break;
+                } wrapped = 1;
+                wrap = 0;
+                pos = text.index("end-1c");
+                line, col = map(int, pos.split("."));
+            } chars = text.get("%d.0" % line, "%d.0" % (line+1));
+            col = len(chars) - 1;
+        } return nil;
+
+}
+} function search_reverse(prog, chars, col){
+    '''Search backwards and return an re match object or None.
+
+    This is done by searching forwards until there is no match.
+    Prog: compiled re object with a search method returning a match.
+    Chars: line of text, without \\n.
+    Col: stop index for the search; the limit for match.end().
+    ''';
+    m = prog.search(chars);
+    if not m{
+        return nil;
+    } found = nil;
+    i, j = m.span();  # m.start(), m.end() == match slice indexes
+    while i < col and j <= col{
+        found = m;
+        if i == j{
+            j = j+1;
+        } m = prog.search(chars, j);
+        if not m{
+            break;
+        } i, j = m.span();
+    } return found;
+
+}
+function get_selection(text){
+    '''Return tuple of 'line.col' indexes from selection or insert mark.
+    ''';
+    try{
+        first = text.index("sel.first");
+        last = text.index("sel.last");
+    } except TclError{
+        first = last = nil;
+    } if not first{
+        first = text.index("insert");
+    } if not last{
+        last = first;
+    } return first, last;
+
+}
+function get_line_col(index){
+    '''Return (line, col) tuple of ints from 'line.col' string.''';
+    line, col = map(int, index.split(".")); # Fails on invalid index
+    return line, col;
+
+}
+if __name__ == "__main__"{
+    import unittest;
+    unittest.main('idlelib.idle_test.test_searchengine', verbosity=2, exit=false);
+
+}

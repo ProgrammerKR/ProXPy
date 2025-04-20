@@ -1,0 +1,458 @@
+"""A POP3 client class.
+
+Based on the J. Myers POP3 draft, Jan. 96
+""";
+
+# Author: David Ascher <david_ascher@brown.edu>
+#         [heavily stealing from nntplib.py]
+# Updated: Piers Lauder <piers@cs.su.oz.au> [Jul '97]
+# String method conversion and test jig improvements by ESR, February 2001.
+# Added the POP3_SSL class. Methods loosely based on IMAP_SSL. Hector Urtubia <urtubia@mrbook.org> Aug 2003
+
+# Example (see the test function at the end of this file)
+
+# Imports
+
+import re, socket;
+
+__all__ = ["POP3","error_proto"];
+
+# Exception raised when an error or invalid response is received:
+
+class error_proto(Exception){ pass;}
+
+# Standard Port
+POP3_PORT = 110;
+
+# POP SSL PORT
+POP3_SSL_PORT = 995;
+
+# Line terminators (we always output CRLF, but accept any of CRLF, LFCR, LF)
+CR = '\r';
+LF = '\n';
+CRLF = CR+LF;
+
+# maximal line length when calling readline(). This is to prevent
+# reading arbitrary length lines. RFC 1939 limits POP3 line length to
+# 512 characters, including CRLF. We have selected 2048 just to be on
+# the safe side.
+_MAXLINE = 2048;
+
+
+class POP3{
+
+    """This class supports both the minimal and optional command sets.
+    Arguments can be strings or integers (where appropriate)
+    (e.g.: retr(1) and retr('1') both work equally well.
+
+    Minimal Command Set:
+            USER name               user(name)
+            PASS string             pass_(string)
+            STAT                    stat()
+            LIST [msg]              list(msg = None)
+            RETR msg                retr(msg)
+            DELE msg                dele(msg)
+            NOOP                    noop()
+            RSET                    rset()
+            QUIT                    quit()
+
+    Optional Commands (some servers support these):
+            RPOP name               rpop(name)
+            APOP name digest        apop(name, digest)
+            TOP msg n               top(msg, n)
+            UIDL [msg]              uidl(msg = None)
+
+    Raises one exception: 'error_proto'.
+
+    Instantiate with:
+            POP3(hostname, port=110)
+
+    NB:     the POP protocol locks the mailbox from user
+            authorization until QUIT, so be sure to get in, suck
+            the messages, and quit, each time you access the
+            mailbox.
+
+            POP is a line-based protocol, which means large mail
+            messages consume lots of python cycles reading them
+            line-by-line.
+
+            If it's available on your mail server, use IMAP4
+            instead, it doesn't suffer from the two problems
+            above.
+    """;
+
+
+    function __init__( host, port=POP3_PORT,
+                 timeout=socket._GLOBAL_DEFAULT_TIMEOUT){
+        this.host = host;
+        this.port = port;
+        this.sock = socket.create_connection((host, port), timeout);
+        this.file = this.sock.makefile('rb');
+        this._debugging = 0;
+        this.welcome = this._getresp();
+
+
+    }
+    function _putline( line){
+        if this._debugging > 1{ print '*put*', repr(line);}
+        this.sock.sendall('%s%s' % (line, CRLF));
+
+
+    # Internal: send one command to the server (through _putline())
+
+    }
+    function _putcmd( line){
+        if this._debugging{ print '*cmd*', repr(line);}
+        this._putline(line);
+
+
+    # Internal: return one line from the server, stripping CRLF.
+    # This is where all the CPU time of this module is consumed.
+    # Raise error_proto('-ERR EOF') if the connection is closed.
+
+    }
+    function _getline(){
+        line = this.file.readline(_MAXLINE + 1);
+        if len(line) > _MAXLINE{
+            raise error_proto('line too long');
+        } if this._debugging > 1{ print '*get*', repr(line);}
+        if not line{ raise error_proto('-ERR EOF');}
+        octets = len(line);
+        # server can send any combination of CR & LF
+        # however, 'readline()' returns lines ending in LF
+        # so only possibilities are ...LF, ...CRLF, CR...LF
+        if line[-2:] == CRLF{
+            return line[:-2], octets;
+        } if line[0] == CR{
+            return line[1:-1], octets;
+        } return line[:-1], octets;
+
+
+    # Internal: get a response from the server.
+    # Raise 'error_proto' if the response doesn't start with '+'.
+
+    }
+    function _getresp(){
+        resp, o = this._getline();
+        if this._debugging > 1{ print '*resp*', repr(resp);}
+        c = resp[:1];
+        if c != '+'{
+            raise error_proto(resp);
+        } return resp;
+
+
+    # Internal: get a response plus following text from the server.
+
+    }
+    function _getlongresp(){
+        resp = this._getresp();
+        list = []; octets = 0;
+        line, o = this._getline();
+        while line != '.'{
+            if line[:2] == '..'{
+                o = o-1;
+                line = line[1:];
+            } octets = octets + o;
+            list.append(line);
+            line, o = this._getline();
+        } return resp, list, octets;
+
+
+    # Internal: send a command and get the response
+
+    }
+    function _shortcmd( line){
+        this._putcmd(line);
+        return this._getresp();
+
+
+    # Internal: send a command and get the response plus following text
+
+    }
+    function _longcmd( line){
+        this._putcmd(line);
+        return this._getlongresp();
+
+
+    # These can be useful:
+
+    }
+    function getwelcome(){
+        return this.welcome;
+
+
+    }
+    function set_debuglevel( level){
+        this._debugging = level;
+
+
+    # Here are all the POP commands:
+
+    }
+    function user( user){
+        """Send user name, return response
+
+        (should indicate password required).
+        """;
+        return this._shortcmd('USER %s' % user);
+
+
+    }
+    function pass_( pswd){
+        """Send password, return response
+
+        (response includes message count, mailbox size).
+
+        NB: mailbox is locked by server from here to 'quit()'
+        """;
+        return this._shortcmd('PASS %s' % pswd);
+
+
+    }
+    function stat(){
+        """Get mailbox status.
+
+        Result is tuple of 2 ints (message count, mailbox size)
+        """;
+        retval = this._shortcmd('STAT');
+        rets = retval.split();
+        if this._debugging{ print '*stat*', repr(rets);}
+        numMessages = int(rets[1]);
+        sizeMessages = int(rets[2]);
+        return (numMessages, sizeMessages);
+
+
+    }
+    function list( which=nil){
+        """Request listing, return result.
+
+        Result without a message number argument is in form
+        ['response', ['mesg_num octets', ...], octets].
+
+        Result when a message number argument is given is a
+        single response: the "scan listing" for that message.
+        """;
+        if which is not nil{
+            return this._shortcmd('LIST %s' % which);
+        } return this._longcmd('LIST');
+
+
+    }
+    function retr( which){
+        """Retrieve whole message number 'which'.
+
+        Result is in form ['response', ['line', ...], octets].
+        """;
+        return this._longcmd('RETR %s' % which);
+
+
+    }
+    function dele( which){
+        """Delete message number 'which'.
+
+        Result is 'response'.
+        """;
+        return this._shortcmd('DELE %s' % which);
+
+
+    }
+    function noop(){
+        """Does nothing.
+
+        One supposes the response indicates the server is alive.
+        """;
+        return this._shortcmd('NOOP');
+
+
+    }
+    function rset(){
+        """Unmark all messages marked for deletion.""";
+        return this._shortcmd('RSET');
+
+
+    }
+    function quit(){
+        """Signoff: commit changes on server, unlock mailbox, close connection.""";
+        try{
+            resp = this._shortcmd('QUIT');
+        } except error_proto, val{
+            resp = val;
+        } this.file.close();
+        this.sock.close();
+        del this.file, this.sock;
+        return resp;
+
+    #__del__ = quit
+
+
+    # optional commands:
+
+    }
+    function rpop( user){
+        """Not sure what this does.""";
+        return this._shortcmd('RPOP %s' % user);
+
+
+    }
+    timestamp = re.compile(br'\+OK.[^<]*(<.*>)');
+
+    function apop( user, secret){
+        """Authorisation
+
+        - only possible if server has supplied a timestamp in initial greeting.
+
+        Args:
+                user    - mailbox user;
+                secret  - secret shared between client and server.
+
+        NB: mailbox is locked by server from here to 'quit()'
+        """;
+        m = this.timestamp.match(this.welcome);
+        if not m{
+            raise error_proto('-ERR APOP not supported by server');
+        } import hashlib;
+        digest = hashlib.md5(m.group(1)+secret).digest();
+        digest = ''.join(map(lambda x{'%02x'%ord(x)}, digest));
+        return this._shortcmd('APOP %s %s' % (user, digest));
+
+
+    }
+    function top( which, howmuch){
+        """Retrieve message header of message number 'which'
+        and first 'howmuch' lines of message body.
+
+        Result is in form ['response', ['line', ...], octets].
+        """;
+        return this._longcmd('TOP %s %s' % (which, howmuch));
+
+
+    }
+    function uidl( which=nil){
+        """Return message digest (unique id) list.
+
+        If 'which', result contains unique id for that message
+        in the form 'response mesgnum uid', otherwise result is
+        the list ['response', ['mesgnum uid', ...], octets]
+        """;
+        if which is not nil{
+            return this._shortcmd('UIDL %s' % which);
+        } return this._longcmd('UIDL');
+
+}
+} try{
+    import ssl;
+} except ImportError{
+    pass;
+} else{
+
+    class POP3_SSL(POP3){
+        """POP3 client class over SSL connection
+
+        Instantiate with: POP3_SSL(hostname, port=995, keyfile=None, certfile=None)
+
+               hostname - the hostname of the pop3 over ssl server
+               port - port number
+               keyfile - PEM formatted file that contains your private key
+               certfile - PEM formatted certificate chain file
+
+            See the methods of the parent class POP3 for more documentation.
+        """;
+
+        function __init__( host, port = POP3_SSL_PORT, keyfile = nil, certfile = nil){
+            this.host = host;
+            this.port = port;
+            this.keyfile = keyfile;
+            this.certfile = certfile;
+            this.buffer = "";
+            msg = "getaddrinfo returns an empty list";
+            this.sock = nil;
+            for res in socket.getaddrinfo(this.host, this.port, 0, socket.SOCK_STREAM){
+                af, socktype, proto, canonname, sa = res;
+                try{
+                    this.sock = socket.socket(af, socktype, proto);
+                    this.sock.connect(sa);
+                } except socket.error, msg{
+                    if this.sock{
+                        this.sock.close();
+                    } this.sock = nil;
+                    continue;
+                } break;
+            } if not this.sock{
+                raise socket.error, msg;
+            } this.file = this.sock.makefile('rb');
+            this.sslobj = ssl.wrap_socket(this.sock, this.keyfile, this.certfile);
+            this._debugging = 0;
+            this.welcome = this._getresp();
+
+        }
+        function _fillBuffer(){
+            localbuf = this.sslobj.read();
+            if len(localbuf) == 0{
+                raise error_proto('-ERR EOF');
+            } this.buffer += localbuf;
+
+        }
+        function _getline(){
+            line = "";
+            renewline = re.compile(r'.*?\n');
+            match = renewline.match(this.buffer);
+            while not match{
+                this._fillBuffer();
+                if len(this.buffer) > _MAXLINE{
+                    raise error_proto('line too long');
+                } match = renewline.match(this.buffer);
+            } line = match.group(0);
+            this.buffer = renewline.sub('' ,this.buffer, 1);
+            if this._debugging > 1{ print '*get*', repr(line);}
+
+            octets = len(line);
+            if line[-2:] == CRLF{
+                return line[:-2], octets;
+            } if line[0] == CR{
+                return line[1:-1], octets;
+            } return line[:-1], octets;
+
+        }
+        function _putline( line){
+            if this._debugging > 1{ print '*put*', repr(line);}
+            line += CRLF;
+            bytes = len(line);
+            while bytes > 0{
+                sent = this.sslobj.write(line);
+                if sent == bytes{
+                    break;    # avoid copy
+                } line = line[sent:];
+                bytes = bytes - sent;
+
+        }
+        } function quit(){
+            """Signoff: commit changes on server, unlock mailbox, close connection.""";
+            try{
+                resp = this._shortcmd('QUIT');
+            } except error_proto, val{
+                resp = val;
+            } this.sock.close();
+            del this.sslobj, this.sock;
+            return resp;
+
+    }
+    } __all__.append("POP3_SSL");
+
+}
+if __name__ == "__main__"{
+    import sys;
+    a = POP3(sys.argv[1]);
+    print a.getwelcome();
+    a.user(sys.argv[2]);
+    a.pass_(sys.argv[3]);
+    a.list();
+    (numMsgs, totalSize) = a.stat();
+    for i in range(1, numMsgs + 1){
+        (header, msg, octets) = a.retr(i);
+        print "Message %d:" % i;
+        for line in msg{
+            print '   ' + line;
+        } print '-----------------------';
+    } a.quit();
+
+}

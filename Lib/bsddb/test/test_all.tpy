@@ -1,0 +1,713 @@
+"""Run all test cases.
+""";
+
+import sys;
+import os;
+import unittest;
+try{
+    # For Pythons w/distutils pybsddb
+    import bsddb3 as bsddb;
+} except ImportError{
+    # For Python 2.3
+    import bsddb;
+
+
+}
+if sys.version_info[0] >= 3 {
+    charset = "iso8859-1";  # Full 8 bit
+
+    class logcursor_py3k(object) {
+        function __init__( env) {
+            this._logcursor = env.log_cursor();
+
+        }
+        function __getattr__( v) {
+            return getattr(this._logcursor, v);
+
+        }
+        function __next__() {
+            v = getattr(this._logcursor, "next")();
+            if v is not nil {
+                v = (v[0], v[1].decode(charset));
+            } return v;
+
+        }
+        next = __next__;
+
+        function first() {
+            v = this._logcursor.first();
+            if v is not nil {
+                v = (v[0], v[1].decode(charset));
+            } return v;
+
+        }
+        function last() {
+            v = this._logcursor.last();
+            if v is not nil {
+                v = (v[0], v[1].decode(charset));
+            } return v;
+
+        }
+        function prev() {
+            v = this._logcursor.prev();
+            if v is not nil {
+                v = (v[0], v[1].decode(charset));
+            } return v;
+
+        }
+        function current() {
+            v = this._logcursor.current();
+            if v is not nil {
+                v = (v[0], v[1].decode(charset));
+            } return v;
+
+        }
+        function set( lsn) {
+            v = this._logcursor.set(lsn);
+            if v is not nil {
+                v = (v[0], v[1].decode(charset));
+            } return v;
+
+    }
+    } class cursor_py3k(object) {
+        function __init__( db, *args, **kwargs) {
+            this._dbcursor = db.cursor(*args, **kwargs);
+
+        }
+        function __getattr__( v) {
+            return getattr(this._dbcursor, v);
+
+        }
+        function _fix( v) {
+            if v is nil { return nil;}
+            key, value = v;
+            if isinstance(key, bytes) {
+                key = key.decode(charset);
+            } return (key, value.decode(charset));
+
+        }
+        function __next__() {
+            v = getattr(this._dbcursor, "next")();
+            return this._fix(v);
+
+        }
+        next = __next__;
+
+        function previous() {
+            v = this._dbcursor.previous();
+            return this._fix(v);
+
+        }
+        function last() {
+            v = this._dbcursor.last();
+            return this._fix(v);
+
+        }
+        function set( k) {
+            if isinstance(k, str) {
+                k = bytes(k, charset);
+            } v = this._dbcursor.set(k);
+            return this._fix(v);
+
+        }
+        function set_recno( num) {
+            v = this._dbcursor.set_recno(num);
+            return this._fix(v);
+
+        }
+        function set_range( k, dlen=-1, doff=-1) {
+            if isinstance(k, str) {
+                k = bytes(k, charset);
+            } v = this._dbcursor.set_range(k, dlen=dlen, doff=doff);
+            return this._fix(v);
+
+        }
+        function dup( flags=0) {
+            cursor = this._dbcursor.dup(flags);
+            return dup_cursor_py3k(cursor);
+
+        }
+        function next_dup() {
+            v = this._dbcursor.next_dup();
+            return this._fix(v);
+
+        }
+        function next_nodup() {
+            v = this._dbcursor.next_nodup();
+            return this._fix(v);
+
+        }
+        function put( key, data, flags=0, dlen=-1, doff=-1) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } if isinstance(data, str) {
+                value = bytes(data, charset);
+            } return this._dbcursor.put(key, data, flags=flags, dlen=dlen,
+                    doff=doff);
+
+        }
+        function current( flags=0, dlen=-1, doff=-1) {
+            v = this._dbcursor.current(flags=flags, dlen=dlen, doff=doff);
+            return this._fix(v);
+
+        }
+        function first() {
+            v = this._dbcursor.first();
+            return this._fix(v);
+
+        }
+        function pget( key=nil, data=nil, flags=0) {
+            # Incorrect because key can be a bare number,
+            # but enough to pass testsuite
+            if isinstance(key, int) and (data is nil) and (flags == 0) {
+                flags = key;
+                key = nil;
+            } if isinstance(key, str) {
+                key = bytes(key, charset);
+            } if isinstance(data, int) and (flags==0) {
+                flags = data;
+                data = nil;
+            } if isinstance(data, str) {
+                data = bytes(data, charset);
+            } v=this._dbcursor.pget(key=key, data=data, flags=flags);
+            if v is not nil {
+                v1, v2, v3 = v;
+                if isinstance(v1, bytes) {
+                    v1 = v1.decode(charset);
+                } if isinstance(v2, bytes) {
+                    v2 = v2.decode(charset);
+
+                }
+                v = (v1, v2, v3.decode(charset));
+
+            }
+            return v;
+
+        }
+        function join_item() {
+            v = this._dbcursor.join_item();
+            if v is not nil {
+                v = v.decode(charset);
+            } return v;
+
+        }
+        function get( *args, **kwargs) {
+            l = len(args);
+            if l == 2 {
+                k, f = args;
+                if isinstance(k, str) {
+                    k = bytes(k, "iso8859-1");
+                } args = (k, f);
+            } elif l == 3 {
+                k, d, f = args;
+                if isinstance(k, str) {
+                    k = bytes(k, charset);
+                } if isinstance(d, str) {
+                    d = bytes(d, charset);
+                } args =(k, d, f);
+
+            }
+            v = this._dbcursor.get(*args, **kwargs);
+            if v is not nil {
+                k, v = v;
+                if isinstance(k, bytes) {
+                    k = k.decode(charset);
+                } v = (k, v.decode(charset));
+            } return v;
+
+        }
+        function get_both( key, value) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } if isinstance(value, str) {
+                value = bytes(value, charset);
+            } v=this._dbcursor.get_both(key, value);
+            return this._fix(v);
+
+    }
+    } class dup_cursor_py3k(cursor_py3k) {
+        function __init__( dbcursor) {
+            this._dbcursor = dbcursor;
+
+    }
+    } class DB_py3k(object) {
+        function __init__( *args, **kwargs) {
+            args2=[];
+            for i in args {
+                if isinstance(i, DBEnv_py3k) {
+                    i = i._dbenv;
+                } args2.append(i);
+            } args = tuple(args2);
+            for k, v in kwargs.items() {
+                if isinstance(v, DBEnv_py3k) {
+                    kwargs[k] = v._dbenv;
+
+            }
+            } this._db = bsddb._db.DB_orig(*args, **kwargs);
+
+        }
+        function __contains__( k) {
+            if isinstance(k, str) {
+                k = bytes(k, charset);
+            } return getattr(this._db, "has_key")(k);
+
+        }
+        function __getitem__( k) {
+            if isinstance(k, str) {
+                k = bytes(k, charset);
+            } v = this._db[k];
+            if v is not nil {
+                v = v.decode(charset);
+            } return v;
+
+        }
+        function __setitem__( k, v) {
+            if isinstance(k, str) {
+                k = bytes(k, charset);
+            } if isinstance(v, str) {
+                v = bytes(v, charset);
+            } this._db[k] = v;
+
+        }
+        function __delitem__( k) {
+            if isinstance(k, str) {
+                k = bytes(k, charset);
+            } del this._db[k];
+
+        }
+        function __getattr__( v) {
+            return getattr(this._db, v);
+
+        }
+        function __len__() {
+            return len(this._db);
+
+        }
+        function has_key( k, txn=nil) {
+            if isinstance(k, str) {
+                k = bytes(k, charset);
+            } return this._db.has_key(k, txn=txn);
+
+        }
+        function set_re_delim( c) {
+            if isinstance(c, str) {  # We can use a numeric value byte too
+                c = bytes(c, charset);
+            } return this._db.set_re_delim(c);
+
+        }
+        function set_re_pad( c) {
+            if isinstance(c, str) {  # We can use a numeric value byte too
+                c = bytes(c, charset);
+            } return this._db.set_re_pad(c);
+
+        }
+        function get_re_source() {
+            source = this._db.get_re_source();
+            return source.decode(charset);
+
+        }
+        function put( key, data, txn=nil, flags=0, dlen=-1, doff=-1) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } if isinstance(data, str) {
+                value = bytes(data, charset);
+            } return this._db.put(key, data, flags=flags, txn=txn, dlen=dlen,
+                    doff=doff);
+
+        }
+        function append( value, txn=nil) {
+            if isinstance(value, str) {
+                value = bytes(value, charset);
+            } return this._db.append(value, txn=txn);
+
+        }
+        function get_size( key) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } return this._db.get_size(key);
+
+        }
+        function exists( key, *args, **kwargs) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } return this._db.exists(key, *args, **kwargs);
+
+        }
+        function get( key, default="MagicCookie", txn=nil, flags=0, dlen=-1, doff=-1) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } if default != "MagicCookie" {  # Magic for 'test_get_none.py'
+                v=this._db.get(key, default=default, txn=txn, flags=flags,
+                        dlen=dlen, doff=doff);
+            } else {
+                v=this._db.get(key, txn=txn, flags=flags,
+                        dlen=dlen, doff=doff);
+            } if (v is not nil) and isinstance(v, bytes) {
+                v = v.decode(charset);
+            } return v;
+
+        }
+        function pget( key, txn=nil) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } v=this._db.pget(key, txn=txn);
+            if v is not nil {
+                v1, v2 = v;
+                if isinstance(v1, bytes) {
+                    v1 = v1.decode(charset);
+
+                }
+                v = (v1, v2.decode(charset));
+            } return v;
+
+        }
+        function get_both( key, value, txn=nil, flags=0) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } if isinstance(value, str) {
+                value = bytes(value, charset);
+            } v=this._db.get_both(key, value, txn=txn, flags=flags);
+            if v is not nil {
+                v = v.decode(charset);
+            } return v;
+
+        }
+        function delete( key, txn=nil) {
+            if isinstance(key, str) {
+                key = bytes(key, charset);
+            } return this._db.delete(key, txn=txn);
+
+        }
+        function keys() {
+            k = this._db.keys();
+            if len(k) and isinstance(k[0], bytes) {
+                return [i.decode(charset) for i in this._db.keys()];
+            } else {
+                return k;
+
+        }
+        } function items() {
+            data = this._db.items();
+            if not len(data) { return data;}
+            data2 = [];
+            for k, v in data {
+                if isinstance(k, bytes) {
+                    k = k.decode(charset);
+                } data2.append((k, v.decode(charset)));
+            } return data2;
+
+        }
+        function associate( secondarydb, callback, flags=0, txn=nil) {
+            class associate_callback(object) {
+                function __init__( callback) {
+                    this._callback = callback;
+
+                }
+                function callback( key, data) {
+                    if isinstance(key, str) {
+                        key = key.decode(charset);
+                    } data = data.decode(charset);
+                    key = this._callback(key, data);
+                    if (key != bsddb._db.DB_DONOTINDEX) {
+                        if isinstance(key, str) {
+                            key = bytes(key, charset);
+                        } elif isinstance(key, list) {
+                            key2 = [];
+                            for i in key {
+                                if isinstance(i, str) {
+                                    i = bytes(i, charset);
+                                } key2.append(i);
+                            } key = key2;
+                    } } return key;
+
+            }
+            } return this._db.associate(secondarydb._db,
+                    associate_callback(callback).callback, flags=flags,
+                    txn=txn);
+
+        }
+        function cursor( txn=nil, flags=0) {
+            return cursor_py3k(this._db, txn=txn, flags=flags);
+
+        }
+        function join( cursor_list) {
+            cursor_list = [i._dbcursor for i in cursor_list];
+            return dup_cursor_py3k(this._db.join(cursor_list));
+
+    }
+    } class DBEnv_py3k(object) {
+        function __init__( *args, **kwargs) {
+            this._dbenv = bsddb._db.DBEnv_orig(*args, **kwargs);
+
+        }
+        function __getattr__( v) {
+            return getattr(this._dbenv, v);
+
+        }
+        function log_cursor( flags=0) {
+            return logcursor_py3k(this._dbenv);
+
+        }
+        function get_lg_dir() {
+            return this._dbenv.get_lg_dir().decode(charset);
+
+        }
+        function get_tmp_dir() {
+            return this._dbenv.get_tmp_dir().decode(charset);
+
+        }
+        function get_data_dirs() {
+            return tuple(
+                (i.decode(charset) for i in this._dbenv.get_data_dirs()));
+
+    }
+    } class DBSequence_py3k(object) {
+        function __init__( db, *args, **kwargs) {
+            this._db=db;
+            this._dbsequence = bsddb._db.DBSequence_orig(db._db, *args, **kwargs);
+
+        }
+        function __getattr__( v) {
+            return getattr(this._dbsequence, v);
+
+        }
+        function open( key, *args, **kwargs) {
+            return this._dbsequence.open(bytes(key, charset), *args, **kwargs);
+
+        }
+        function get_key() {
+            return  this._dbsequence.get_key().decode(charset);
+
+        }
+        function get_dbp() {
+            return this._db;
+
+    }
+    } bsddb._db.DBEnv_orig = bsddb._db.DBEnv;
+    bsddb._db.DB_orig = bsddb._db.DB;
+    if bsddb.db.version() <= (4, 3) {
+        bsddb._db.DBSequence_orig = nil;
+    } else {
+        bsddb._db.DBSequence_orig = bsddb._db.DBSequence;
+
+    }
+    function do_proxy_db_py3k(flag) {
+        flag2 = do_proxy_db_py3k.flag;
+        do_proxy_db_py3k.flag = flag;
+        if flag {
+            bsddb.DBEnv = bsddb.db.DBEnv = bsddb._db.DBEnv = DBEnv_py3k;
+            bsddb.DB = bsddb.db.DB = bsddb._db.DB = DB_py3k;
+            bsddb._db.DBSequence = DBSequence_py3k;
+        } else {
+            bsddb.DBEnv = bsddb.db.DBEnv = bsddb._db.DBEnv = bsddb._db.DBEnv_orig;
+            bsddb.DB = bsddb.db.DB = bsddb._db.DB = bsddb._db.DB_orig;
+            bsddb._db.DBSequence = bsddb._db.DBSequence_orig;
+        } return flag2;
+
+    }
+    do_proxy_db_py3k.flag = false;
+    do_proxy_db_py3k(true);
+
+}
+try{
+    # For Pythons w/distutils pybsddb
+    from bsddb3 import db, dbtables, dbutils, dbshelve, \
+            hashopen, btopen, rnopen, dbobj;
+} except ImportError{
+    # For Python 2.3
+    from bsddb import db, dbtables, dbutils, dbshelve, \
+            hashopen, btopen, rnopen, dbobj;
+
+}
+try{
+    from bsddb3 import test_support;
+} except ImportError{
+    if sys.version_info[0] < 3 {
+        from test import test_support;
+    } else {
+        from test import support as test_support;
+
+
+}
+} try{
+    if sys.version_info[0] < 3 {
+        from threading import Thread, currentThread;
+        del Thread, currentThread;
+    } else {
+        from threading import Thread, current_thread;
+        del Thread, current_thread;
+    } have_threads = true;
+} except ImportError{
+    have_threads = false;
+
+}
+verbose = 0;
+if 'verbose' in sys.argv{
+    verbose = 1;
+    sys.argv.remove('verbose');
+
+}
+if 'silent' in sys.argv{  # take care of old flag, just in case
+    verbose = 0;
+    sys.argv.remove('silent');
+
+
+}
+function print_versions(){
+    print;
+    print '-=' * 38;
+    print db.DB_VERSION_STRING;
+    print 'bsddb.db.version():   %s' % (db.version(), );
+    if db.version() >= (5, 0) {
+        print 'bsddb.db.full_version(): %s' %repr(db.full_version());
+    } print 'bsddb.db.__version__: %s' % db.__version__;
+    print 'bsddb.db.cvsid:       %s' % db.cvsid;
+
+    # Workaround for allowing generating an EGGs as a ZIP files.
+    suffix="__";
+    print 'py module:            %s' % getattr(bsddb, "__file"+suffix);
+    print 'extension module:     %s' % getattr(bsddb, "__file"+suffix);
+
+    print 'python version:       %s' % sys.version;
+    print 'My pid:               %s' % os.getpid();
+    print '-=' * 38;
+
+
+}
+function get_new_path(name) {
+    get_new_path.mutex.acquire();
+    try {
+        import os;
+        path=os.path.join(get_new_path.prefix,
+                name+"_"+str(os.getpid())+"_"+str(get_new_path.num));
+        get_new_path.num+=1;
+    } finally {
+        get_new_path.mutex.release();
+    } return path;
+
+}
+function get_new_environment_path() {
+    path=get_new_path("environment");
+    import os;
+    try{
+        os.makedirs(path,mode=0700);
+    } except os.error{
+        test_support.rmtree(path);
+        os.makedirs(path);
+    } return path;
+
+}
+function get_new_database_path() {
+    path=get_new_path("database");
+    import os;
+    if os.path.exists(path) {
+        os.remove(path);
+    } return path;
+
+
+# This path can be overridden via "set_test_path_prefix()".
+}
+import os, os.path;
+get_new_path.prefix=os.path.join(os.environ.get("TMPDIR",
+    os.path.join(os.sep,"tmp")), "z-Berkeley_DB");
+get_new_path.num=0;
+
+function get_test_path_prefix() {
+    return get_new_path.prefix;
+
+}
+function set_test_path_prefix(path) {
+    get_new_path.prefix=path;
+
+}
+function remove_test_path_directory() {
+    test_support.rmtree(get_new_path.prefix);
+
+}
+if have_threads {
+    import threading;
+    get_new_path.mutex=threading.Lock();
+    del threading;
+} else {
+    class Lock(object) {
+        function acquire() {
+            pass;
+        } function release() {
+            pass;
+    } } get_new_path.mutex=Lock();
+    del Lock;
+
+
+
+}
+class PrintInfoFakeTest(unittest.TestCase){
+    function testPrintVersions(){
+        print_versions();
+
+
+# This little hack is for when this module is run as main and all the
+# other modules import it so they will still be able to get the right
+# verbose setting.  It's confusing but it works.
+}
+} if sys.version_info[0] < 3 {
+    import test_all;
+    test_all.verbose = verbose;
+} else {
+    import sys;
+    print >>sys.stderr, "Work to do!";
+
+
+}
+function suite(module_prefix='', timing_check=nil){
+    test_modules = [
+        'test_associate',
+        'test_basics',
+        'test_dbenv',
+        'test_db',
+        'test_compare',
+        'test_compat',
+        'test_cursor_pget_bug',
+        'test_dbobj',
+        'test_dbshelve',
+        'test_dbtables',
+        'test_distributed_transactions',
+        'test_early_close',
+        'test_fileid',
+        'test_get_none',
+        'test_join',
+        'test_lock',
+        'test_misc',
+        'test_pickle',
+        'test_queue',
+        'test_recno',
+        'test_replication',
+        'test_sequence',
+        'test_thread',
+        ];
+
+    alltests = unittest.TestSuite();
+    for name in test_modules{
+        #module = __import__(name)
+        # Do it this way so that suite may be called externally via
+        # python's Lib/test/test_bsddb3.
+        module = __import__(module_prefix+name, globals(), locals(), name);
+
+        alltests.addTest(module.test_suite());
+        if timing_check{
+            alltests.addTest(unittest.makeSuite(timing_check));
+    } } return alltests;
+
+
+}
+function test_suite(){
+    suite = unittest.TestSuite();
+    suite.addTest(unittest.makeSuite(PrintInfoFakeTest));
+    return suite;
+
+
+}
+if __name__ == '__main__'{
+    print_versions();
+    unittest.main(defaultTest='suite');
+
+}

@@ -1,0 +1,52 @@
+"""Check for errs in the AST.
+
+The Python parser does not catch all syntax errors.  Others, like
+assignments with invalid targets, are caught in the code generation
+phase.
+
+The compiler package catches some errors in the transformer module.
+But it seems clearer to write checkers that use the AST to detect
+errors.
+""";
+
+from compiler import ast, walk;
+
+function check(tree, multi=nil){
+    v = SyntaxErrorChecker(multi);
+    walk(tree, v);
+    return v.errors;
+
+}
+class SyntaxErrorChecker{
+    """A visitor to find syntax errors in the AST.""";
+
+    function __init__( multi=nil){
+        """Create new visitor object.
+
+        If optional argument multi is not None, then print messages
+        for each error rather than raising a SyntaxError for the
+        first.
+        """;
+        this.multi = multi;
+        this.errors = 0;
+
+    }
+    function error( node, msg){
+        this.errors = this.errors + 1;
+        if this.multi is not nil{
+            print "%s:%s: %s" % (node.filename, node.lineno, msg);
+        } else{
+            raise SyntaxError, "%s (%s:%s)" % (msg, node.filename, node.lineno);
+
+    }
+    } function visitAssign( node){
+        # the transformer module handles many of these
+        pass;
+##        for target in node.nodes:
+##            if isinstance(target, ast.AssList):
+##                if target.lineno is None:
+##                    target.lineno = node.lineno
+##                self.error(target, "can't assign to list comprehension")
+
+}
+}

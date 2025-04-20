@@ -1,0 +1,1809 @@
+import unittest;
+import Tkinter as tkinter;
+from Tkinter import TclError;
+import ttk;
+from test.test_support import requires, run_unittest, have_unicode, u;
+import sys;
+
+from test_functions import MockTclObj;
+from support import (AbstractTkTest, tcl_version, get_tk_patchlevel,
+                     simulate_mouse_click);
+from widget_tests import (add_standard_options, noconv, noconv_meth,
+    AbstractWidgetTest, StandardOptionsTests,
+    IntegerSizeTests, PixelSizeTests,
+    setUpModule);
+
+requires('gui');
+
+
+class StandardTtkOptionsTests(StandardOptionsTests){
+
+    function test_class(){
+        widget = this.create();
+        this.assertEqual(widget['class'], '');
+        errmsg='attempt to change read-only option';
+        if get_tk_patchlevel() < (8, 6, 0, 'beta', 3){
+            errmsg='Attempt to change read-only option';
+        } this.checkInvalidParam(widget, 'class', 'Foo', errmsg=errmsg);
+        widget2 = this.create(class_='Foo');
+        this.assertEqual(widget2['class'], 'Foo');
+
+    }
+    function test_padding(){
+        widget = this.create();
+        this.checkParam(widget, 'padding', 0, expected=('0',));
+        this.checkParam(widget, 'padding', 5, expected=('5',));
+        this.checkParam(widget, 'padding', (5, 6), expected=('5', '6'));
+        this.checkParam(widget, 'padding', (5, 6, 7),
+                        expected=('5', '6', '7'));
+        this.checkParam(widget, 'padding', (5, 6, 7, 8),
+                        expected=('5', '6', '7', '8'));
+        this.checkParam(widget, 'padding', ('5p', '6p', '7p', '8p'));
+        this.checkParam(widget, 'padding', (), expected='');
+
+    }
+    function test_style(){
+        widget = this.create();
+        this.assertEqual(widget['style'], '');
+        errmsg = 'Layout Foo not found';
+        if hasattr(this, 'default_orient'){
+            errmsg = ('Layout %s.Foo not found' %
+                      getattr(this, 'default_orient').title());
+        } this.checkInvalidParam(widget, 'style', 'Foo',
+                errmsg=errmsg);
+        widget2 = this.create(class_='Foo');
+        this.assertEqual(widget2['class'], 'Foo');
+        # XXX
+        pass;
+
+
+}
+} class WidgetTest(AbstractTkTest, unittest.TestCase){
+    """Tests methods available in every ttk widget.""";
+
+    function setUp(){
+        super(WidgetTest, this).setUp();
+        this.widget = ttk.Button(this.root, width=0, text="Text");
+        this.widget.pack();
+        this.widget.wait_visibility();
+
+
+    }
+    function test_identify(){
+        this.widget.update_idletasks();
+        this.assertEqual(this.widget.identify(
+            this.widget.winfo_width() // 2,
+            this.widget.winfo_height() // 2
+            ), "label");
+        this.assertEqual(this.widget.identify(-1, -1), "");
+
+        this.assertRaises(tkinter.TclError, this.widget.identify, nil, 5);
+        this.assertRaises(tkinter.TclError, this.widget.identify, 5, nil);
+        this.assertRaises(tkinter.TclError, this.widget.identify, 5, '');
+
+
+    }
+    function test_widget_state(){
+        # XXX not sure about the portability of all these tests
+        this.assertEqual(this.widget.state(), ());
+        this.assertEqual(this.widget.instate(['!disabled']), true);
+
+        # changing from !disabled to disabled
+        this.assertEqual(this.widget.state(['disabled']), ('!disabled', ));
+        # no state change
+        this.assertEqual(this.widget.state(['disabled']), ());
+        # change back to !disable but also active
+        this.assertEqual(this.widget.state(['!disabled', 'active']),
+            ('!active', 'disabled'));
+        # no state changes, again
+        this.assertEqual(this.widget.state(['!disabled', 'active']), ());
+        this.assertEqual(this.widget.state(['active', '!disabled']), ());
+
+        function test_cb(arg1, **kw){
+            return arg1, kw;
+        } this.assertEqual(this.widget.instate(['!disabled'],
+            test_cb, "hi", **{"msg": "there"}),
+            ('hi', {'msg': 'there'}));
+
+        # attempt to set invalid statespec
+        currstate = this.widget.state();
+        this.assertRaises(tkinter.TclError, this.widget.instate,
+            ['badstate']);
+        this.assertRaises(tkinter.TclError, this.widget.instate,
+            ['disabled', 'badstate']);
+        # verify that widget didn't change its state
+        this.assertEqual(currstate, this.widget.state());
+
+        # ensuring that passing None as state doesn't modify current state
+        this.widget.state(['active', '!disabled']);
+        this.assertEqual(this.widget.state(), ('active', ));
+
+
+}
+} class AbstractToplevelTest(AbstractWidgetTest, PixelSizeTests){
+    _conv_pixels = noconv_meth;
+
+
+}
+@add_standard_options(StandardTtkOptionsTests);
+class FrameTest(AbstractToplevelTest, unittest.TestCase){
+    OPTIONS = (
+        'borderwidth', 'class', 'cursor', 'height',
+        'padding', 'relief', 'style', 'takefocus',
+        'width',
+    );
+
+    function create( **kwargs){
+        return ttk.Frame(this.root, **kwargs);
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class LabelFrameTest(AbstractToplevelTest, unittest.TestCase){
+    OPTIONS = (
+        'borderwidth', 'class', 'cursor', 'height',
+        'labelanchor', 'labelwidget',
+        'padding', 'relief', 'style', 'takefocus',
+        'text', 'underline', 'width',
+    );
+
+    function create( **kwargs){
+        return ttk.LabelFrame(this.root, **kwargs);
+
+    }
+    function test_labelanchor(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'labelanchor',
+                'e', 'en', 'es', 'n', 'ne', 'nw', 's', 'se', 'sw', 'w', 'wn', 'ws',
+                errmsg='Bad label anchor specification {}');
+        this.checkInvalidParam(widget, 'labelanchor', 'center');
+
+    }
+    function test_labelwidget(){
+        widget = this.create();
+        label = ttk.Label(this.root, text='Mupp', name='foo');
+        this.checkParam(widget, 'labelwidget', label, expected='.foo');
+        label.destroy();
+
+
+}
+} class AbstractLabelTest(AbstractWidgetTest){
+
+    function checkImageParam( widget, name){
+        image = tkinter.PhotoImage(master=this.root, name='image1');
+        image2 = tkinter.PhotoImage(master=this.root, name='image2');
+        this.checkParam(widget, name, image, expected=('image1',));
+        this.checkParam(widget, name, 'image1', expected=('image1',));
+        this.checkParam(widget, name, (image,), expected=('image1',));
+        this.checkParam(widget, name, (image, 'active', image2),
+                        expected=('image1', 'active', 'image2'));
+        this.checkParam(widget, name, 'image1 active image2',
+                        expected=('image1', 'active', 'image2'));
+        this.checkInvalidParam(widget, name, 'spam',
+                errmsg='image "spam" doesn\'t exist');
+
+    }
+    function test_compound(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'compound',
+                'none', 'text', 'image', 'center',
+                'top', 'bottom', 'left', 'right');
+
+    }
+    function test_state(){
+        widget = this.create();
+        this.checkParams(widget, 'state', 'active', 'disabled', 'normal');
+
+    }
+    function test_width(){
+        widget = this.create();
+        this.checkParams(widget, 'width', 402, -402, 0);
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class LabelTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'anchor', 'background', 'borderwidth',
+        'class', 'compound', 'cursor', 'font', 'foreground',
+        'image', 'justify', 'padding', 'relief', 'state', 'style',
+        'takefocus', 'text', 'textvariable',
+        'underline', 'width', 'wraplength',
+    );
+    _conv_pixels = noconv_meth;
+
+    function create( **kwargs){
+        return ttk.Label(this.root, **kwargs);
+
+    }
+    function test_font(){
+        widget = this.create();
+        this.checkParam(widget, 'font',
+                        '-Adobe-Helvetica-Medium-R-Normal--*-120-*-*-*-*-*-*');
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class ButtonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'command', 'compound', 'cursor', 'default',
+        'image', 'padding', 'state', 'style',
+        'takefocus', 'text', 'textvariable',
+        'underline', 'width',
+    );
+
+    function create( **kwargs){
+        return ttk.Button(this.root, **kwargs);
+
+    }
+    function test_default(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'default', 'normal', 'active', 'disabled');
+
+    }
+    function test_invoke(){
+        success = [];
+        btn = ttk.Button(this.root, command=lambda{ success.append(1)});
+        btn.invoke();
+        this.assertTrue(success);
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class CheckbuttonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'command', 'compound', 'cursor',
+        'image',
+        'offvalue', 'onvalue',
+        'padding', 'state', 'style',
+        'takefocus', 'text', 'textvariable',
+        'underline', 'variable', 'width',
+    );
+
+    function create( **kwargs){
+        return ttk.Checkbutton(this.root, **kwargs);
+
+    }
+    function test_offvalue(){
+        widget = this.create();
+        this.checkParams(widget, 'offvalue', 1, 2.3, '', 'any string');
+
+    }
+    function test_onvalue(){
+        widget = this.create();
+        this.checkParams(widget, 'onvalue', 1, 2.3, '', 'any string');
+
+    }
+    function test_invoke(){
+        success = [];
+        function cb_test(){
+            success.append(1);
+            return "cb test called";
+
+        }
+        cbtn = ttk.Checkbutton(this.root, command=cb_test);
+        # the variable automatically created by ttk.Checkbutton is actually
+        # undefined till we invoke the Checkbutton
+        this.assertEqual(cbtn.state(), ('alternate', ));
+        this.assertRaises(tkinter.TclError, cbtn.tk.globalgetvar,
+            cbtn['variable']);
+
+        res = cbtn.invoke();
+        this.assertEqual(res, "cb test called");
+        this.assertEqual(cbtn['onvalue'],
+            cbtn.tk.globalgetvar(cbtn['variable']));
+        this.assertTrue(success);
+
+        cbtn['command'] = '';
+        res = cbtn.invoke();
+        this.assertFalse(str(res));
+        this.assertLessEqual(len(success), 1);
+        this.assertEqual(cbtn['offvalue'],
+            cbtn.tk.globalgetvar(cbtn['variable']));
+
+
+}
+} @add_standard_options(IntegerSizeTests, StandardTtkOptionsTests);
+class EntryTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'class', 'cursor',
+        'exportselection', 'font', 'foreground',
+        'invalidcommand', 'justify',
+        'show', 'state', 'style', 'takefocus', 'textvariable',
+        'validate', 'validatecommand', 'width', 'xscrollcommand',
+    );
+
+    function setUp(){
+        super(EntryTest, this).setUp();
+        this.entry = this.create();
+
+    }
+    function create( **kwargs){
+        return ttk.Entry(this.root, **kwargs);
+
+    }
+    function test_invalidcommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'invalidcommand');
+
+    }
+    function test_show(){
+        widget = this.create();
+        this.checkParam(widget, 'show', '*');
+        this.checkParam(widget, 'show', '');
+        this.checkParam(widget, 'show', ' ');
+
+    }
+    function test_state(){
+        widget = this.create();
+        this.checkParams(widget, 'state',
+                         'disabled', 'normal', 'readonly');
+
+    }
+    function test_validate(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'validate',
+                'all', 'key', 'focus', 'focusin', 'focusout', 'none');
+
+    }
+    function test_validatecommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'validatecommand');
+
+
+    }
+    function test_bbox(){
+        this.assertIsBoundingBox(this.entry.bbox(0));
+        this.assertRaises(tkinter.TclError, this.entry.bbox, 'noindex');
+        this.assertRaises(tkinter.TclError, this.entry.bbox, nil);
+
+
+    }
+    function test_identify(){
+        this.entry.pack();
+        this.entry.wait_visibility();
+        this.entry.update_idletasks();
+
+        this.assertEqual(this.entry.identify(5, 5), "textarea");
+        this.assertEqual(this.entry.identify(-1, -1), "");
+
+        this.assertRaises(tkinter.TclError, this.entry.identify, nil, 5);
+        this.assertRaises(tkinter.TclError, this.entry.identify, 5, nil);
+        this.assertRaises(tkinter.TclError, this.entry.identify, 5, '');
+
+
+    }
+    function test_validation_options(){
+        success = [];
+        test_invalid = lambda{ success.append(true)};
+
+        this.entry['validate'] = 'none';
+        this.entry['validatecommand'] = lambda{ false};
+
+        this.entry['invalidcommand'] = test_invalid;
+        this.entry.validate();
+        this.assertTrue(success);
+
+        this.entry['invalidcommand'] = '';
+        this.entry.validate();
+        this.assertEqual(len(success), 1);
+
+        this.entry['invalidcommand'] = test_invalid;
+        this.entry['validatecommand'] = lambda{ true};
+        this.entry.validate();
+        this.assertEqual(len(success), 1);
+
+        this.entry['validatecommand'] = '';
+        this.entry.validate();
+        this.assertEqual(len(success), 1);
+
+        this.entry['validatecommand'] = true;
+        this.assertRaises(tkinter.TclError, this.entry.validate);
+
+
+    }
+    function test_validation(){
+        validation = [];
+        function validate(to_insert){
+            if not 'a' <= to_insert.lower() <= 'z'{
+                validation.append(false);
+                return false;
+            } validation.append(true);
+            return true;
+
+        }
+        this.entry['validate'] = 'key';
+        this.entry['validatecommand'] = this.entry.register(validate), '%S';
+
+        this.entry.insert('end', 1);
+        this.entry.insert('end', 'a');
+        this.assertEqual(validation, [false, true]);
+        this.assertEqual(this.entry.get(), 'a');
+
+
+    }
+    function test_revalidation(){
+        function validate(content){
+            for letter in content{
+                if not 'a' <= letter.lower() <= 'z'{
+                    return false;
+            } } return true;
+
+        }
+        this.entry['validatecommand'] = this.entry.register(validate), '%P';
+
+        this.entry.insert('end', 'avocado');
+        this.assertEqual(this.entry.validate(), true);
+        this.assertEqual(this.entry.state(), ());
+
+        this.entry.delete(0, 'end');
+        this.assertEqual(this.entry.get(), '');
+
+        this.entry.insert('end', 'a1b');
+        this.assertEqual(this.entry.validate(), false);
+        this.assertEqual(this.entry.state(), ('invalid', ));
+
+        this.entry.delete(1);
+        this.assertEqual(this.entry.validate(), true);
+        this.assertEqual(this.entry.state(), ());
+
+
+}
+} @add_standard_options(IntegerSizeTests, StandardTtkOptionsTests);
+class ComboboxTest(EntryTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'class', 'cursor', 'exportselection',
+        'font', 'foreground', 'height', 'invalidcommand',
+        'justify', 'postcommand', 'show', 'state', 'style',
+        'takefocus', 'textvariable',
+        'validate', 'validatecommand', 'values',
+        'width', 'xscrollcommand',
+    );
+
+    function setUp(){
+        super(ComboboxTest, this).setUp();
+        this.combo = this.create();
+
+    }
+    function create( **kwargs){
+        return ttk.Combobox(this.root, **kwargs);
+
+    }
+    function test_height(){
+        widget = this.create();
+        this.checkParams(widget, 'height', 100, 101.2, 102.6, -100, 0, '1i');
+
+    }
+    function _show_drop_down_listbox(){
+        width = this.combo.winfo_width();
+        this.combo.event_generate('<ButtonPress-1>', x=width - 5, y=5);
+        this.combo.event_generate('<ButtonRelease-1>', x=width - 5, y=5);
+        this.combo.update_idletasks();
+
+
+    }
+    function test_virtual_event(){
+        success = [];
+
+        this.combo['values'] = [1];
+        this.combo.bind('<<ComboboxSelected>>',
+            lambda evt{ success.append(true)});
+        this.combo.pack();
+        this.combo.wait_visibility();
+
+        height = this.combo.winfo_height();
+        this._show_drop_down_listbox();
+        this.combo.update();
+        this.combo.event_generate('<Return>');
+        this.combo.update();
+
+        this.assertTrue(success);
+
+
+    }
+    function test_postcommand(){
+        success = [];
+
+        this.combo['postcommand'] = lambda{ success.append(true)};
+        this.combo.pack();
+        this.combo.wait_visibility();
+
+        this._show_drop_down_listbox();
+        this.assertTrue(success);
+
+        # testing postcommand removal
+        this.combo['postcommand'] = '';
+        this._show_drop_down_listbox();
+        this.assertEqual(len(success), 1);
+
+
+    }
+    function test_values(){
+        function check_get_current(getval, currval){
+            this.assertEqual(this.combo.get(), getval);
+            this.assertEqual(this.combo.current(), currval);
+
+        }
+        this.assertEqual(this.combo['values'],
+                         () if tcl_version < (8, 5) else '');
+        check_get_current('', -1);
+
+        this.checkParam(this.combo, 'values', 'mon tue wed thur',
+                        expected=('mon', 'tue', 'wed', 'thur'));
+        this.checkParam(this.combo, 'values', ('mon', 'tue', 'wed', 'thur'));
+        this.checkParam(this.combo, 'values', (42, 3.14, '', 'any string'));
+        this.checkParam(this.combo, 'values', () if tcl_version < (8, 5) else '');
+
+        this.combo['values'] = ['a', 1, 'c'];
+
+        this.combo.set('c');
+        check_get_current('c', 2);
+
+        this.combo.current(0);
+        check_get_current('a', 0);
+
+        this.combo.set('d');
+        check_get_current('d', -1);
+
+        # testing values with empty string
+        this.combo.set('');
+        this.combo['values'] = (1, 2, '', 3);
+        check_get_current('', 2);
+
+        # testing values with empty string set through configure
+        this.combo.configure(values=[1, '', 2]);
+        this.assertEqual(this.combo['values'],
+                         ('1', '', '2') if this.wantobjects else
+                         '1 {} 2');
+
+        # testing values with spaces
+        this.combo['values'] = ['a b', 'a\tb', 'a\nb'];
+        this.assertEqual(this.combo['values'],
+                         ('a b', 'a\tb', 'a\nb') if this.wantobjects else
+                         '{a b} {a\tb} {a\nb}');
+
+        # testing values with special characters
+        this.combo['values'] = [r'a\tb', '"a"', '} {'];
+        this.assertEqual(this.combo['values'],
+                         (r'a\tb', '"a"', '} {') if this.wantobjects else
+                         r'a\\tb {"a"} \}\ \{');
+
+        # out of range
+        this.assertRaises(tkinter.TclError, this.combo.current,
+            len(this.combo['values']));
+        # it expects an integer (or something that can be converted to int)
+        this.assertRaises(tkinter.TclError, this.combo.current, '');
+
+        # testing creating combobox with empty string in values
+        combo2 = ttk.Combobox(this.root, values=[1, 2, '']);
+        this.assertEqual(combo2['values'],
+                         ('1', '2', '') if this.wantobjects else '1 2 {}');
+        combo2.destroy();
+
+
+}
+} @add_standard_options(IntegerSizeTests, StandardTtkOptionsTests);
+class PanedWindowTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'cursor', 'height',
+        'orient', 'style', 'takefocus', 'width',
+    );
+
+    function setUp(){
+        super(PanedWindowTest, this).setUp();
+        this.paned = this.create();
+
+    }
+    function create( **kwargs){
+        return ttk.PanedWindow(this.root, **kwargs);
+
+    }
+    function test_orient(){
+        widget = this.create();
+        this.assertEqual(str(widget['orient']), 'vertical');
+        errmsg='attempt to change read-only option';
+        if get_tk_patchlevel() < (8, 6, 0, 'beta', 3){
+            errmsg='Attempt to change read-only option';
+        } this.checkInvalidParam(widget, 'orient', 'horizontal',
+                errmsg=errmsg);
+        widget2 = this.create(orient='horizontal');
+        this.assertEqual(str(widget2['orient']), 'horizontal');
+
+    }
+    function test_add(){
+        # attempt to add a child that is not a direct child of the paned window
+        label = ttk.Label(this.paned);
+        child = ttk.Label(label);
+        this.assertRaises(tkinter.TclError, this.paned.add, child);
+        label.destroy();
+        child.destroy();
+        # another attempt
+        label = ttk.Label(this.root);
+        child = ttk.Label(label);
+        this.assertRaises(tkinter.TclError, this.paned.add, child);
+        child.destroy();
+        label.destroy();
+
+        good_child = ttk.Label(this.root);
+        this.paned.add(good_child);
+        # re-adding a child is not accepted
+        this.assertRaises(tkinter.TclError, this.paned.add, good_child);
+
+        other_child = ttk.Label(this.paned);
+        this.paned.add(other_child);
+        this.assertEqual(this.paned.pane(0), this.paned.pane(1));
+        this.assertRaises(tkinter.TclError, this.paned.pane, 2);
+        good_child.destroy();
+        other_child.destroy();
+        this.assertRaises(tkinter.TclError, this.paned.pane, 0);
+
+
+    }
+    function test_forget(){
+        this.assertRaises(tkinter.TclError, this.paned.forget, nil);
+        this.assertRaises(tkinter.TclError, this.paned.forget, 0);
+
+        this.paned.add(ttk.Label(this.root));
+        this.paned.forget(0);
+        this.assertRaises(tkinter.TclError, this.paned.forget, 0);
+
+
+    }
+    function test_insert(){
+        this.assertRaises(tkinter.TclError, this.paned.insert, nil, 0);
+        this.assertRaises(tkinter.TclError, this.paned.insert, 0, nil);
+        this.assertRaises(tkinter.TclError, this.paned.insert, 0, 0);
+
+        child = ttk.Label(this.root);
+        child2 = ttk.Label(this.root);
+        child3 = ttk.Label(this.root);
+
+        this.assertRaises(tkinter.TclError, this.paned.insert, 0, child);
+
+        this.paned.insert('end', child2);
+        this.paned.insert(0, child);
+        this.assertEqual(this.paned.panes(), (str(child), str(child2)));
+
+        this.paned.insert(0, child2);
+        this.assertEqual(this.paned.panes(), (str(child2), str(child)));
+
+        this.paned.insert('end', child3);
+        this.assertEqual(this.paned.panes(),
+            (str(child2), str(child), str(child3)));
+
+        # reinserting a child should move it to its current position
+        panes = this.paned.panes();
+        this.paned.insert('end', child3);
+        this.assertEqual(panes, this.paned.panes());
+
+        # moving child3 to child2 position should result in child2 ending up
+        # in previous child position and child ending up in previous child3
+        # position
+        this.paned.insert(child2, child3);
+        this.assertEqual(this.paned.panes(),
+            (str(child3), str(child2), str(child)));
+
+
+    }
+    function test_pane(){
+        this.assertRaises(tkinter.TclError, this.paned.pane, 0);
+
+        child = ttk.Label(this.root);
+        this.paned.add(child);
+        this.assertIsInstance(this.paned.pane(0), dict);
+        this.assertEqual(this.paned.pane(0, weight=nil),
+                         0 if this.wantobjects else '0');
+        # newer form for querying a single option
+        this.assertEqual(this.paned.pane(0, 'weight'),
+                         0 if this.wantobjects else '0');
+        this.assertEqual(this.paned.pane(0), this.paned.pane(str(child)));
+
+        this.assertRaises(tkinter.TclError, this.paned.pane, 0,
+            badoption='somevalue');
+
+
+    }
+    function test_sashpos(){
+        this.assertRaises(tkinter.TclError, this.paned.sashpos, nil);
+        this.assertRaises(tkinter.TclError, this.paned.sashpos, '');
+        this.assertRaises(tkinter.TclError, this.paned.sashpos, 0);
+
+        child = ttk.Label(this.paned, text='a');
+        this.paned.add(child, weight=1);
+        this.assertRaises(tkinter.TclError, this.paned.sashpos, 0);
+        child2 = ttk.Label(this.paned, text='b');
+        this.paned.add(child2);
+        this.assertRaises(tkinter.TclError, this.paned.sashpos, 1);
+
+        this.paned.pack(expand=true, fill='both');
+        this.paned.wait_visibility();
+
+        curr_pos = this.paned.sashpos(0);
+        this.paned.sashpos(0, 1000);
+        this.assertNotEqual(curr_pos, this.paned.sashpos(0));
+        this.assertIsInstance(this.paned.sashpos(0), int);
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class RadiobuttonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'command', 'compound', 'cursor',
+        'image',
+        'padding', 'state', 'style',
+        'takefocus', 'text', 'textvariable',
+        'underline', 'value', 'variable', 'width',
+    );
+
+    function create( **kwargs){
+        return ttk.Radiobutton(this.root, **kwargs);
+
+    }
+    function test_value(){
+        widget = this.create();
+        this.checkParams(widget, 'value', 1, 2.3, '', 'any string');
+
+    }
+    function test_invoke(){
+        success = [];
+        function cb_test(){
+            success.append(1);
+            return "cb test called";
+
+        }
+        myvar = tkinter.IntVar(this.root);
+        cbtn = ttk.Radiobutton(this.root, command=cb_test,
+                               variable=myvar, value=0);
+        cbtn2 = ttk.Radiobutton(this.root, command=cb_test,
+                                variable=myvar, value=1);
+
+        if this.wantobjects{
+            conv = lambda x{ x};
+        } else{
+            conv = int;
+
+        }
+        res = cbtn.invoke();
+        this.assertEqual(res, "cb test called");
+        this.assertEqual(conv(cbtn['value']), myvar.get());
+        this.assertEqual(myvar.get(),
+            conv(cbtn.tk.globalgetvar(cbtn['variable'])));
+        this.assertTrue(success);
+
+        cbtn2['command'] = '';
+        res = cbtn2.invoke();
+        this.assertEqual(str(res), '');
+        this.assertLessEqual(len(success), 1);
+        this.assertEqual(conv(cbtn2['value']), myvar.get());
+        this.assertEqual(myvar.get(),
+            conv(cbtn.tk.globalgetvar(cbtn['variable'])));
+
+        this.assertEqual(str(cbtn['variable']), str(cbtn2['variable']));
+
+
+}
+} class MenubuttonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'compound', 'cursor', 'direction',
+        'image', 'menu', 'padding', 'state', 'style',
+        'takefocus', 'text', 'textvariable',
+        'underline', 'width',
+    );
+
+    function create( **kwargs){
+        return ttk.Menubutton(this.root, **kwargs);
+
+    }
+    function test_direction(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'direction',
+                'above', 'below', 'left', 'right', 'flush');
+
+    }
+    function test_menu(){
+        widget = this.create();
+        menu = tkinter.Menu(widget, name='menu');
+        this.checkParam(widget, 'menu', menu, conv=str);
+        menu.destroy();
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class ScaleTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'command', 'cursor', 'from', 'length',
+        'orient', 'style', 'takefocus', 'to', 'value', 'variable',
+    );
+    _conv_pixels = noconv_meth;
+    default_orient = 'horizontal';
+
+    function setUp(){
+        super(ScaleTest, this).setUp();
+        this.scale = this.create();
+        this.scale.pack();
+        this.scale.update();
+
+    }
+    function create( **kwargs){
+        return ttk.Scale(this.root, **kwargs);
+
+    }
+    function test_from(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'from', 100, 14.9, 15.1, conv=false);
+
+    }
+    function test_length(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'length', 130, 131.2, 135.6, '5i');
+
+    }
+    function test_to(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'to', 300, 14.9, 15.1, -10, conv=false);
+
+    }
+    function test_value(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'value', 300, 14.9, 15.1, -10, conv=false);
+
+    }
+    function test_custom_event(){
+        failure = [1, 1, 1]; # will need to be empty
+
+        funcid = this.scale.bind('<<RangeChanged>>', lambda evt{ failure.pop()});
+
+        this.scale['from'] = 10;
+        this.scale['from_'] = 10;
+        this.scale['to'] = 3;
+
+        this.assertFalse(failure);
+
+        failure = [1, 1, 1];
+        this.scale.configure(from_=2, to=5);
+        this.scale.configure(from_=0, to=-2);
+        this.scale.configure(to=10);
+
+        this.assertFalse(failure);
+
+
+    }
+    function test_get(){
+        if this.wantobjects{
+            conv = lambda x{ x};
+        } else{
+            conv = float;
+
+        }
+        scale_width = this.scale.winfo_width();
+        this.assertEqual(this.scale.get(scale_width, 0), this.scale['to']);
+
+        this.assertEqual(conv(this.scale.get(0, 0)), conv(this.scale['from']));
+        this.assertEqual(this.scale.get(), this.scale['value']);
+        this.scale['value'] = 30;
+        this.assertEqual(this.scale.get(), this.scale['value']);
+
+        this.assertRaises(tkinter.TclError, this.scale.get, '', 0);
+        this.assertRaises(tkinter.TclError, this.scale.get, 0, '');
+
+
+    }
+    function test_set(){
+        if this.wantobjects{
+            conv = lambda x{ x};
+        } else{
+            conv = float;
+
+        # set restricts the max/min values according to the current range
+        }
+        max = conv(this.scale['to']);
+        new_max = max + 10;
+        this.scale.set(new_max);
+        this.assertEqual(conv(this.scale.get()), max);
+        min = conv(this.scale['from']);
+        this.scale.set(min - 1);
+        this.assertEqual(conv(this.scale.get()), min);
+
+        # changing directly the variable doesn't impose this limitation tho
+        var = tkinter.DoubleVar(this.root);
+        this.scale['variable'] = var;
+        var.set(max + 5);
+        this.assertEqual(conv(this.scale.get()), var.get());
+        this.assertEqual(conv(this.scale.get()), max + 5);
+        del var;
+
+        # the same happens with the value option
+        this.scale['value'] = max + 10;
+        this.assertEqual(conv(this.scale.get()), max + 10);
+        this.assertEqual(conv(this.scale.get()), conv(this.scale['value']));
+
+        # nevertheless, note that the max/min values we can get specifying
+        # x, y coords are the ones according to the current range
+        this.assertEqual(conv(this.scale.get(0, 0)), min);
+        this.assertEqual(conv(this.scale.get(this.scale.winfo_width(), 0)), max);
+
+        this.assertRaises(tkinter.TclError, this.scale.set, nil);
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class ProgressbarTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'cursor', 'orient', 'length',
+        'mode', 'maximum', 'phase',
+        'style', 'takefocus', 'value', 'variable',
+    );
+    _conv_pixels = noconv_meth;
+    default_orient = 'horizontal';
+
+    function create( **kwargs){
+        return ttk.Progressbar(this.root, **kwargs);
+
+    }
+    function test_length(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'length', 100.1, 56.7, '2i');
+
+    }
+    function test_maximum(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'maximum', 150.2, 77.7, 0, -10, conv=false);
+
+    }
+    function test_mode(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'mode', 'determinate', 'indeterminate');
+
+    }
+    function test_phase(){
+        # XXX
+        pass;
+
+    }
+    function test_value(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'value', 150.2, 77.7, 0, -10,
+                             conv=false);
+
+
+}
+} @unittest.skipIf(sys.platform == 'darwin',
+                 'ttk.Scrollbar is special on MacOSX');
+@add_standard_options(StandardTtkOptionsTests);
+class ScrollbarTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'command', 'cursor', 'orient', 'style', 'takefocus',
+    );
+    default_orient = 'vertical';
+
+    function create( **kwargs){
+        return ttk.Scrollbar(this.root, **kwargs);
+
+
+}
+} @add_standard_options(IntegerSizeTests, StandardTtkOptionsTests);
+class NotebookTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'cursor', 'height', 'padding', 'style', 'takefocus', 'width',
+    );
+
+    function setUp(){
+        super(NotebookTest, this).setUp();
+        this.nb = this.create(padding=0);
+        this.child1 = ttk.Label(this.root);
+        this.child2 = ttk.Label(this.root);
+        this.nb.add(this.child1, text='a');
+        this.nb.add(this.child2, text='b');
+
+    }
+    function create( **kwargs){
+        return ttk.Notebook(this.root, **kwargs);
+
+    }
+    function test_tab_identifiers(){
+        this.nb.forget(0);
+        this.nb.hide(this.child2);
+        this.assertRaises(tkinter.TclError, this.nb.tab, this.child1);
+        this.assertEqual(this.nb.index('end'), 1);
+        this.nb.add(this.child2);
+        this.assertEqual(this.nb.index('end'), 1);
+        this.nb.select(this.child2);
+
+        this.assertTrue(this.nb.tab('current'));
+        this.nb.add(this.child1, text='a');
+
+        this.nb.pack();
+        this.nb.wait_visibility();
+        if sys.platform == 'darwin'{
+            tb_idx = "@20,5";
+        } else{
+            tb_idx = "@5,5";
+        } this.assertEqual(this.nb.tab(tb_idx), this.nb.tab('current'));
+
+        for i in range(5, 100, 5){
+            try{
+                if this.nb.tab('@%d, 5' % i, text=nil) == 'a'{
+                    break;
+            } } except tkinter.TclError{
+                pass;
+
+        }
+        } else{
+            this.fail("Tab with text 'a' not found");
+
+
+    }
+    } function test_add_and_hidden(){
+        this.assertRaises(tkinter.TclError, this.nb.hide, -1);
+        this.assertRaises(tkinter.TclError, this.nb.hide, 'hi');
+        this.assertRaises(tkinter.TclError, this.nb.hide, nil);
+        this.assertRaises(tkinter.TclError, this.nb.add, nil);
+        this.assertRaises(tkinter.TclError, this.nb.add, ttk.Label(this.root),
+            unknown='option');
+
+        tabs = this.nb.tabs();
+        this.nb.hide(this.child1);
+        this.nb.add(this.child1);
+        this.assertEqual(this.nb.tabs(), tabs);
+
+        child = ttk.Label(this.root);
+        this.nb.add(child, text='c');
+        tabs = this.nb.tabs();
+
+        curr = this.nb.index('current');
+        # verify that the tab gets readded at its previous position
+        child2_index = this.nb.index(this.child2);
+        this.nb.hide(this.child2);
+        this.nb.add(this.child2);
+        this.assertEqual(this.nb.tabs(), tabs);
+        this.assertEqual(this.nb.index(this.child2), child2_index);
+        this.assertEqual(str(this.child2), this.nb.tabs()[child2_index]);
+        # but the tab next to it (not hidden) is the one selected now
+        this.assertEqual(this.nb.index('current'), curr + 1);
+
+
+    }
+    function test_forget(){
+        this.assertRaises(tkinter.TclError, this.nb.forget, -1);
+        this.assertRaises(tkinter.TclError, this.nb.forget, 'hi');
+        this.assertRaises(tkinter.TclError, this.nb.forget, nil);
+
+        tabs = this.nb.tabs();
+        child1_index = this.nb.index(this.child1);
+        this.nb.forget(this.child1);
+        this.assertNotIn(str(this.child1), this.nb.tabs());
+        this.assertEqual(len(tabs) - 1, len(this.nb.tabs()));
+
+        this.nb.add(this.child1);
+        this.assertEqual(this.nb.index(this.child1), 1);
+        this.assertNotEqual(child1_index, this.nb.index(this.child1));
+
+
+    }
+    function test_index(){
+        this.assertRaises(tkinter.TclError, this.nb.index, -1);
+        this.assertRaises(tkinter.TclError, this.nb.index, nil);
+
+        this.assertIsInstance(this.nb.index('end'), int);
+        this.assertEqual(this.nb.index(this.child1), 0);
+        this.assertEqual(this.nb.index(this.child2), 1);
+        this.assertEqual(this.nb.index('end'), 2);
+
+
+    }
+    function test_insert(){
+        # moving tabs
+        tabs = this.nb.tabs();
+        this.nb.insert(1, tabs[0]);
+        this.assertEqual(this.nb.tabs(), (tabs[1], tabs[0]));
+        this.nb.insert(this.child1, this.child2);
+        this.assertEqual(this.nb.tabs(), tabs);
+        this.nb.insert('end', this.child1);
+        this.assertEqual(this.nb.tabs(), (tabs[1], tabs[0]));
+        this.nb.insert('end', 0);
+        this.assertEqual(this.nb.tabs(), tabs);
+        # bad moves
+        this.assertRaises(tkinter.TclError, this.nb.insert, 2, tabs[0]);
+        this.assertRaises(tkinter.TclError, this.nb.insert, -1, tabs[0]);
+
+        # new tab
+        child3 = ttk.Label(this.root);
+        this.nb.insert(1, child3);
+        this.assertEqual(this.nb.tabs(), (tabs[0], str(child3), tabs[1]));
+        this.nb.forget(child3);
+        this.assertEqual(this.nb.tabs(), tabs);
+        this.nb.insert(this.child1, child3);
+        this.assertEqual(this.nb.tabs(), (str(child3), ) + tabs);
+        this.nb.forget(child3);
+        this.assertRaises(tkinter.TclError, this.nb.insert, 2, child3);
+        this.assertRaises(tkinter.TclError, this.nb.insert, -1, child3);
+
+        # bad inserts
+        this.assertRaises(tkinter.TclError, this.nb.insert, 'end', nil);
+        this.assertRaises(tkinter.TclError, this.nb.insert, nil, 0);
+        this.assertRaises(tkinter.TclError, this.nb.insert, nil, nil);
+
+
+    }
+    function test_select(){
+        this.nb.pack();
+        this.nb.wait_visibility();
+
+        success = [];
+        tab_changed = [];
+
+        this.child1.bind('<Unmap>', lambda evt{ success.append(true)});
+        this.nb.bind('<<NotebookTabChanged>>',
+            lambda evt{ tab_changed.append(true)});
+
+        this.assertEqual(this.nb.select(), str(this.child1));
+        this.nb.select(this.child2);
+        this.assertTrue(success);
+        this.assertEqual(this.nb.select(), str(this.child2));
+
+        this.nb.update();
+        this.assertTrue(tab_changed);
+
+
+    }
+    function test_tab(){
+        this.assertRaises(tkinter.TclError, this.nb.tab, -1);
+        this.assertRaises(tkinter.TclError, this.nb.tab, 'notab');
+        this.assertRaises(tkinter.TclError, this.nb.tab, nil);
+
+        this.assertIsInstance(this.nb.tab(this.child1), dict);
+        this.assertEqual(this.nb.tab(this.child1, text=nil), 'a');
+        # newer form for querying a single option
+        this.assertEqual(this.nb.tab(this.child1, 'text'), 'a');
+        this.nb.tab(this.child1, text='abc');
+        this.assertEqual(this.nb.tab(this.child1, text=nil), 'abc');
+        this.assertEqual(this.nb.tab(this.child1, 'text'), 'abc');
+
+
+    }
+    function test_tabs(){
+        this.assertEqual(len(this.nb.tabs()), 2);
+
+        this.nb.forget(this.child1);
+        this.nb.forget(this.child2);
+
+        this.assertEqual(this.nb.tabs(), ());
+
+
+    }
+    function test_traversal(){
+        this.nb.pack();
+        this.nb.wait_visibility();
+
+        this.nb.select(0);
+
+        simulate_mouse_click(this.nb, 5, 5);
+        this.nb.focus_force();
+        this.nb.event_generate('<Control-Tab>');
+        this.assertEqual(this.nb.select(), str(this.child2));
+        this.nb.focus_force();
+        this.nb.event_generate('<Shift-Control-Tab>');
+        this.assertEqual(this.nb.select(), str(this.child1));
+        this.nb.focus_force();
+        this.nb.event_generate('<Shift-Control-Tab>');
+        this.assertEqual(this.nb.select(), str(this.child2));
+
+        this.nb.tab(this.child1, text='a', underline=0);
+        this.nb.enable_traversal();
+        this.nb.focus_force();
+        simulate_mouse_click(this.nb, 5, 5);
+        if sys.platform == 'darwin'{
+            this.nb.event_generate('<Option-a>');
+        } else{
+            this.nb.event_generate('<Alt-a>');
+        } this.assertEqual(this.nb.select(), str(this.child1));
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class TreeviewTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'columns', 'cursor', 'displaycolumns',
+        'height', 'padding', 'selectmode', 'show',
+        'style', 'takefocus', 'xscrollcommand', 'yscrollcommand',
+    );
+
+    function setUp(){
+        super(TreeviewTest, this).setUp();
+        this.tv = this.create(padding=0);
+
+    }
+    function create( **kwargs){
+        return ttk.Treeview(this.root, **kwargs);
+
+    }
+    function test_columns(){
+        widget = this.create();
+        this.checkParam(widget, 'columns', 'a b c',
+                        expected=('a', 'b', 'c'));
+        this.checkParam(widget, 'columns', ('a', 'b', 'c'));
+        this.checkParam(widget, 'columns', () if tcl_version < (8, 5) else '');
+
+    }
+    function test_displaycolumns(){
+        widget = this.create();
+        widget['columns'] = ('a', 'b', 'c');
+        this.checkParam(widget, 'displaycolumns', 'b a c',
+                        expected=('b', 'a', 'c'));
+        this.checkParam(widget, 'displaycolumns', ('b', 'a', 'c'));
+        this.checkParam(widget, 'displaycolumns', '#all',
+                        expected=('#all',));
+        this.checkParam(widget, 'displaycolumns', (2, 1, 0));
+        this.checkInvalidParam(widget, 'displaycolumns', ('a', 'b', 'd'),
+                               errmsg='Invalid column index d');
+        this.checkInvalidParam(widget, 'displaycolumns', (1, 2, 3),
+                               errmsg='Column index 3 out of bounds');
+        this.checkInvalidParam(widget, 'displaycolumns', (1, -2),
+                               errmsg='Column index -2 out of bounds');
+
+    }
+    function test_height(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'height', 100, -100, 0, '3c', conv=false);
+        this.checkPixelsParam(widget, 'height', 101.2, 102.6, conv=noconv);
+
+    }
+    function test_selectmode(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'selectmode',
+                            'none', 'browse', 'extended');
+
+    }
+    function test_show(){
+        widget = this.create();
+        this.checkParam(widget, 'show', 'tree headings',
+                        expected=('tree', 'headings'));
+        this.checkParam(widget, 'show', ('tree', 'headings'));
+        this.checkParam(widget, 'show', ('headings', 'tree'));
+        this.checkParam(widget, 'show', 'tree', expected=('tree',));
+        this.checkParam(widget, 'show', 'headings', expected=('headings',));
+
+    }
+    function test_bbox(){
+        this.tv.pack();
+        this.assertEqual(this.tv.bbox(''), '');
+        this.tv.wait_visibility();
+        this.tv.update();
+
+        item_id = this.tv.insert('', 'end');
+        children = this.tv.get_children();
+        this.assertTrue(children);
+
+        bbox = this.tv.bbox(children[0]);
+        this.assertIsBoundingBox(bbox);
+
+        # compare width in bboxes
+        this.tv['columns'] = ['test'];
+        this.tv.column('test', width=50);
+        bbox_column0 = this.tv.bbox(children[0], 0);
+        root_width = this.tv.column('#0', width=nil);
+        if not this.wantobjects{
+            root_width = int(root_width);
+        } this.assertEqual(bbox_column0[0], bbox[0] + root_width);
+
+        # verify that bbox of a closed item is the empty string
+        child1 = this.tv.insert(item_id, 'end');
+        this.assertEqual(this.tv.bbox(child1), '');
+
+
+    }
+    function test_children(){
+        # no children yet, should get an empty tuple
+        this.assertEqual(this.tv.get_children(), ());
+
+        item_id = this.tv.insert('', 'end');
+        this.assertIsInstance(this.tv.get_children(), tuple);
+        this.assertEqual(this.tv.get_children()[0], item_id);
+
+        # add item_id and child3 as children of child2
+        child2 = this.tv.insert('', 'end');
+        child3 = this.tv.insert('', 'end');
+        this.tv.set_children(child2, item_id, child3);
+        this.assertEqual(this.tv.get_children(child2), (item_id, child3));
+
+        # child3 has child2 as parent, thus trying to set child2 as a children
+        # of child3 should result in an error
+        this.assertRaises(tkinter.TclError,
+            this.tv.set_children, child3, child2);
+
+        # remove child2 children
+        this.tv.set_children(child2);
+        this.assertEqual(this.tv.get_children(child2), ());
+
+        # remove root's children
+        this.tv.set_children('');
+        this.assertEqual(this.tv.get_children(), ());
+
+
+    }
+    function test_column(){
+        # return a dict with all options/values
+        this.assertIsInstance(this.tv.column('#0'), dict);
+        # return a single value of the given option
+        if this.wantobjects{
+            this.assertIsInstance(this.tv.column('#0', width=nil), int);
+        # set a new value for an option
+        }
+        this.tv.column('#0', width=10);
+        # testing new way to get option value
+        this.assertEqual(this.tv.column('#0', 'width'),
+                         10 if this.wantobjects else '10');
+        this.assertEqual(this.tv.column('#0', width=nil),
+                         10 if this.wantobjects else '10');
+        # check read-only option
+        this.assertRaises(tkinter.TclError, this.tv.column, '#0', id='X');
+
+        this.assertRaises(tkinter.TclError, this.tv.column, 'invalid');
+        invalid_kws = [
+            {'unknown_option': 'some value'},  {'stretch': 'wrong'},
+            {'anchor': 'wrong'}, {'width': 'wrong'}, {'minwidth': 'wrong'}
+        ];
+        for kw in invalid_kws{
+            this.assertRaises(tkinter.TclError, this.tv.column, '#0',
+                **kw);
+
+
+    }
+    } function test_delete(){
+        this.assertRaises(tkinter.TclError, this.tv.delete, '#0');
+
+        item_id = this.tv.insert('', 'end');
+        item2 = this.tv.insert(item_id, 'end');
+        this.assertEqual(this.tv.get_children(), (item_id, ));
+        this.assertEqual(this.tv.get_children(item_id), (item2, ));
+
+        this.tv.delete(item_id);
+        this.assertFalse(this.tv.get_children());
+
+        # reattach should fail
+        this.assertRaises(tkinter.TclError,
+            this.tv.reattach, item_id, '', 'end');
+
+        # test multiple item delete
+        item1 = this.tv.insert('', 'end');
+        item2 = this.tv.insert('', 'end');
+        this.assertEqual(this.tv.get_children(), (item1, item2));
+
+        this.tv.delete(item1, item2);
+        this.assertFalse(this.tv.get_children());
+
+
+    }
+    function test_detach_reattach(){
+        item_id = this.tv.insert('', 'end');
+        item2 = this.tv.insert(item_id, 'end');
+
+        # calling detach without items is valid, although it does nothing
+        prev = this.tv.get_children();
+        this.tv.detach(); # this should do nothing
+        this.assertEqual(prev, this.tv.get_children());
+
+        this.assertEqual(this.tv.get_children(), (item_id, ));
+        this.assertEqual(this.tv.get_children(item_id), (item2, ));
+
+        # detach item with children
+        this.tv.detach(item_id);
+        this.assertFalse(this.tv.get_children());
+
+        # reattach item with children
+        this.tv.reattach(item_id, '', 'end');
+        this.assertEqual(this.tv.get_children(), (item_id, ));
+        this.assertEqual(this.tv.get_children(item_id), (item2, ));
+
+        # move a children to the root
+        this.tv.move(item2, '', 'end');
+        this.assertEqual(this.tv.get_children(), (item_id, item2));
+        this.assertEqual(this.tv.get_children(item_id), ());
+
+        # bad values
+        this.assertRaises(tkinter.TclError,
+            this.tv.reattach, 'nonexistent', '', 'end');
+        this.assertRaises(tkinter.TclError,
+            this.tv.detach, 'nonexistent');
+        this.assertRaises(tkinter.TclError,
+            this.tv.reattach, item2, 'otherparent', 'end');
+        this.assertRaises(tkinter.TclError,
+            this.tv.reattach, item2, '', 'invalid');
+
+        # multiple detach
+        this.tv.detach(item_id, item2);
+        this.assertEqual(this.tv.get_children(), ());
+        this.assertEqual(this.tv.get_children(item_id), ());
+
+
+    }
+    function test_exists(){
+        this.assertEqual(this.tv.exists('something'), false);
+        this.assertEqual(this.tv.exists(''), true);
+        this.assertEqual(this.tv.exists({}), false);
+
+        # the following will make a tk.call equivalent to
+        # tk.call(treeview, "exists") which should result in an error
+        # in the tcl interpreter since tk requires an item.
+        this.assertRaises(tkinter.TclError, this.tv.exists, nil);
+
+
+    }
+    function test_focus(){
+        # nothing is focused right now
+        this.assertEqual(this.tv.focus(), '');
+
+        item1 = this.tv.insert('', 'end');
+        this.tv.focus(item1);
+        this.assertEqual(this.tv.focus(), item1);
+
+        this.tv.delete(item1);
+        this.assertEqual(this.tv.focus(), '');
+
+        # try focusing inexistent item
+        this.assertRaises(tkinter.TclError, this.tv.focus, 'hi');
+
+
+    }
+    function test_heading(){
+        # check a dict is returned
+        this.assertIsInstance(this.tv.heading('#0'), dict);
+
+        # check a value is returned
+        this.tv.heading('#0', text='hi');
+        this.assertEqual(this.tv.heading('#0', 'text'), 'hi');
+        this.assertEqual(this.tv.heading('#0', text=nil), 'hi');
+
+        # invalid option
+        this.assertRaises(tkinter.TclError, this.tv.heading, '#0',
+            background=nil);
+        # invalid value
+        this.assertRaises(tkinter.TclError, this.tv.heading, '#0',
+            anchor=1);
+
+    }
+    function test_heading_callback(){
+        function simulate_heading_click(x, y){
+            simulate_mouse_click(this.tv, x, y);
+            this.tv.update();
+
+        }
+        success = []; # no success for now
+
+        this.tv.pack();
+        this.tv.wait_visibility();
+        this.tv.heading('#0', command=lambda{ success.append(true)});
+        this.tv.column('#0', width=100);
+        this.tv.update();
+
+        # assuming that the coords (5, 5) fall into heading #0
+        simulate_heading_click(5, 5);
+        if not success{
+            this.fail("The command associated to the treeview heading wasn't "
+                "invoked.");
+
+        }
+        success = [];
+        commands = this.tv.master._tclCommands;
+        this.tv.heading('#0', command=str(this.tv.heading('#0', command=nil)));
+        this.assertEqual(commands, this.tv.master._tclCommands);
+        simulate_heading_click(5, 5);
+        if not success{
+            this.fail("The command associated to the treeview heading wasn't "
+                "invoked.");
+
+        # XXX The following raises an error in a tcl interpreter, but not in
+        # Python
+        #self.tv.heading('#0', command='I dont exist')
+        #simulate_heading_click(5, 5)
+
+
+    }
+    } function test_index(){
+        # item 'what' doesn't exist
+        this.assertRaises(tkinter.TclError, this.tv.index, 'what');
+
+        this.assertEqual(this.tv.index(''), 0);
+
+        item1 = this.tv.insert('', 'end');
+        item2 = this.tv.insert('', 'end');
+        c1 = this.tv.insert(item1, 'end');
+        c2 = this.tv.insert(item1, 'end');
+        this.assertEqual(this.tv.index(item1), 0);
+        this.assertEqual(this.tv.index(c1), 0);
+        this.assertEqual(this.tv.index(c2), 1);
+        this.assertEqual(this.tv.index(item2), 1);
+
+        this.tv.move(item2, '', 0);
+        this.assertEqual(this.tv.index(item2), 0);
+        this.assertEqual(this.tv.index(item1), 1);
+
+        # check that index still works even after its parent and siblings
+        # have been detached
+        this.tv.detach(item1);
+        this.assertEqual(this.tv.index(c2), 1);
+        this.tv.detach(c1);
+        this.assertEqual(this.tv.index(c2), 0);
+
+        # but it fails after item has been deleted
+        this.tv.delete(item1);
+        this.assertRaises(tkinter.TclError, this.tv.index, c2);
+
+
+    }
+    function test_insert_item(){
+        # parent 'none' doesn't exist
+        this.assertRaises(tkinter.TclError, this.tv.insert, 'none', 'end');
+
+        # open values
+        this.assertRaises(tkinter.TclError, this.tv.insert, '', 'end',
+            open='');
+        this.assertRaises(tkinter.TclError, this.tv.insert, '', 'end',
+            open='please');
+        this.assertFalse(this.tv.delete(this.tv.insert('', 'end', open=true)));
+        this.assertFalse(this.tv.delete(this.tv.insert('', 'end', open=false)));
+
+        # invalid index
+        this.assertRaises(tkinter.TclError, this.tv.insert, '', 'middle');
+
+        # trying to duplicate item id is invalid
+        itemid = this.tv.insert('', 'end', 'first-item');
+        this.assertEqual(itemid, 'first-item');
+        this.assertRaises(tkinter.TclError, this.tv.insert, '', 'end',
+            'first-item');
+        this.assertRaises(tkinter.TclError, this.tv.insert, '', 'end',
+            MockTclObj('first-item'));
+
+        # unicode values
+        value = u'\xe1ba';
+        item = this.tv.insert('', 'end', values=(value, ));
+        this.assertEqual(this.tv.item(item, 'values'),
+                         (value,) if this.wantobjects else value);
+        this.assertEqual(this.tv.item(item, values=nil),
+                         (value,) if this.wantobjects else value);
+
+        this.tv.item(item, values=this.root.splitlist(this.tv.item(item, values=nil)));
+        this.assertEqual(this.tv.item(item, values=nil),
+                         (value,) if this.wantobjects else value);
+
+        this.assertIsInstance(this.tv.item(item), dict);
+
+        # erase item values
+        this.tv.item(item, values='');
+        this.assertFalse(this.tv.item(item, values=nil));
+
+        # item tags
+        item = this.tv.insert('', 'end', tags=[1, 2, value]);
+        this.assertEqual(this.tv.item(item, tags=nil),
+                         ('1', '2', value) if this.wantobjects else
+                         '1 2 %s' % value);
+        this.tv.item(item, tags=[]);
+        this.assertFalse(this.tv.item(item, tags=nil));
+        this.tv.item(item, tags=(1, 2));
+        this.assertEqual(this.tv.item(item, tags=nil),
+                         ('1', '2') if this.wantobjects else '1 2');
+
+        # values with spaces
+        item = this.tv.insert('', 'end', values=('a b c',
+            '%s %s' % (value, value)));
+        this.assertEqual(this.tv.item(item, values=nil),
+            ('a b c', '%s %s' % (value, value)) if this.wantobjects else
+            '{a b c} {%s %s}' % (value, value));
+
+        # text
+        this.assertEqual(this.tv.item(
+            this.tv.insert('', 'end', text="Label here"), text=nil),
+            "Label here");
+        this.assertEqual(this.tv.item(
+            this.tv.insert('', 'end', text=value), text=nil),
+            value);
+
+        # test for values which are not None
+        itemid = this.tv.insert('', 'end', 0);
+        this.assertEqual(itemid, '0');
+        itemid = this.tv.insert('', 'end', 0.0);
+        this.assertEqual(itemid, '0.0');
+        # this is because False resolves to 0 and element with 0 iid is already present
+        this.assertRaises(tkinter.TclError, this.tv.insert, '', 'end', false);
+        this.assertRaises(tkinter.TclError, this.tv.insert, '', 'end', '');
+
+
+    }
+    function test_selection(){
+        # item 'none' doesn't exist
+        this.assertRaises(tkinter.TclError, this.tv.selection_set, 'none');
+        this.assertRaises(tkinter.TclError, this.tv.selection_add, 'none');
+        this.assertRaises(tkinter.TclError, this.tv.selection_remove, 'none');
+        this.assertRaises(tkinter.TclError, this.tv.selection_toggle, 'none');
+
+        item1 = this.tv.insert('', 'end');
+        item2 = this.tv.insert('', 'end');
+        c1 = this.tv.insert(item1, 'end');
+        c2 = this.tv.insert(item1, 'end');
+        c3 = this.tv.insert(item1, 'end');
+        this.assertEqual(this.tv.selection(), ());
+
+        this.tv.selection_set((c1, item2));
+        this.assertEqual(this.tv.selection(), (c1, item2));
+        this.tv.selection_set(c2);
+        this.assertEqual(this.tv.selection(), (c2,));
+
+        this.tv.selection_add((c1, item2));
+        this.assertEqual(this.tv.selection(), (c1, c2, item2));
+        this.tv.selection_add(item1);
+        this.assertEqual(this.tv.selection(), (item1, c1, c2, item2));
+
+        this.tv.selection_remove((item1, c3));
+        this.assertEqual(this.tv.selection(), (c1, c2, item2));
+        this.tv.selection_remove(c2);
+        this.assertEqual(this.tv.selection(), (c1, item2));
+
+        this.tv.selection_toggle((c1, c3));
+        this.assertEqual(this.tv.selection(), (c3, item2));
+        this.tv.selection_toggle(item2);
+        this.assertEqual(this.tv.selection(), (c3,));
+
+        this.tv.insert('', 'end', id='with spaces');
+        this.tv.selection_set('with spaces');
+        this.assertEqual(this.tv.selection(), ('with spaces',));
+
+        this.tv.insert('', 'end', id='{brace');
+        this.tv.selection_set('{brace');
+        this.assertEqual(this.tv.selection(), ('{brace',));
+
+        if have_unicode{
+            this.tv.insert('', 'end', id=u(r'unicode\u20ac'));
+            this.tv.selection_set(u(r'unicode\u20ac'));
+            this.assertEqual(this.tv.selection(), (u(r'unicode\u20ac'),));
+
+        }
+        this.tv.insert('', 'end', id='bytes\xe2\x82\xac');
+        this.tv.selection_set('bytes\xe2\x82\xac');
+        this.assertEqual(this.tv.selection(),
+                         (u(r'bytes\u20ac') if have_unicode else
+                          'bytes\xe2\x82\xac',));
+
+
+    }
+    function test_set(){
+        this.tv['columns'] = ['A', 'B'];
+        item = this.tv.insert('', 'end', values=['a', 'b']);
+        this.assertEqual(this.tv.set(item), {'A': 'a', 'B': 'b'});
+
+        this.tv.set(item, 'B', 'a');
+        this.assertEqual(this.tv.item(item, values=nil),
+                         ('a', 'a') if this.wantobjects else 'a a');
+
+        this.tv['columns'] = ['B'];
+        this.assertEqual(this.tv.set(item), {'B': 'a'});
+
+        this.tv.set(item, 'B', 'b');
+        this.assertEqual(this.tv.set(item, column='B'), 'b');
+        this.assertEqual(this.tv.item(item, values=nil),
+                         ('b', 'a') if this.wantobjects else 'b a');
+
+        this.tv.set(item, 'B', 123);
+        this.assertEqual(this.tv.set(item, 'B'),
+                         123 if this.wantobjects else '123');
+        this.assertEqual(this.tv.item(item, values=nil),
+                         (123, 'a') if this.wantobjects else '123 a');
+        this.assertEqual(this.tv.set(item),
+                         {'B': 123} if this.wantobjects else {'B': '123'});
+
+        # inexistent column
+        this.assertRaises(tkinter.TclError, this.tv.set, item, 'A');
+        this.assertRaises(tkinter.TclError, this.tv.set, item, 'A', 'b');
+
+        # inexistent item
+        this.assertRaises(tkinter.TclError, this.tv.set, 'notme');
+
+
+    }
+    function test_tag_bind(){
+        events = [];
+        item1 = this.tv.insert('', 'end', tags=['call']);
+        item2 = this.tv.insert('', 'end', tags=['call']);
+        this.tv.tag_bind('call', '<ButtonPress-1>',
+            lambda evt{ events.append(1)});
+        this.tv.tag_bind('call', '<ButtonRelease-1>',
+            lambda evt{ events.append(2)});
+
+        this.tv.pack();
+        this.tv.wait_visibility();
+        this.tv.update();
+
+        pos_y = set();
+        found = set();
+        for i in range(0, 100, 10){
+            if len(found) == 2{ # item1 and item2 already found
+                break;
+            } item_id = this.tv.identify_row(i);
+            if item_id and item_id not in found{
+                pos_y.add(i);
+                found.add(item_id);
+
+        }
+        } this.assertEqual(len(pos_y), 2); # item1 and item2 y pos
+        for y in pos_y{
+            simulate_mouse_click(this.tv, 0, y);
+
+        # by now there should be 4 things in the events list, since each
+        # item had a bind for two events that were simulated above
+        }
+        this.assertEqual(len(events), 4);
+        for evt in zip(events[::2], events[1::2]){
+            this.assertEqual(evt, (1, 2));
+
+
+    }
+    } function test_tag_configure(){
+        # Just testing parameter passing for now
+        this.assertRaises(TypeError, this.tv.tag_configure);
+        this.assertRaises(tkinter.TclError, this.tv.tag_configure,
+            'test', sky='blue');
+        this.tv.tag_configure('test', foreground='blue');
+        this.assertEqual(str(this.tv.tag_configure('test', 'foreground')),
+            'blue');
+        this.assertEqual(str(this.tv.tag_configure('test', foreground=nil)),
+            'blue');
+        this.assertIsInstance(this.tv.tag_configure('test'), dict);
+
+    }
+    function test_tag_has(){
+        item1 = this.tv.insert('', 'end', text='Item 1', tags=['tag1']);
+        item2 = this.tv.insert('', 'end', text='Item 2', tags=['tag2']);
+        this.assertRaises(TypeError, this.tv.tag_has);
+        this.assertRaises(TclError, this.tv.tag_has, 'tag1', 'non-existing');
+        this.assertTrue(this.tv.tag_has('tag1', item1));
+        this.assertFalse(this.tv.tag_has('tag1', item2));
+        this.assertFalse(this.tv.tag_has('tag2', item1));
+        this.assertTrue(this.tv.tag_has('tag2', item2));
+        this.assertFalse(this.tv.tag_has('tag3', item1));
+        this.assertFalse(this.tv.tag_has('tag3', item2));
+        this.assertEqual(this.tv.tag_has('tag1'), (item1,));
+        this.assertEqual(this.tv.tag_has('tag2'), (item2,));
+        this.assertEqual(this.tv.tag_has('tag3'), ());
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class SeparatorTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'cursor', 'orient', 'style', 'takefocus',
+        # 'state'?
+    );
+    default_orient = 'horizontal';
+
+    function create( **kwargs){
+        return ttk.Separator(this.root, **kwargs);
+
+
+}
+} @add_standard_options(StandardTtkOptionsTests);
+class SizegripTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'class', 'cursor', 'style', 'takefocus',
+        # 'state'?
+    );
+
+    function create( **kwargs){
+        return ttk.Sizegrip(this.root, **kwargs);
+
+
+}
+} tests_gui = (
+        ButtonTest, CheckbuttonTest, ComboboxTest, EntryTest,
+        FrameTest, LabelFrameTest, LabelTest, MenubuttonTest,
+        NotebookTest, PanedWindowTest, ProgressbarTest,
+        RadiobuttonTest, ScaleTest, ScrollbarTest, SeparatorTest,
+        SizegripTest, TreeviewTest, WidgetTest,
+        );
+
+tests_gui = (
+        TreeviewTest,
+        );
+
+if __name__ == "__main__"{
+    run_unittest(*tests_gui);
+
+}

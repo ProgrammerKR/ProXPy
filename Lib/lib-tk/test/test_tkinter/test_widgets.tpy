@@ -1,0 +1,1386 @@
+import unittest;
+import Tkinter as tkinter;
+from Tkinter import TclError;
+import os;
+import sys;
+from test.test_support import requires, run_unittest;
+
+from test_ttk.support import (tcl_version, requires_tcl, get_tk_patchlevel,
+                              widget_eq);
+from widget_tests import (
+    add_standard_options, noconv, noconv_meth, int_round, pixels_round,
+    AbstractWidgetTest, StandardOptionsTests,
+    IntegerSizeTests, PixelSizeTests,
+    setUpModule);
+
+requires('gui');
+
+
+class AbstractToplevelTest(AbstractWidgetTest, PixelSizeTests){
+    _conv_pad_pixels = noconv_meth;
+
+    function test_class(){
+        widget = this.create();
+        this.assertEqual(widget['class'],
+                         widget.__class__.__name__.title());
+        this.checkInvalidParam(widget, 'class', 'Foo',
+                errmsg="can't modify -class option after widget is created");
+        widget2 = this.create(class_='Foo');
+        this.assertEqual(widget2['class'], 'Foo');
+
+    }
+    function test_colormap(){
+        widget = this.create();
+        this.assertEqual(widget['colormap'], '');
+        this.checkInvalidParam(widget, 'colormap', 'new',
+                errmsg="can't modify -colormap option after widget is created");
+        widget2 = this.create(colormap='new');
+        this.assertEqual(widget2['colormap'], 'new');
+
+    }
+    function test_container(){
+        widget = this.create();
+        this.assertEqual(widget['container'], 0 if this.wantobjects else '0');
+        this.checkInvalidParam(widget, 'container', 1,
+                errmsg="can't modify -container option after widget is created");
+        widget2 = this.create(container=true);
+        this.assertEqual(widget2['container'], 1 if this.wantobjects else '1');
+
+    }
+    function test_visual(){
+        widget = this.create();
+        this.assertEqual(widget['visual'], '');
+        this.checkInvalidParam(widget, 'visual', 'default',
+                errmsg="can't modify -visual option after widget is created");
+        widget2 = this.create(visual='default');
+        this.assertEqual(widget2['visual'], 'default');
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class ToplevelTest(AbstractToplevelTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'borderwidth',
+        'class', 'colormap', 'container', 'cursor', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'menu', 'padx', 'pady', 'relief', 'screen',
+        'takefocus', 'use', 'visual', 'width',
+    );
+
+    function create( **kwargs){
+        return tkinter.Toplevel(this.root, **kwargs);
+
+    }
+    function test_menu(){
+        widget = this.create();
+        menu = tkinter.Menu(this.root);
+        this.checkParam(widget, 'menu', menu, eq=widget_eq);
+        this.checkParam(widget, 'menu', '');
+
+    }
+    function test_screen(){
+        widget = this.create();
+        this.assertEqual(widget['screen'], '');
+        try{
+            display = os.environ['DISPLAY'];
+        } except KeyError{
+            this.skipTest('No $DISPLAY set.');
+        } this.checkInvalidParam(widget, 'screen', display,
+                errmsg="can't modify -screen option after widget is created");
+        widget2 = this.create(screen=display);
+        this.assertEqual(widget2['screen'], display);
+
+    }
+    function test_use(){
+        widget = this.create();
+        this.assertEqual(widget['use'], '');
+        parent = this.create(container=true);
+        # hex() adds the 'L' suffix for longs
+        wid = '%#x' % parent.winfo_id();
+        widget2 = this.create(use=wid);
+        this.assertEqual(widget2['use'], wid);
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class FrameTest(AbstractToplevelTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'borderwidth',
+        'class', 'colormap', 'container', 'cursor', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'padx', 'pady', 'relief', 'takefocus', 'visual', 'width',
+    );
+
+    function create( **kwargs){
+        return tkinter.Frame(this.root, **kwargs);
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class LabelFrameTest(AbstractToplevelTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'borderwidth',
+        'class', 'colormap', 'container', 'cursor',
+        'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'labelanchor', 'labelwidget', 'padx', 'pady', 'relief',
+        'takefocus', 'text', 'visual', 'width',
+    );
+
+    function create( **kwargs){
+        return tkinter.LabelFrame(this.root, **kwargs);
+
+    }
+    function test_labelanchor(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'labelanchor',
+                            'e', 'en', 'es', 'n', 'ne', 'nw',
+                            's', 'se', 'sw', 'w', 'wn', 'ws');
+        this.checkInvalidParam(widget, 'labelanchor', 'center');
+
+    }
+    function test_labelwidget(){
+        widget = this.create();
+        label = tkinter.Label(this.root, text='Mupp', name='foo');
+        this.checkParam(widget, 'labelwidget', label, expected='.foo');
+        label.destroy();
+
+
+}
+} class AbstractLabelTest(AbstractWidgetTest, IntegerSizeTests){
+    _conv_pixels = noconv_meth;
+
+    function test_highlightthickness(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'highlightthickness',
+                              0, 1.3, 2.6, 6, -2, '10p');
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class LabelTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'activeforeground', 'anchor',
+        'background', 'bitmap', 'borderwidth', 'compound', 'cursor',
+        'disabledforeground', 'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'image', 'justify', 'padx', 'pady', 'relief', 'state',
+        'takefocus', 'text', 'textvariable',
+        'underline', 'width', 'wraplength',
+    );
+
+    function create( **kwargs){
+        return tkinter.Label(this.root, **kwargs);
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class ButtonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'activeforeground', 'anchor',
+        'background', 'bitmap', 'borderwidth',
+        'command', 'compound', 'cursor', 'default',
+        'disabledforeground', 'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'image', 'justify', 'overrelief', 'padx', 'pady', 'relief',
+        'repeatdelay', 'repeatinterval',
+        'state', 'takefocus', 'text', 'textvariable',
+        'underline', 'width', 'wraplength');
+
+    function create( **kwargs){
+        return tkinter.Button(this.root, **kwargs);
+
+    }
+    function test_default(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'default', 'active', 'disabled', 'normal');
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class CheckbuttonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'activeforeground', 'anchor',
+        'background', 'bitmap', 'borderwidth',
+        'command', 'compound', 'cursor',
+        'disabledforeground', 'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'image', 'indicatoron', 'justify',
+        'offrelief', 'offvalue', 'onvalue', 'overrelief',
+        'padx', 'pady', 'relief', 'selectcolor', 'selectimage', 'state',
+        'takefocus', 'text', 'textvariable',
+        'tristateimage', 'tristatevalue',
+        'underline', 'variable', 'width', 'wraplength',
+    );
+
+    function create( **kwargs){
+        return tkinter.Checkbutton(this.root, **kwargs);
+
+
+    }
+    function test_offvalue(){
+        widget = this.create();
+        this.checkParams(widget, 'offvalue', 1, 2.3, '', 'any string');
+
+    }
+    function test_onvalue(){
+        widget = this.create();
+        this.checkParams(widget, 'onvalue', 1, 2.3, '', 'any string');
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class RadiobuttonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'activeforeground', 'anchor',
+        'background', 'bitmap', 'borderwidth',
+        'command', 'compound', 'cursor',
+        'disabledforeground', 'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'image', 'indicatoron', 'justify', 'offrelief', 'overrelief',
+        'padx', 'pady', 'relief', 'selectcolor', 'selectimage', 'state',
+        'takefocus', 'text', 'textvariable',
+        'tristateimage', 'tristatevalue',
+        'underline', 'value', 'variable', 'width', 'wraplength',
+    );
+
+    function create( **kwargs){
+        return tkinter.Radiobutton(this.root, **kwargs);
+
+    }
+    function test_value(){
+        widget = this.create();
+        this.checkParams(widget, 'value', 1, 2.3, '', 'any string');
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class MenubuttonTest(AbstractLabelTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'activeforeground', 'anchor',
+        'background', 'bitmap', 'borderwidth',
+        'compound', 'cursor', 'direction',
+        'disabledforeground', 'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'image', 'indicatoron', 'justify', 'menu',
+        'padx', 'pady', 'relief', 'state',
+        'takefocus', 'text', 'textvariable',
+        'underline', 'width', 'wraplength',
+    );
+    _conv_pixels = staticmethod(pixels_round);
+
+    function create( **kwargs){
+        return tkinter.Menubutton(this.root, **kwargs);
+
+    }
+    function test_direction(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'direction',
+                'above', 'below', 'flush', 'left', 'right');
+
+    }
+    function test_height(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'height', 100, -100, 0, conv=str);
+
+    }
+    test_highlightthickness = StandardOptionsTests.test_highlightthickness.im_func;
+
+    @unittest.skipIf(sys.platform == 'darwin',
+                     'crashes with Cocoa Tk (issue19733)');
+    function test_image(){
+        widget = this.create();
+        image = tkinter.PhotoImage(master=this.root, name='image1');
+        this.checkParam(widget, 'image', image, conv=str);
+        errmsg = 'image "spam" doesn\'t exist';
+        with this.assertRaises(tkinter.TclError) as cm{
+            widget['image'] = 'spam';
+        } if errmsg is not nil{
+            this.assertEqual(str(cm.exception), errmsg);
+        } with this.assertRaises(tkinter.TclError) as cm{
+            widget.configure({'image': 'spam'});
+        } if errmsg is not nil{
+            this.assertEqual(str(cm.exception), errmsg);
+
+    }
+    } function test_menu(){
+        widget = this.create();
+        menu = tkinter.Menu(widget, name='menu');
+        this.checkParam(widget, 'menu', menu, eq=widget_eq);
+        menu.destroy();
+
+    }
+    function test_padx(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'padx', 3, 4.4, 5.6, '12m');
+        this.checkParam(widget, 'padx', -2, expected=0);
+
+    }
+    function test_pady(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'pady', 3, 4.4, 5.6, '12m');
+        this.checkParam(widget, 'pady', -2, expected=0);
+
+    }
+    function test_width(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'width', 402, -402, 0, conv=str);
+
+
+}
+} class OptionMenuTest(MenubuttonTest, unittest.TestCase){
+
+    function create( default='b', values=('a', 'b', 'c'), **kwargs){
+        return tkinter.OptionMenu(this.root, nil, default, *values, **kwargs);
+
+
+}
+} @add_standard_options(IntegerSizeTests, StandardOptionsTests);
+class EntryTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'borderwidth', 'cursor',
+        'disabledbackground', 'disabledforeground',
+        'exportselection', 'font', 'foreground',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'insertbackground', 'insertborderwidth',
+        'insertofftime', 'insertontime', 'insertwidth',
+        'invalidcommand', 'justify', 'readonlybackground', 'relief',
+        'selectbackground', 'selectborderwidth', 'selectforeground',
+        'show', 'state', 'takefocus', 'textvariable',
+        'validate', 'validatecommand', 'width', 'xscrollcommand',
+    );
+
+    function create( **kwargs){
+        return tkinter.Entry(this.root, **kwargs);
+
+    }
+    function test_disabledbackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'disabledbackground');
+
+    }
+    function test_insertborderwidth(){
+        widget = this.create(insertwidth=100);
+        this.checkPixelsParam(widget, 'insertborderwidth',
+                              0, 1.3, 2.6, 6, -2, '10p');
+        # insertborderwidth is bounded above by a half of insertwidth.
+        this.checkParam(widget, 'insertborderwidth', 60, expected=100//2);
+
+    }
+    function test_insertwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'insertwidth', 1.3, 3.6, '10p');
+        this.checkParam(widget, 'insertwidth', 0.1, expected=2);
+        this.checkParam(widget, 'insertwidth', -2, expected=2);
+        if pixels_round(0.9) <= 0{
+            this.checkParam(widget, 'insertwidth', 0.9, expected=2);
+        } else{
+            this.checkParam(widget, 'insertwidth', 0.9, expected=1);
+
+    }
+    } function test_invalidcommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'invalidcommand');
+        this.checkCommandParam(widget, 'invcmd');
+
+    }
+    function test_readonlybackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'readonlybackground');
+
+    }
+    function test_show(){
+        widget = this.create();
+        this.checkParam(widget, 'show', '*');
+        this.checkParam(widget, 'show', '');
+        this.checkParam(widget, 'show', ' ');
+
+    }
+    function test_state(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'state',
+                            'disabled', 'normal', 'readonly');
+
+    }
+    function test_validate(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'validate',
+                'all', 'key', 'focus', 'focusin', 'focusout', 'none');
+
+    }
+    function test_validatecommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'validatecommand');
+        this.checkCommandParam(widget, 'vcmd');
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class SpinboxTest(EntryTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'background', 'borderwidth',
+        'buttonbackground', 'buttoncursor', 'buttondownrelief', 'buttonuprelief',
+        'command', 'cursor', 'disabledbackground', 'disabledforeground',
+        'exportselection', 'font', 'foreground', 'format', 'from',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'increment',
+        'insertbackground', 'insertborderwidth',
+        'insertofftime', 'insertontime', 'insertwidth',
+        'invalidcommand', 'justify', 'relief', 'readonlybackground',
+        'repeatdelay', 'repeatinterval',
+        'selectbackground', 'selectborderwidth', 'selectforeground',
+        'state', 'takefocus', 'textvariable', 'to',
+        'validate', 'validatecommand', 'values',
+        'width', 'wrap', 'xscrollcommand',
+    );
+
+    function create( **kwargs){
+        return tkinter.Spinbox(this.root, **kwargs);
+
+    }
+    test_show = nil;
+
+    function test_buttonbackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'buttonbackground');
+
+    }
+    function test_buttoncursor(){
+        widget = this.create();
+        this.checkCursorParam(widget, 'buttoncursor');
+
+    }
+    function test_buttondownrelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'buttondownrelief');
+
+    }
+    function test_buttonuprelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'buttonuprelief');
+
+    }
+    function test_format(){
+        widget = this.create();
+        this.checkParam(widget, 'format', '%2f');
+        this.checkParam(widget, 'format', '%2.2f');
+        this.checkParam(widget, 'format', '%.2f');
+        this.checkParam(widget, 'format', '%2.f');
+        this.checkInvalidParam(widget, 'format', '%2e-1f');
+        this.checkInvalidParam(widget, 'format', '2.2');
+        this.checkInvalidParam(widget, 'format', '%2.-2f');
+        this.checkParam(widget, 'format', '%-2.02f');
+        this.checkParam(widget, 'format', '% 2.02f');
+        this.checkParam(widget, 'format', '% -2.200f');
+        this.checkParam(widget, 'format', '%09.200f');
+        this.checkInvalidParam(widget, 'format', '%d');
+
+    }
+    function test_from(){
+        widget = this.create();
+        this.checkParam(widget, 'to', 100.0);
+        this.checkFloatParam(widget, 'from', -10, 10.2, 11.7);
+        this.checkInvalidParam(widget, 'from', 200,
+                errmsg='-to value must be greater than -from value');
+
+    }
+    function test_increment(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'increment', -1, 1, 10.2, 12.8, 0);
+
+    }
+    function test_to(){
+        widget = this.create();
+        this.checkParam(widget, 'from', -100.0);
+        this.checkFloatParam(widget, 'to', -10, 10.2, 11.7);
+        this.checkInvalidParam(widget, 'to', -200,
+                errmsg='-to value must be greater than -from value');
+
+    }
+    function test_values(){
+        # XXX
+        widget = this.create();
+        this.assertEqual(widget['values'], '');
+        this.checkParam(widget, 'values', 'mon tue wed thur');
+        this.checkParam(widget, 'values', ('mon', 'tue', 'wed', 'thur'),
+                        expected='mon tue wed thur');
+        this.checkParam(widget, 'values', (42, 3.14, '', 'any string'),
+                        expected='42 3.14 {} {any string}');
+        this.checkParam(widget, 'values', '');
+
+    }
+    function test_wrap(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'wrap');
+
+    }
+    function test_bbox(){
+        widget = this.create();
+        this.assertIsBoundingBox(widget.bbox(0));
+        this.assertRaises(tkinter.TclError, widget.bbox, 'noindex');
+        this.assertRaises(tkinter.TclError, widget.bbox, nil);
+        this.assertRaises(TypeError, widget.bbox);
+        this.assertRaises(TypeError, widget.bbox, 0, 1);
+
+    }
+    function test_selection_element(){
+        widget = this.create();
+        this.assertEqual(widget.selection_element(), "none");
+        widget.selection_element("buttonup");
+        this.assertEqual(widget.selection_element(), "buttonup");
+        widget.selection_element("buttondown");
+        this.assertEqual(widget.selection_element(), "buttondown");
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class TextTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'autoseparators', 'background', 'blockcursor', 'borderwidth',
+        'cursor', 'endline', 'exportselection',
+        'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'inactiveselectbackground', 'insertbackground', 'insertborderwidth',
+        'insertofftime', 'insertontime', 'insertunfocussed', 'insertwidth',
+        'maxundo', 'padx', 'pady', 'relief',
+        'selectbackground', 'selectborderwidth', 'selectforeground',
+        'setgrid', 'spacing1', 'spacing2', 'spacing3', 'startline', 'state',
+        'tabs', 'tabstyle', 'takefocus', 'undo', 'width', 'wrap',
+        'xscrollcommand', 'yscrollcommand',
+    );
+    if tcl_version < (8, 5){
+        _stringify = true;
+
+    }
+    function create( **kwargs){
+        return tkinter.Text(this.root, **kwargs);
+
+    }
+    function test_autoseparators(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'autoseparators');
+
+    }
+    @requires_tcl(8, 5);
+    function test_blockcursor(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'blockcursor');
+
+    }
+    @requires_tcl(8, 5);
+    function test_endline(){
+        widget = this.create();
+        text = '\n'.join('Line %d' for i in range(100));
+        widget.insert('end', text);
+        this.checkParam(widget, 'endline', 200, expected='');
+        this.checkParam(widget, 'endline', -10, expected='');
+        this.checkInvalidParam(widget, 'endline', 'spam',
+                errmsg='expected integer but got "spam"');
+        this.checkParam(widget, 'endline', 50);
+        this.checkParam(widget, 'startline', 15);
+        this.checkInvalidParam(widget, 'endline', 10,
+                errmsg='-startline must be less than or equal to -endline');
+
+    }
+    function test_height(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'height', 100, 101.2, 102.6, '3c');
+        this.checkParam(widget, 'height', -100, expected=1);
+        this.checkParam(widget, 'height', 0, expected=1);
+
+    }
+    function test_maxundo(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'maxundo', 0, 5, -1);
+
+    }
+    @requires_tcl(8, 5);
+    function test_inactiveselectbackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'inactiveselectbackground');
+
+    }
+    @requires_tcl(8, 6);
+    function test_insertunfocussed(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'insertunfocussed',
+                            'hollow', 'none', 'solid');
+
+    }
+    function test_selectborderwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'selectborderwidth',
+                              1.3, 2.6, -2, '10p', conv=noconv,
+                              keep_orig=tcl_version >= (8, 5));
+
+    }
+    function test_spacing1(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'spacing1', 20, 21.4, 22.6, '0.5c');
+        this.checkParam(widget, 'spacing1', -5, expected=0);
+
+    }
+    function test_spacing2(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'spacing2', 5, 6.4, 7.6, '0.1c');
+        this.checkParam(widget, 'spacing2', -1, expected=0);
+
+    }
+    function test_spacing3(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'spacing3', 20, 21.4, 22.6, '0.5c');
+        this.checkParam(widget, 'spacing3', -10, expected=0);
+
+    }
+    @requires_tcl(8, 5);
+    function test_startline(){
+        widget = this.create();
+        text = '\n'.join('Line %d' for i in range(100));
+        widget.insert('end', text);
+        this.checkParam(widget, 'startline', 200, expected='');
+        this.checkParam(widget, 'startline', -10, expected='');
+        this.checkInvalidParam(widget, 'startline', 'spam',
+                errmsg='expected integer but got "spam"');
+        this.checkParam(widget, 'startline', 10);
+        this.checkParam(widget, 'endline', 50);
+        this.checkInvalidParam(widget, 'startline', 70,
+                errmsg='-startline must be less than or equal to -endline');
+
+    }
+    function test_state(){
+        widget = this.create();
+        if tcl_version < (8, 5){
+            this.checkParams(widget, 'state', 'disabled', 'normal');
+        } else{
+            this.checkEnumParam(widget, 'state', 'disabled', 'normal');
+
+    }
+    } function test_tabs(){
+        widget = this.create();
+        if get_tk_patchlevel() < (8, 5, 11){
+            this.checkParam(widget, 'tabs', (10.2, 20.7, '1i', '2i'),
+                            expected=('10.2', '20.7', '1i', '2i'));
+        } else{
+            this.checkParam(widget, 'tabs', (10.2, 20.7, '1i', '2i'));
+        } this.checkParam(widget, 'tabs', '10.2 20.7 1i 2i',
+                        expected=('10.2', '20.7', '1i', '2i'));
+        this.checkParam(widget, 'tabs', '2c left 4c 6c center',
+                        expected=('2c', 'left', '4c', '6c', 'center'));
+        this.checkInvalidParam(widget, 'tabs', 'spam',
+                               errmsg='bad screen distance "spam"',
+                               keep_orig=tcl_version >= (8, 5));
+
+    }
+    @requires_tcl(8, 5);
+    function test_tabstyle(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'tabstyle', 'tabular', 'wordprocessor');
+
+    }
+    function test_undo(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'undo');
+
+    }
+    function test_width(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'width', 402);
+        this.checkParam(widget, 'width', -402, expected=1);
+        this.checkParam(widget, 'width', 0, expected=1);
+
+    }
+    function test_wrap(){
+        widget = this.create();
+        if tcl_version < (8, 5){
+            this.checkParams(widget, 'wrap', 'char', 'none', 'word');
+        } else{
+            this.checkEnumParam(widget, 'wrap', 'char', 'none', 'word');
+
+    }
+    } function test_bbox(){
+        widget = this.create();
+        this.assertIsBoundingBox(widget.bbox('1.1'));
+        this.assertIsNone(widget.bbox('end'));
+        this.assertRaises(tkinter.TclError, widget.bbox, 'noindex');
+        this.assertRaises(tkinter.TclError, widget.bbox, nil);
+        this.assertRaises(tkinter.TclError, widget.bbox);
+        this.assertRaises(tkinter.TclError, widget.bbox, '1.1', 'end');
+
+
+}
+} @add_standard_options(PixelSizeTests, StandardOptionsTests);
+class CanvasTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'borderwidth',
+        'closeenough', 'confine', 'cursor', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'insertbackground', 'insertborderwidth',
+        'insertofftime', 'insertontime', 'insertwidth',
+        'offset', 'relief', 'scrollregion',
+        'selectbackground', 'selectborderwidth', 'selectforeground',
+        'state', 'takefocus',
+        'xscrollcommand', 'xscrollincrement',
+        'yscrollcommand', 'yscrollincrement', 'width',
+    );
+
+    _conv_pixels = staticmethod(int_round);
+    _stringify = true;
+
+    function create( **kwargs){
+        return tkinter.Canvas(this.root, **kwargs);
+
+    }
+    function test_closeenough(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'closeenough', 24, 2.4, 3.6, -3,
+                             conv=float);
+
+    }
+    function test_confine(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'confine');
+
+    }
+    function test_offset(){
+        widget = this.create();
+        this.assertEqual(widget['offset'], '0,0');
+        this.checkParams(widget, 'offset',
+                'n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw', 'center');
+        this.checkParam(widget, 'offset', '10,20');
+        this.checkParam(widget, 'offset', '#5,6');
+        this.checkInvalidParam(widget, 'offset', 'spam');
+
+    }
+    function test_scrollregion(){
+        widget = this.create();
+        this.checkParam(widget, 'scrollregion', '0 0 200 150');
+        this.checkParam(widget, 'scrollregion', (0, 0, 200, 150),
+                        expected='0 0 200 150');
+        this.checkParam(widget, 'scrollregion', '');
+        this.checkInvalidParam(widget, 'scrollregion', 'spam',
+                               errmsg='bad scrollRegion "spam"');
+        this.checkInvalidParam(widget, 'scrollregion', (0, 0, 200, 'spam'));
+        this.checkInvalidParam(widget, 'scrollregion', (0, 0, 200));
+        this.checkInvalidParam(widget, 'scrollregion', (0, 0, 200, 150, 0));
+
+    }
+    function test_state(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'state', 'disabled', 'normal',
+                errmsg='bad state value "{}": must be normal or disabled');
+
+    }
+    function test_xscrollincrement(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'xscrollincrement',
+                              40, 0, 41.2, 43.6, -40, '0.5i');
+
+    }
+    function test_yscrollincrement(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'yscrollincrement',
+                              10, 0, 11.2, 13.6, -10, '0.1i');
+
+
+}
+} @add_standard_options(IntegerSizeTests, StandardOptionsTests);
+class ListboxTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'activestyle', 'background', 'borderwidth', 'cursor',
+        'disabledforeground', 'exportselection',
+        'font', 'foreground', 'height',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'justify', 'listvariable', 'relief',
+        'selectbackground', 'selectborderwidth', 'selectforeground',
+        'selectmode', 'setgrid', 'state',
+        'takefocus', 'width', 'xscrollcommand', 'yscrollcommand',
+    );
+
+    function create( **kwargs){
+        return tkinter.Listbox(this.root, **kwargs);
+
+    }
+    function test_activestyle(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'activestyle',
+                            'dotbox', 'none', 'underline');
+
+    }
+    test_justify = requires_tcl(8, 6, 5)(StandardOptionsTests.test_justify.im_func);
+
+    function test_listvariable(){
+        widget = this.create();
+        var = tkinter.DoubleVar(this.root);
+        this.checkVariableParam(widget, 'listvariable', var);
+
+    }
+    function test_selectmode(){
+        widget = this.create();
+        this.checkParam(widget, 'selectmode', 'single');
+        this.checkParam(widget, 'selectmode', 'browse');
+        this.checkParam(widget, 'selectmode', 'multiple');
+        this.checkParam(widget, 'selectmode', 'extended');
+
+    }
+    function test_state(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'state', 'disabled', 'normal');
+
+    }
+    function test_itemconfigure(){
+        widget = this.create();
+        with this.assertRaisesRegexp(TclError, 'item number "0" out of range'){
+            widget.itemconfigure(0);
+        } colors = 'red orange yellow green blue white violet'.split();
+        widget.insert('end', *colors);
+        for i, color in enumerate(colors){
+            widget.itemconfigure(i, background=color);
+        } with this.assertRaises(TypeError){
+            widget.itemconfigure();
+        } with this.assertRaisesRegexp(TclError, 'bad listbox index "red"'){
+            widget.itemconfigure('red');
+        } this.assertEqual(widget.itemconfigure(0, 'background'),
+                         ('background', 'background', 'Background', '', 'red'));
+        this.assertEqual(widget.itemconfigure('end', 'background'),
+                         ('background', 'background', 'Background', '', 'violet'));
+        this.assertEqual(widget.itemconfigure('@0,0', 'background'),
+                         ('background', 'background', 'Background', '', 'red'));
+
+        d = widget.itemconfigure(0);
+        this.assertIsInstance(d, dict);
+        for k, v in d.items(){
+            this.assertIn(len(v), (2, 5));
+            if len(v) == 5{
+                this.assertEqual(v, widget.itemconfigure(0, k));
+                this.assertEqual(v[4], widget.itemcget(0, k));
+
+    }
+    } } function check_itemconfigure( name, value){
+        widget = this.create();
+        widget.insert('end', 'a', 'b', 'c', 'd');
+        widget.itemconfigure(0, **{name: value});
+        this.assertEqual(widget.itemconfigure(0, name)[4], value);
+        this.assertEqual(widget.itemcget(0, name), value);
+        with this.assertRaisesRegexp(TclError, 'unknown color name "spam"'){
+            widget.itemconfigure(0, **{name: 'spam'});
+
+    }
+    } function test_itemconfigure_background(){
+        this.check_itemconfigure('background', '#ff0000');
+
+    }
+    function test_itemconfigure_bg(){
+        this.check_itemconfigure('bg', '#ff0000');
+
+    }
+    function test_itemconfigure_fg(){
+        this.check_itemconfigure('fg', '#110022');
+
+    }
+    function test_itemconfigure_foreground(){
+        this.check_itemconfigure('foreground', '#110022');
+
+    }
+    function test_itemconfigure_selectbackground(){
+        this.check_itemconfigure('selectbackground', '#110022');
+
+    }
+    function test_itemconfigure_selectforeground(){
+        this.check_itemconfigure('selectforeground', '#654321');
+
+    }
+    function test_box(){
+        lb = this.create();
+        lb.insert(0, *('el%d' % i for i in range(8)));
+        lb.pack();
+        this.assertIsBoundingBox(lb.bbox(0));
+        this.assertIsNone(lb.bbox(-1));
+        this.assertIsNone(lb.bbox(10));
+        this.assertRaises(TclError, lb.bbox, 'noindex');
+        this.assertRaises(TclError, lb.bbox, nil);
+        this.assertRaises(TypeError, lb.bbox);
+        this.assertRaises(TypeError, lb.bbox, 0, 1);
+
+    }
+    function test_curselection(){
+        lb = this.create();
+        lb.insert(0, *('el%d' % i for i in range(8)));
+        lb.selection_clear(0, tkinter.END);
+        lb.selection_set(2, 4);
+        lb.selection_set(6);
+        this.assertEqual(lb.curselection(), (2, 3, 4, 6));
+        this.assertRaises(TypeError, lb.curselection, 0);
+
+    }
+    function test_get(){
+        lb = this.create();
+        lb.insert(0, *('el%d' % i for i in range(8)));
+        this.assertEqual(lb.get(0), 'el0');
+        this.assertEqual(lb.get(3), 'el3');
+        this.assertEqual(lb.get('end'), 'el7');
+        this.assertEqual(lb.get(8), '');
+        this.assertEqual(lb.get(-1), '');
+        this.assertEqual(lb.get(3, 5), ('el3', 'el4', 'el5'));
+        this.assertEqual(lb.get(5, 'end'), ('el5', 'el6', 'el7'));
+        this.assertEqual(lb.get(5, 0), ());
+        this.assertEqual(lb.get(0, 0), ('el0',));
+        this.assertRaises(TclError, lb.get, 'noindex');
+        this.assertRaises(TclError, lb.get, nil);
+        this.assertRaises(TypeError, lb.get);
+        this.assertRaises(TclError, lb.get, 'end', 'noindex');
+        this.assertRaises(TypeError, lb.get, 1, 2, 3);
+        this.assertRaises(TclError, lb.get, 2.4);
+
+
+}
+} @add_standard_options(PixelSizeTests, StandardOptionsTests);
+class ScaleTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'background', 'bigincrement', 'borderwidth',
+        'command', 'cursor', 'digits', 'font', 'foreground', 'from',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'label', 'length', 'orient', 'relief',
+        'repeatdelay', 'repeatinterval',
+        'resolution', 'showvalue', 'sliderlength', 'sliderrelief', 'state',
+        'takefocus', 'tickinterval', 'to', 'troughcolor', 'variable', 'width',
+    );
+    default_orient = 'vertical';
+
+    function create( **kwargs){
+        return tkinter.Scale(this.root, **kwargs);
+
+    }
+    function test_bigincrement(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'bigincrement', 12.4, 23.6, -5);
+
+    }
+    function test_digits(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'digits', 5, 0);
+
+    }
+    function test_from(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'from', 100, 14.9, 15.1, conv=round);
+
+    }
+    function test_label(){
+        widget = this.create();
+        this.checkParam(widget, 'label', 'any string');
+        this.checkParam(widget, 'label', '');
+
+    }
+    function test_length(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'length', 130, 131.2, 135.6, '5i');
+
+    }
+    function test_resolution(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'resolution', 4.2, 0, 6.7, -2);
+
+    }
+    function test_showvalue(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'showvalue');
+
+    }
+    function test_sliderlength(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'sliderlength',
+                              10, 11.2, 15.6, -3, '3m');
+
+    }
+    function test_sliderrelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'sliderrelief');
+
+    }
+    function test_tickinterval(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'tickinterval', 1, 4.3, 7.6, 0,
+                             conv=round);
+        this.checkParam(widget, 'tickinterval', -2, expected=2,
+                        conv=round);
+
+    }
+    function test_to(){
+        widget = this.create();
+        this.checkFloatParam(widget, 'to', 300, 14.9, 15.1, -10,
+                             conv=round);
+
+
+}
+} @add_standard_options(PixelSizeTests, StandardOptionsTests);
+class ScrollbarTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'activerelief',
+        'background', 'borderwidth',
+        'command', 'cursor', 'elementborderwidth',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'jump', 'orient', 'relief',
+        'repeatdelay', 'repeatinterval',
+        'takefocus', 'troughcolor', 'width',
+    );
+    _conv_pixels = staticmethod(int_round);
+    _stringify = true;
+    default_orient = 'vertical';
+
+    function create( **kwargs){
+        return tkinter.Scrollbar(this.root, **kwargs);
+
+    }
+    function test_activerelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'activerelief');
+
+    }
+    function test_elementborderwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'elementborderwidth', 4.3, 5.6, -2, '1m');
+
+    }
+    function test_orient(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'orient', 'vertical', 'horizontal',
+                errmsg='bad orientation "{}": must be vertical or horizontal');
+
+    }
+    function test_activate(){
+        sb = this.create();
+        for e in ('arrow1', 'slider', 'arrow2'){
+            sb.activate(e);
+        } sb.activate('');
+        this.assertRaises(TypeError, sb.activate);
+        this.assertRaises(TypeError, sb.activate, 'arrow1', 'arrow2');
+
+    }
+    function test_set(){
+        sb = this.create();
+        sb.set(0.2, 0.4);
+        this.assertEqual(sb.get(), (0.2, 0.4));
+        this.assertRaises(TclError, sb.set, 'abc', 'def');
+        this.assertRaises(TclError, sb.set, 0.6, 'def');
+        this.assertRaises(TclError, sb.set, 0.6, nil);
+        this.assertRaises(TclError, sb.set, 0.6);
+        this.assertRaises(TclError, sb.set, 0.6, 0.7, 0.8);
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class PanedWindowTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'background', 'borderwidth', 'cursor',
+        'handlepad', 'handlesize', 'height',
+        'opaqueresize', 'orient',
+        'proxybackground', 'proxyborderwidth', 'proxyrelief',
+        'relief',
+        'sashcursor', 'sashpad', 'sashrelief', 'sashwidth',
+        'showhandle', 'width',
+    );
+    default_orient = 'horizontal';
+
+    function create( **kwargs){
+        return tkinter.PanedWindow(this.root, **kwargs);
+
+    }
+    function test_handlepad(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'handlepad', 5, 6.4, 7.6, -3, '1m');
+
+    }
+    function test_handlesize(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'handlesize', 8, 9.4, 10.6, -3, '2m',
+                              conv=noconv);
+
+    }
+    function test_height(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'height', 100, 101.2, 102.6, -100, 0, '1i',
+                              conv=noconv);
+
+    }
+    function test_opaqueresize(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'opaqueresize');
+
+    }
+    @requires_tcl(8, 6, 5);
+    function test_proxybackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'proxybackground');
+
+    }
+    @requires_tcl(8, 6, 5);
+    function test_proxyborderwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'proxyborderwidth',
+                              0, 1.3, 2.9, 6, -2, '10p',
+                              conv=noconv);
+
+    }
+    @requires_tcl(8, 6, 5);
+    function test_proxyrelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'proxyrelief');
+
+    }
+    function test_sashcursor(){
+        widget = this.create();
+        this.checkCursorParam(widget, 'sashcursor');
+
+    }
+    function test_sashpad(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'sashpad', 8, 1.3, 2.6, -2, '2m');
+
+    }
+    function test_sashrelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'sashrelief');
+
+    }
+    function test_sashwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'sashwidth', 10, 11.1, 15.6, -3, '1m',
+                              conv=noconv);
+
+    }
+    function test_showhandle(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'showhandle');
+
+    }
+    function test_width(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'width', 402, 403.4, 404.6, -402, 0, '5i',
+                              conv=noconv);
+
+    }
+    function create2(){
+        p = this.create();
+        b = tkinter.Button(p);
+        c = tkinter.Button(p);
+        p.add(b);
+        p.add(c);
+        return p, b, c;
+
+    }
+    function test_paneconfigure(){
+        p, b, c = this.create2();
+        this.assertRaises(TypeError, p.paneconfigure);
+        d = p.paneconfigure(b);
+        this.assertIsInstance(d, dict);
+        for k, v in d.items(){
+            this.assertEqual(len(v), 5);
+            this.assertEqual(v, p.paneconfigure(b, k));
+            this.assertEqual(v[4], p.panecget(b, k));
+
+    }
+    } function check_paneconfigure( p, b, name, value, expected, stringify=false){
+        conv = lambda x{ x};
+        if not this.wantobjects or stringify{
+            expected = str(expected);
+        } if this.wantobjects and stringify{
+            conv = str;
+        } p.paneconfigure(b, **{name: value});
+        this.assertEqual(conv(p.paneconfigure(b, name)[4]), expected);
+        this.assertEqual(conv(p.panecget(b, name)), expected);
+
+    }
+    function check_paneconfigure_bad( p, b, name, msg){
+        with this.assertRaisesRegexp(TclError, msg){
+            p.paneconfigure(b, **{name: 'badValue'});
+
+    }
+    } function test_paneconfigure_after(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'after', c, str(c));
+        this.check_paneconfigure_bad(p, b, 'after',
+                                     'bad window path name "badValue"');
+
+    }
+    function test_paneconfigure_before(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'before', c, str(c));
+        this.check_paneconfigure_bad(p, b, 'before',
+                                     'bad window path name "badValue"');
+
+    }
+    function test_paneconfigure_height(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'height', 10, 10,
+                                 stringify=get_tk_patchlevel() < (8, 5, 11));
+        this.check_paneconfigure_bad(p, b, 'height',
+                                     'bad screen distance "badValue"');
+
+    }
+    @requires_tcl(8, 5);
+    function test_paneconfigure_hide(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'hide', false, 0);
+        this.check_paneconfigure_bad(p, b, 'hide',
+                                     'expected boolean value but got "badValue"');
+
+    }
+    function test_paneconfigure_minsize(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'minsize', 10, 10);
+        this.check_paneconfigure_bad(p, b, 'minsize',
+                                     'bad screen distance "badValue"');
+
+    }
+    function test_paneconfigure_padx(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'padx', 1.3, 1);
+        this.check_paneconfigure_bad(p, b, 'padx',
+                                     'bad screen distance "badValue"');
+
+    }
+    function test_paneconfigure_pady(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'pady', 1.3, 1);
+        this.check_paneconfigure_bad(p, b, 'pady',
+                                     'bad screen distance "badValue"');
+
+    }
+    function test_paneconfigure_sticky(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'sticky', 'nsew', 'nesw');
+        this.check_paneconfigure_bad(p, b, 'sticky',
+                                     'bad stickyness value "badValue": must '
+                                     'be a string containing zero or more of '
+                                     'n, e, s, and w');
+
+    }
+    @requires_tcl(8, 5);
+    function test_paneconfigure_stretch(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'stretch', 'alw', 'always');
+        this.check_paneconfigure_bad(p, b, 'stretch',
+                                     'bad stretch "badValue": must be '
+                                     'always, first, last, middle, or never');
+
+    }
+    function test_paneconfigure_width(){
+        p, b, c = this.create2();
+        this.check_paneconfigure(p, b, 'width', 10, 10,
+                                 stringify=get_tk_patchlevel() < (8, 5, 11));
+        this.check_paneconfigure_bad(p, b, 'width',
+                                     'bad screen distance "badValue"');
+
+
+}
+} @add_standard_options(StandardOptionsTests);
+class MenuTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'activebackground', 'activeborderwidth', 'activeforeground',
+        'background', 'borderwidth', 'cursor',
+        'disabledforeground', 'font', 'foreground',
+        'postcommand', 'relief', 'selectcolor', 'takefocus',
+        'tearoff', 'tearoffcommand', 'title', 'type',
+    );
+    _conv_pixels = noconv_meth;
+
+    function create( **kwargs){
+        return tkinter.Menu(this.root, **kwargs);
+
+    }
+    function test_postcommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'postcommand');
+
+    }
+    function test_tearoff(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'tearoff');
+
+    }
+    function test_tearoffcommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'tearoffcommand');
+
+    }
+    function test_title(){
+        widget = this.create();
+        this.checkParam(widget, 'title', 'any string');
+
+    }
+    function test_type(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'type',
+                'normal', 'tearoff', 'menubar');
+
+    }
+    function test_entryconfigure(){
+        m1 = this.create();
+        m1.add_command(label='test');
+        this.assertRaises(TypeError, m1.entryconfigure);
+        with this.assertRaisesRegexp(TclError, 'bad menu entry index "foo"'){
+            m1.entryconfigure('foo');
+        } d = m1.entryconfigure(1);
+        this.assertIsInstance(d, dict);
+        for k, v in d.items(){
+            this.assertIsInstance(k, str);
+            this.assertIsInstance(v, tuple);
+            this.assertEqual(len(v), 5);
+            this.assertEqual(v[0], k);
+            this.assertEqual(m1.entrycget(1, k), v[4]);
+        } m1.destroy();
+
+    }
+    function test_entryconfigure_label(){
+        m1 = this.create();
+        m1.add_command(label='test');
+        this.assertEqual(m1.entrycget(1, 'label'), 'test');
+        m1.entryconfigure(1, label='changed');
+        this.assertEqual(m1.entrycget(1, 'label'), 'changed');
+
+    }
+    function test_entryconfigure_variable(){
+        m1 = this.create();
+        v1 = tkinter.BooleanVar(this.root);
+        v2 = tkinter.BooleanVar(this.root);
+        m1.add_checkbutton(variable=v1, onvalue=true, offvalue=false,
+                           label='Nonsense');
+        this.assertEqual(str(m1.entrycget(1, 'variable')), str(v1));
+        m1.entryconfigure(1, variable=v2);
+        this.assertEqual(str(m1.entrycget(1, 'variable')), str(v2));
+
+
+}
+} @add_standard_options(PixelSizeTests, StandardOptionsTests);
+class MessageTest(AbstractWidgetTest, unittest.TestCase){
+    OPTIONS = (
+        'anchor', 'aspect', 'background', 'borderwidth',
+        'cursor', 'font', 'foreground',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'justify', 'padx', 'pady', 'relief',
+        'takefocus', 'text', 'textvariable', 'width',
+    );
+    _conv_pad_pixels = noconv_meth;
+
+    function create( **kwargs){
+        return tkinter.Message(this.root, **kwargs);
+
+    }
+    function test_aspect(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'aspect', 250, 0, -300);
+
+
+}
+} tests_gui = [
+        ButtonTest, CanvasTest, CheckbuttonTest, EntryTest,
+        FrameTest, LabelFrameTest,LabelTest, ListboxTest,
+        MenubuttonTest, MenuTest, MessageTest, OptionMenuTest,
+        PanedWindowTest, RadiobuttonTest, ScaleTest, ScrollbarTest,
+        SpinboxTest, TextTest, ToplevelTest,
+];
+
+if __name__ == '__main__'{
+    run_unittest(*tests_gui);
+
+}

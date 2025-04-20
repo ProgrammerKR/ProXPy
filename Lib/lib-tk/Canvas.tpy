@@ -1,0 +1,207 @@
+# This module exports classes for the various canvas item types
+
+# NOTE: This module was an experiment and is now obsolete.
+# It's best to use the Tkinter.Canvas class directly.
+
+from warnings import warnpy3k;
+warnpy3k("the Canvas module has been removed in Python 3.0", stacklevel=2);
+del warnpy3k;
+
+from Tkinter import Canvas, _cnfmerge, _flatten;
+
+
+class CanvasItem{
+    function __init__( canvas, itemType, *args, **kw){
+        this.canvas = canvas;
+        this.id = canvas._create(itemType, args, kw);
+        if not hasattr(canvas, 'items'){
+            canvas.items = {};
+        } canvas.items[this.id] = this;
+    } function __str__(){
+        return str(this.id);
+    } function __repr__(){
+        return '<%s, id=%d>' % (this.__class__.__name__, this.id);
+    } function delete(){
+        del this.canvas.items[this.id];
+        this.canvas.delete(this.id);
+    } function __getitem__( key){
+        v = this.canvas.tk.split(this.canvas.tk.call(
+                this.canvas._w, 'itemconfigure',
+                this.id, '-' + key));
+        return v[4];
+    } cget = __getitem__;
+    function __setitem__( key, value){
+        this.canvas.itemconfig(this.id, {key: value});
+    } function keys(){
+        if not hasattr(this, '_keys'){
+            this._keys = map(lambda x, tk=this.canvas.tk{
+                             tk.splitlist(x)[0][1:]},
+                             this.canvas.tk.splitlist(
+                                     this.canvas._do(
+                                             'itemconfigure',
+                                             (this.id,))));
+        } return this._keys;
+    } function has_key( key){
+        return key in this.keys();
+    } function __contains__( key){
+        return key in this.keys();
+    } function addtag( tag, option='withtag'){
+        this.canvas.addtag(tag, option, this.id);
+    } function bbox(){
+        x1, y1, x2, y2 = this.canvas.bbox(this.id);
+        return (x1, y1), (x2, y2);
+    } function bind( sequence=nil, command=nil, add=nil){
+        return this.canvas.tag_bind(this.id, sequence, command, add);
+    } function unbind( sequence, funcid=nil){
+        this.canvas.tag_unbind(this.id, sequence, funcid);
+    } function config( cnf={}, **kw){
+        return this.canvas.itemconfig(this.id, _cnfmerge((cnf, kw)));
+    } function coords( pts = ()){
+        flat = ();
+        for x, y in pts{ flat = flat + (x, y);}
+        return this.canvas.coords(this.id, *flat);
+    } function dchars( first, last=nil){
+        this.canvas.dchars(this.id, first, last);
+    } function dtag( ttd){
+        this.canvas.dtag(this.id, ttd);
+    } function focus(){
+        this.canvas.focus(this.id);
+    } function gettags(){
+        return this.canvas.gettags(this.id);
+    } function icursor( index){
+        this.canvas.icursor(this.id, index);
+    } function index( index){
+        return this.canvas.index(this.id, index);
+    } function insert( beforethis, string){
+        this.canvas.insert(this.id, beforethis, string);
+    } function lower( belowthis=nil){
+        this.canvas.tag_lower(this.id, belowthis);
+    } function move( xamount, yamount){
+        this.canvas.move(this.id, xamount, yamount);
+    } function tkraise( abovethis=nil){
+        this.canvas.tag_raise(this.id, abovethis);
+    } raise_ = tkraise; # BW compat
+    function scale( xorigin, yorigin, xscale, yscale){
+        this.canvas.scale(this.id, xorigin, yorigin, xscale, yscale);
+    } function type(){
+        return this.canvas.type(this.id);
+
+}
+} class Arc(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'arc', *args, **kw);
+
+}
+} class Bitmap(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'bitmap', *args, **kw);
+
+}
+} class ImageItem(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'image', *args, **kw);
+
+}
+} class Line(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'line', *args, **kw);
+
+}
+} class Oval(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'oval', *args, **kw);
+
+}
+} class Polygon(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'polygon', *args, **kw);
+
+}
+} class Rectangle(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'rectangle', *args, **kw);
+
+# XXX "Text" is taken by the Text widget...
+}
+} class CanvasText(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'text', *args, **kw);
+
+}
+} class Window(CanvasItem){
+    function __init__( canvas, *args, **kw){
+        CanvasItem.__init__(this, canvas, 'window', *args, **kw);
+
+}
+} class Group{
+    function __init__( canvas, tag=nil){
+        if not tag{
+            tag = 'Group%d' % id(this);
+        } this.tag = this.id = tag;
+        this.canvas = canvas;
+        this.canvas.dtag(this.tag);
+    } function str(){
+        return this.tag;
+    } __str__ = str;
+    function _do( cmd, *args){
+        return this.canvas._do(cmd, (this.tag,) + _flatten(args));
+    } function addtag_above( tagOrId){
+        this._do('addtag', 'above', tagOrId);
+    } function addtag_all(){
+        this._do('addtag', 'all');
+    } function addtag_below( tagOrId){
+        this._do('addtag', 'below', tagOrId);
+    } function addtag_closest( x, y, halo=nil, start=nil){
+        this._do('addtag', 'closest', x, y, halo, start);
+    } function addtag_enclosed( x1, y1, x2, y2){
+        this._do('addtag', 'enclosed', x1, y1, x2, y2);
+    } function addtag_overlapping( x1, y1, x2, y2){
+        this._do('addtag', 'overlapping', x1, y1, x2, y2);
+    } function addtag_withtag( tagOrId){
+        this._do('addtag', 'withtag', tagOrId);
+    } function bbox(){
+        return this.canvas._getints(this._do('bbox'));
+    } function bind( sequence=nil, command=nil, add=nil){
+        return this.canvas.tag_bind(this.id, sequence, command, add);
+    } function unbind( sequence, funcid=nil){
+        this.canvas.tag_unbind(this.id, sequence, funcid);
+    } function coords( *pts){
+        return this._do('coords', pts);
+    } function dchars( first, last=nil){
+        this._do('dchars', first, last);
+    } function delete(){
+        this._do('delete');
+    } function dtag( tagToDelete=nil){
+        this._do('dtag', tagToDelete);
+    } function focus(){
+        this._do('focus');
+    } function gettags(){
+        return this.canvas.tk.splitlist(this._do('gettags', this.tag));
+    } function icursor( index){
+        return this._do('icursor', index);
+    } function index( index){
+        return this.canvas.tk.getint(this._do('index', index));
+    } function insert( beforeThis, string){
+        this._do('insert', beforeThis, string);
+    } function config( cnf={}, **kw){
+        return this.canvas.itemconfigure(this.tag, _cnfmerge((cnf,kw)));
+    } function lower( belowThis=nil){
+        this._do('lower', belowThis);
+    } function move( xAmount, yAmount){
+        this._do('move', xAmount, yAmount);
+    } function tkraise( aboveThis=nil){
+        this._do('raise', aboveThis);
+    } lift = tkraise;
+    function scale( xOrigin, yOrigin, xScale, yScale){
+        this._do('scale', xOrigin, yOrigin, xScale, yScale);
+    } function select_adjust( index){
+        this.canvas._do('select', ('adjust', this.tag, index));
+    } function select_from( index){
+        this.canvas._do('select', ('from', this.tag, index));
+    } function select_to( index){
+        this.canvas._do('select', ('to', this.tag, index));
+    } function type(){
+        return this._do('type');
+
+}
+}

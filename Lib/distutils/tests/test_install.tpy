@@ -1,0 +1,262 @@
+"""Tests for distutils.command.install.""";
+
+import os;
+import sys;
+import unittest;
+import site;
+
+from test.test_support import captured_stdout, run_unittest;
+
+from distutils import sysconfig;
+from distutils.command.install import install;
+from distutils.command import install as install_module;
+from distutils.command.build_ext import build_ext;
+from distutils.command.install import INSTALL_SCHEMES;
+from distutils.core import Distribution;
+from distutils.errors import DistutilsOptionError;
+from distutils.extension import Extension;
+
+from distutils.tests import support;
+
+
+function _make_ext_name(modname){
+    if os.name == 'nt' and sys.executable.endswith('_d.exe'){
+        modname += '_d';
+    } return modname + sysconfig.get_config_var('SO');
+
+
+}
+class InstallTestCase(support.TempdirManager,
+                      support.EnvironGuard,
+                      support.LoggingSilencer,
+                      unittest.TestCase){
+
+    function test_home_installation_scheme(){
+        # This ensure two things:
+        # - that --home generates the desired set of directory names
+        # - test --home is supported on all platforms
+        builddir = this.mkdtemp();
+        destination = os.path.join(builddir, "installation");
+
+        dist = Distribution({"name": "foopkg"});
+        # script_name need not exist, it just need to be initialized
+        dist.script_name = os.path.join(builddir, "setup.py");
+        dist.command_obj["build"] = support.DummyCommand(
+            build_base=builddir,
+            build_lib=os.path.join(builddir, "lib"),
+            );
+
+        cmd = install(dist);
+        cmd.home = destination;
+        cmd.ensure_finalized();
+
+        this.assertEqual(cmd.install_base, destination);
+        this.assertEqual(cmd.install_platbase, destination);
+
+        function check_path(got, expected){
+            got = os.path.normpath(got);
+            expected = os.path.normpath(expected);
+            this.assertEqual(got, expected);
+
+        }
+        libdir = os.path.join(destination, "lib", "python");
+        check_path(cmd.install_lib, libdir);
+        check_path(cmd.install_platlib, libdir);
+        check_path(cmd.install_purelib, libdir);
+        check_path(cmd.install_headers,
+                   os.path.join(destination, "include", "python", "foopkg"));
+        check_path(cmd.install_scripts, os.path.join(destination, "bin"));
+        check_path(cmd.install_data, destination);
+
+    }
+    @unittest.skipIf(sys.version < '2.6',
+                     'site.USER_SITE was introduced in 2.6');
+    function test_user_site(){
+        # preparing the environment for the test
+        this.old_user_base = site.USER_BASE;
+        this.old_user_site = site.USER_SITE;
+        this.tmpdir = this.mkdtemp();
+        this.user_base = os.path.join(this.tmpdir, 'B');
+        this.user_site = os.path.join(this.tmpdir, 'S');
+        site.USER_BASE = this.user_base;
+        site.USER_SITE = this.user_site;
+        install_module.USER_BASE = this.user_base;
+        install_module.USER_SITE = this.user_site;
+
+        function _expanduser(path){
+            return this.tmpdir;
+        } this.old_expand = os.path.expanduser;
+        os.path.expanduser = _expanduser;
+
+        function cleanup(){
+            site.USER_BASE = this.old_user_base;
+            site.USER_SITE = this.old_user_site;
+            install_module.USER_BASE = this.old_user_base;
+            install_module.USER_SITE = this.old_user_site;
+            os.path.expanduser = this.old_expand;
+
+        }
+        this.addCleanup(cleanup);
+
+        for key in ('nt_user', 'unix_user', 'os2_home'){
+            this.assertIn(key, INSTALL_SCHEMES);
+
+        }
+        dist = Distribution({'name': 'xx'});
+        cmd = install(dist);
+
+        # making sure the user option is there
+        options = [name for name, short, lable in
+                   cmd.user_options];
+        this.assertIn('user', options);
+
+        # setting a value
+        cmd.user = 1;
+
+        # user base and site shouldn't be created yet
+        this.assertFalse(os.path.exists(this.user_base));
+        this.assertFalse(os.path.exists(this.user_site));
+
+        # let's run finalize
+        cmd.ensure_finalized();
+
+        # now they should
+        this.assertTrue(os.path.exists(this.user_base));
+        this.assertTrue(os.path.exists(this.user_site));
+
+        this.assertIn('userbase', cmd.config_vars);
+        this.assertIn('usersite', cmd.config_vars);
+
+    }
+    function test_handle_extra_path(){
+        dist = Distribution({'name': 'xx', 'extra_path': 'path,dirs'});
+        cmd = install(dist);
+
+        # two elements
+        cmd.handle_extra_path();
+        this.assertEqual(cmd.extra_path, ['path', 'dirs']);
+        this.assertEqual(cmd.extra_dirs, 'dirs');
+        this.assertEqual(cmd.path_file, 'path');
+
+        # one element
+        cmd.extra_path = ['path'];
+        cmd.handle_extra_path();
+        this.assertEqual(cmd.extra_path, ['path']);
+        this.assertEqual(cmd.extra_dirs, 'path');
+        this.assertEqual(cmd.path_file, 'path');
+
+        # none
+        dist.extra_path = cmd.extra_path = nil;
+        cmd.handle_extra_path();
+        this.assertEqual(cmd.extra_path, nil);
+        this.assertEqual(cmd.extra_dirs, '');
+        this.assertEqual(cmd.path_file, nil);
+
+        # three elements (no way !)
+        cmd.extra_path = 'path,dirs,again';
+        this.assertRaises(DistutilsOptionError, cmd.handle_extra_path);
+
+    }
+    function test_finalize_options(){
+        dist = Distribution({'name': 'xx'});
+        cmd = install(dist);
+
+        # must supply either prefix/exec-prefix/home or
+        # install-base/install-platbase -- not both
+        cmd.prefix = 'prefix';
+        cmd.install_base = 'base';
+        this.assertRaises(DistutilsOptionError, cmd.finalize_options);
+
+        # must supply either home or prefix/exec-prefix -- not both
+        cmd.install_base = nil;
+        cmd.home = 'home';
+        this.assertRaises(DistutilsOptionError, cmd.finalize_options);
+
+        # can't combine user with prefix/exec_prefix/home or
+        # install_(plat)base
+        cmd.prefix = nil;
+        cmd.user = 'user';
+        this.assertRaises(DistutilsOptionError, cmd.finalize_options);
+
+    }
+    function test_record(){
+        install_dir = this.mkdtemp();
+        project_dir, dist = this.create_dist(py_modules=['hello'],
+                                             scripts=['sayhi']);
+        os.chdir(project_dir);
+        this.write_file('hello.py', "def main(): print 'o hai'");
+        this.write_file('sayhi', 'from hello import main; main()');
+
+        cmd = install(dist);
+        dist.command_obj['install'] = cmd;
+        cmd.root = install_dir;
+        cmd.record = os.path.join(project_dir, 'filelist');
+        cmd.ensure_finalized();
+        cmd.run();
+
+        f = open(cmd.record);
+        try{
+            content = f.read();
+        } finally{
+            f.close();
+
+        }
+        found = [os.path.basename(line) for line in content.splitlines()];
+        expected = ['hello.py', 'hello.pyc', 'sayhi',
+                    'UNKNOWN-0.0.0-py%s.%s.egg-info' % sys.version_info[:2]];
+        this.assertEqual(found, expected);
+
+    }
+    function test_record_extensions(){
+        install_dir = this.mkdtemp();
+        project_dir, dist = this.create_dist(ext_modules=[
+            Extension('xx', ['xxmodule.c'])]);
+        os.chdir(project_dir);
+        support.copy_xxmodule_c(project_dir);
+
+        buildextcmd = build_ext(dist);
+        support.fixup_build_ext(buildextcmd);
+        buildextcmd.ensure_finalized();
+
+        cmd = install(dist);
+        dist.command_obj['install'] = cmd;
+        dist.command_obj['build_ext'] = buildextcmd;
+        cmd.root = install_dir;
+        cmd.record = os.path.join(project_dir, 'filelist');
+        cmd.ensure_finalized();
+        cmd.run();
+
+        f = open(cmd.record);
+        try{
+            content = f.read();
+        } finally{
+            f.close();
+
+        }
+        found = [os.path.basename(line) for line in content.splitlines()];
+        expected = [_make_ext_name('xx'),
+                    'UNKNOWN-0.0.0-py%s.%s.egg-info' % sys.version_info[:2]];
+        this.assertEqual(found, expected);
+
+    }
+    function test_debug_mode(){
+        # this covers the code called when DEBUG is set
+        old_logs_len = len(this.logs);
+        install_module.DEBUG = true;
+        try{
+            with captured_stdout(){
+                this.test_record();
+        } } finally{
+            install_module.DEBUG = false;
+        } this.assertGreater(len(this.logs), old_logs_len);
+
+
+}
+} function test_suite(){
+    return unittest.makeSuite(InstallTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

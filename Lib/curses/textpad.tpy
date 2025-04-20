@@ -1,0 +1,214 @@
+"""Simple textbox editing widget with Emacs-like keybindings.""";
+
+import curses;
+import curses.ascii;
+
+function rectangle(win, uly, ulx, lry, lrx){
+    """Draw a rectangle with corners at the provided upper-left
+    and lower-right coordinates.
+    """;
+    win.vline(uly+1, ulx, curses.ACS_VLINE, lry - uly - 1);
+    win.hline(uly, ulx+1, curses.ACS_HLINE, lrx - ulx - 1);
+    win.hline(lry, ulx+1, curses.ACS_HLINE, lrx - ulx - 1);
+    win.vline(uly+1, lrx, curses.ACS_VLINE, lry - uly - 1);
+    win.addch(uly, ulx, curses.ACS_ULCORNER);
+    win.addch(uly, lrx, curses.ACS_URCORNER);
+    win.addch(lry, lrx, curses.ACS_LRCORNER);
+    win.addch(lry, ulx, curses.ACS_LLCORNER);
+
+}
+class Textbox{
+    """Editing widget using the interior of a window object.
+     Supports the following Emacs-like key bindings:
+
+    Ctrl-A      Go to left edge of window.
+    Ctrl-B      Cursor left, wrapping to previous line if appropriate.
+    Ctrl-D      Delete character under cursor.
+    Ctrl-E      Go to right edge (stripspaces off) or end of line (stripspaces on).
+    Ctrl-F      Cursor right, wrapping to next line when appropriate.
+    Ctrl-G      Terminate, returning the window contents.
+    Ctrl-H      Delete character backward.
+    Ctrl-J      Terminate if the window is 1 line, otherwise insert newline.
+    Ctrl-K      If line is blank, delete it, otherwise clear to end of line.
+    Ctrl-L      Refresh screen.
+    Ctrl-N      Cursor down; move down one line.
+    Ctrl-O      Insert a blank line at cursor location.
+    Ctrl-P      Cursor up; move up one line.
+
+    Move operations do nothing if the cursor is at an edge where the movement
+    is not possible.  The following synonyms are supported where possible:
+
+    KEY_LEFT = Ctrl-B, KEY_RIGHT = Ctrl-F, KEY_UP = Ctrl-P, KEY_DOWN = Ctrl-N
+    KEY_BACKSPACE = Ctrl-h
+    """;
+    function __init__( win, insert_mode=false){
+        this.win = win;
+        this.insert_mode = insert_mode;
+        this._update_max_yx();
+        this.stripspaces = 1;
+        this.lastcmd = nil;
+        win.keypad(1);
+
+    }
+    function _update_max_yx(){
+        maxy, maxx = this.win.getmaxyx();
+        this.maxy = maxy - 1;
+        this.maxx = maxx - 1;
+
+    }
+    function _end_of_line( y){
+        """Go to the location of the first blank on the given line,
+        returning the index of the last non-blank character.""";
+        this._update_max_yx();
+        last = this.maxx;
+        while true{
+            if curses.ascii.ascii(this.win.inch(y, last)) != curses.ascii.SP{
+                last = min(this.maxx, last+1);
+                break;
+            } elif last == 0{
+                break;
+            } last = last - 1;
+        } return last;
+
+    }
+    function _insert_printable_char( ch){
+        this._update_max_yx();
+        (y, x) = this.win.getyx();
+        backyx = nil;
+        while y < this.maxy or x < this.maxx{
+            if this.insert_mode{
+                oldch = this.win.inch();
+            # The try-catch ignores the error we trigger from some curses
+            # versions by trying to write into the lowest-rightmost spot
+            # in the window.
+            }
+            try{
+                this.win.addch(ch);
+            } except curses.error{
+                pass;
+            } if not this.insert_mode or not curses.ascii.isprint(oldch){
+                break;
+            } ch = oldch;
+            (y, x) = this.win.getyx();
+            # Remember where to put the cursor back since we are in insert_mode
+            if backyx is nil{
+                backyx = y, x;
+
+        }
+        } if backyx is not nil{
+            this.win.move(*backyx);
+
+    }
+    } function do_command( ch){
+        "Process a single editing command.";
+        this._update_max_yx();
+        (y, x) = this.win.getyx();
+        this.lastcmd = ch;
+        if curses.ascii.isprint(ch){
+            if y < this.maxy or x < this.maxx{
+                this._insert_printable_char(ch);
+        } } elif ch == curses.ascii.SOH{                           # ^a
+            this.win.move(y, 0);
+        } elif ch in (curses.ascii.STX,curses.KEY_LEFT, curses.ascii.BS,curses.KEY_BACKSPACE){
+            if x > 0{
+                this.win.move(y, x-1);
+            } elif y == 0{
+                pass;
+            } elif this.stripspaces{
+                this.win.move(y-1, this._end_of_line(y-1));
+            } else{
+                this.win.move(y-1, this.maxx);
+            } if ch in (curses.ascii.BS, curses.KEY_BACKSPACE){
+                this.win.delch();
+        } } elif ch == curses.ascii.EOT{                           # ^d
+            this.win.delch();
+        } elif ch == curses.ascii.ENQ{                           # ^e
+            if this.stripspaces{
+                this.win.move(y, this._end_of_line(y));
+            } else{
+                this.win.move(y, this.maxx);
+        } } elif ch in (curses.ascii.ACK, curses.KEY_RIGHT){       # ^f
+            if x < this.maxx{
+                this.win.move(y, x+1);
+            } elif y == this.maxy{
+                pass;
+            } else{
+                this.win.move(y+1, 0);
+        } } elif ch == curses.ascii.BEL{                           # ^g
+            return 0;
+        } elif ch == curses.ascii.NL{                            # ^j
+            if this.maxy == 0{
+                return 0;
+            } elif y < this.maxy{
+                this.win.move(y+1, 0);
+        } } elif ch == curses.ascii.VT{                            # ^k
+            if x == 0 and this._end_of_line(y) == 0{
+                this.win.deleteln();
+            } else{
+                # first undo the effect of self._end_of_line
+                this.win.move(y, x);
+                this.win.clrtoeol();
+        } } elif ch == curses.ascii.FF{                            # ^l
+            this.win.refresh();
+        } elif ch in (curses.ascii.SO, curses.KEY_DOWN){         # ^n
+            if y < this.maxy{
+                this.win.move(y+1, x);
+                if x > this._end_of_line(y+1){
+                    this.win.move(y+1, this._end_of_line(y+1));
+        } } } elif ch == curses.ascii.SI{                            # ^o
+            this.win.insertln();
+        } elif ch in (curses.ascii.DLE, curses.KEY_UP){          # ^p
+            if y > 0{
+                this.win.move(y-1, x);
+                if x > this._end_of_line(y-1){
+                    this.win.move(y-1, this._end_of_line(y-1));
+        } } } return 1;
+
+    }
+    function gather(){
+        "Collect and return the contents of the window.";
+        result = "";
+        this._update_max_yx();
+        for y in range(this.maxy+1){
+            this.win.move(y, 0);
+            stop = this._end_of_line(y);
+            if stop == 0 and this.stripspaces{
+                continue;
+            } for x in range(this.maxx+1){
+                if this.stripspaces and x > stop{
+                    break;
+                } result = result + chr(curses.ascii.ascii(this.win.inch(y, x)));
+            } if this.maxy > 0{
+                result = result + "\n";
+        } } return result;
+
+    }
+    function edit( validate=nil){
+        "Edit in the widget window and collect the results.";
+        while 1{
+            ch = this.win.getch();
+            if validate{
+                ch = validate(ch);
+            } if not ch{
+                continue;
+            } if not this.do_command(ch){
+                break;
+            } this.win.refresh();
+        } return this.gather();
+
+}
+} if __name__ == '__main__'{
+    function test_editbox(stdscr){
+        ncols, nlines = 9, 4;
+        uly, ulx = 15, 20;
+        stdscr.addstr(uly-2, ulx, "Use Ctrl-G to end editing.");
+        win = curses.newwin(nlines, ncols, uly, ulx);
+        rectangle(stdscr, uly-1, ulx-1, uly + nlines, ulx + ncols);
+        stdscr.refresh();
+        return Textbox(win).edit();
+
+    }
+    str = curses.wrapper(test_editbox);
+    print 'Contents of text box:', repr(str);
+
+}

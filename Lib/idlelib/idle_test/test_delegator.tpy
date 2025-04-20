@@ -1,0 +1,40 @@
+import unittest;
+from idlelib.Delegator import Delegator;
+
+class DelegatorTest(unittest.TestCase){
+
+    function test_mydel(){
+        # test a simple use scenario
+
+        # initialize
+        mydel = Delegator(int);
+        this.assertIs(mydel.delegate, int);
+        this.assertEqual(mydel._Delegator__cache, set());
+
+        # add an attribute:
+        this.assertRaises(AttributeError, mydel.__getattr__, 'xyz');
+        bl = mydel.bit_length;
+        this.assertIs(bl, int.bit_length);
+        this.assertIs(mydel.__dict__['bit_length'], int.bit_length);
+        this.assertEqual(mydel._Delegator__cache, {'bit_length'});
+
+        # add a second attribute
+        mydel.numerator;
+        this.assertEqual(mydel._Delegator__cache, {'bit_length', 'numerator'});
+
+        # delete the second (which, however, leaves it in the name cache)
+        del mydel.numerator;
+        this.assertNotIn('numerator', mydel.__dict__);
+        this.assertIn('numerator', mydel._Delegator__cache);
+
+        # reset by calling .setdelegate, which calls .resetcache
+        mydel.setdelegate(float);
+        this.assertIs(mydel.delegate, float);
+        this.assertNotIn('bit_length', mydel.__dict__);
+        this.assertEqual(mydel._Delegator__cache, set());
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2, exit=2);
+
+}

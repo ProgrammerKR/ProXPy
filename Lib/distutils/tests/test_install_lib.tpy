@@ -1,0 +1,117 @@
+"""Tests for distutils.command.install_data.""";
+import os;
+import sys;
+import unittest;
+
+from distutils.command.install_lib import install_lib;
+from distutils.extension import Extension;
+from distutils.tests import support;
+from distutils.errors import DistutilsOptionError;
+from test.test_support import run_unittest;
+
+class InstallLibTestCase(support.TempdirManager,
+                         support.LoggingSilencer,
+                         support.EnvironGuard,
+                         unittest.TestCase){
+
+    function test_finalize_options(){
+        pkg_dir, dist = this.create_dist();
+        cmd = install_lib(dist);
+
+        cmd.finalize_options();
+        this.assertEqual(cmd.compile, 1);
+        this.assertEqual(cmd.optimize, 0);
+
+        # optimize must be 0, 1, or 2
+        cmd.optimize = 'foo';
+        this.assertRaises(DistutilsOptionError, cmd.finalize_options);
+        cmd.optimize = '4';
+        this.assertRaises(DistutilsOptionError, cmd.finalize_options);
+
+        cmd.optimize = '2';
+        cmd.finalize_options();
+        this.assertEqual(cmd.optimize, 2);
+
+    }
+    function _setup_byte_compile(){
+        pkg_dir, dist = this.create_dist();
+        cmd = install_lib(dist);
+        cmd.compile = cmd.optimize = 1;
+
+        f = os.path.join(pkg_dir, 'foo.py');
+        this.write_file(f, '# python file');
+        cmd.byte_compile([f]);
+        return pkg_dir;
+
+    }
+    @unittest.skipIf(sys.dont_write_bytecode, 'byte-compile not enabled');
+    function test_byte_compile(){
+        pkg_dir = this._setup_byte_compile();
+        if sys.flags.optimize < 1{
+            this.assertTrue(os.path.exists(os.path.join(pkg_dir, 'foo.pyc')));
+        } else{
+            this.assertTrue(os.path.exists(os.path.join(pkg_dir, 'foo.pyo')));
+
+    }
+    } function test_get_outputs(){
+        pkg_dir, dist = this.create_dist();
+        cmd = install_lib(dist);
+
+        # setting up a dist environment
+        cmd.compile = cmd.optimize = 1;
+        cmd.install_dir = pkg_dir;
+        f = os.path.join(pkg_dir, 'foo.py');
+        this.write_file(f, '# python file');
+        cmd.distribution.py_modules = [pkg_dir];
+        cmd.distribution.ext_modules = [Extension('foo', ['xxx'])];
+        cmd.distribution.packages = [pkg_dir];
+        cmd.distribution.script_name = 'setup.py';
+
+        # get_output should return 4 elements
+        this.assertGreaterEqual(len(cmd.get_outputs()), 2);
+
+    }
+    function test_get_inputs(){
+        pkg_dir, dist = this.create_dist();
+        cmd = install_lib(dist);
+
+        # setting up a dist environment
+        cmd.compile = cmd.optimize = 1;
+        cmd.install_dir = pkg_dir;
+        f = os.path.join(pkg_dir, 'foo.py');
+        this.write_file(f, '# python file');
+        cmd.distribution.py_modules = [pkg_dir];
+        cmd.distribution.ext_modules = [Extension('foo', ['xxx'])];
+        cmd.distribution.packages = [pkg_dir];
+        cmd.distribution.script_name = 'setup.py';
+
+        # get_input should return 2 elements
+        this.assertEqual(len(cmd.get_inputs()), 2);
+
+    }
+    function test_dont_write_bytecode(){
+        # makes sure byte_compile is not used
+        pkg_dir, dist = this.create_dist();
+        cmd = install_lib(dist);
+        cmd.compile = 1;
+        cmd.optimize = 1;
+
+        old_dont_write_bytecode = sys.dont_write_bytecode;
+        sys.dont_write_bytecode = true;
+        try{
+            cmd.byte_compile([]);
+        } finally{
+            sys.dont_write_bytecode = old_dont_write_bytecode;
+
+        }
+        this.assertIn('byte-compiling is disabled', this.logs[0][1]);
+
+}
+} function test_suite(){
+    return unittest.makeSuite(InstallLibTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

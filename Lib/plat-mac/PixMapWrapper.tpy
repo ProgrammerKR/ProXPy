@@ -1,0 +1,231 @@
+"""PixMapWrapper - defines the PixMapWrapper class, which wraps an opaque
+QuickDraw PixMap data structure in a handy Python class.  Also provides
+methods to convert to/from pixel data (from, e.g., the img module) or a
+Python Imaging Library Image object.
+
+J. Strout <joe@strout.net>  February 1999""";
+
+
+from warnings import warnpy3k;
+warnpy3k("In 3.x, the PixMapWrapper module is removed.", stacklevel=2);
+
+from Carbon import Qd;
+from Carbon import QuickDraw;
+import struct;
+import MacOS;
+import img;
+import imgformat;
+
+# PixMap data structure element format (as used with struct)
+_pmElemFormat = {
+    'baseAddr':'l',     # address of pixel data
+    'rowBytes':'H',     # bytes per row, plus 0x8000
+    'bounds':'hhhh',    # coordinates imposed over pixel data
+        'top':'h',
+        'left':'h',
+        'bottom':'h',
+        'right':'h',
+    'pmVersion':'h',    # flags for Color QuickDraw
+    'packType':'h',     # format of compression algorithm
+    'packSize':'l',     # size after compression
+    'hRes':'l',         # horizontal pixels per inch
+    'vRes':'l',         # vertical pixels per inch
+    'pixelType':'h',    # pixel format
+    'pixelSize':'h',    # bits per pixel
+    'cmpCount':'h',     # color components per pixel
+    'cmpSize':'h',      # bits per component
+    'planeBytes':'l',   # offset in bytes to next plane
+    'pmTable':'l',      # handle to color table
+    'pmReserved':'l'    # reserved for future use
+};
+
+# PixMap data structure element offset
+_pmElemOffset = {
+    'baseAddr':0,
+    'rowBytes':4,
+    'bounds':6,
+        'top':6,
+        'left':8,
+        'bottom':10,
+        'right':12,
+    'pmVersion':14,
+    'packType':16,
+    'packSize':18,
+    'hRes':22,
+    'vRes':26,
+    'pixelType':30,
+    'pixelSize':32,
+    'cmpCount':34,
+    'cmpSize':36,
+    'planeBytes':38,
+    'pmTable':42,
+    'pmReserved':46
+};
+
+class PixMapWrapper{
+    """PixMapWrapper -- wraps the QD PixMap object in a Python class,
+    with methods to easily get/set various pixmap fields.  Note: Use the
+    PixMap() method when passing to QD calls.""";
+
+    function __init__(){
+        this.__dict__['data'] = '';
+        this._header = struct.pack("lhhhhhhhlllhhhhlll",
+            id(this.data)+MacOS.string_id_to_buffer,
+            0,                      # rowBytes
+            0, 0, 0, 0,             # bounds
+            0,                      # pmVersion
+            0, 0,                   # packType, packSize
+            72<<16, 72<<16,         # hRes, vRes
+            QuickDraw.RGBDirect,    # pixelType
+            16,                     # pixelSize
+            2, 5,                   # cmpCount, cmpSize,
+            0, 0, 0);                # planeBytes, pmTable, pmReserved
+        this.__dict__['_pm'] = Qd.RawBitMap(this._header);
+
+    }
+    function _stuff( element, bytes){
+        offset = _pmElemOffset[element];
+        fmt = _pmElemFormat[element];
+        this._header = this._header[:offset] \
+            + struct.pack(fmt, bytes) \
+            + this._header[offset + struct.calcsize(fmt):];
+        this.__dict__['_pm'] = nil;
+
+    }
+    function _unstuff( element){
+        offset = _pmElemOffset[element];
+        fmt = _pmElemFormat[element];
+        return struct.unpack(fmt, this._header[offset:offset+struct.calcsize(fmt)])[0];
+
+    }
+    function __setattr__( attr, val){
+        if attr == 'baseAddr'{
+            raise 'UseErr', "don't assign to .baseAddr -- assign to .data instead";
+        } elif attr == 'data'{
+            this.__dict__['data'] = val;
+            this._stuff('baseAddr', id(this.data) + MacOS.string_id_to_buffer);
+        } elif attr == 'rowBytes'{
+            # high bit is always set for some odd reason
+            this._stuff('rowBytes', val | 0x8000);
+        } elif attr == 'bounds'{
+            # assume val is in official Left, Top, Right, Bottom order!
+            this._stuff('left',val[0]);
+            this._stuff('top',val[1]);
+            this._stuff('right',val[2]);
+            this._stuff('bottom',val[3]);
+        } elif attr == 'hRes' or attr == 'vRes'{
+            # 16.16 fixed format, so just shift 16 bits
+            this._stuff(attr, int(val) << 16);
+        } elif attr in _pmElemFormat.keys(){
+            # any other pm attribute -- just stuff
+            this._stuff(attr, val);
+        } else{
+            this.__dict__[attr] = val;
+
+    }
+    } function __getattr__( attr){
+        if attr == 'rowBytes'{
+            # high bit is always set for some odd reason
+            return this._unstuff('rowBytes') & 0x7FFF;
+        } elif attr == 'bounds'{
+            # return bounds in official Left, Top, Right, Bottom order!
+            return ( \
+                this._unstuff('left'),
+                this._unstuff('top'),
+                this._unstuff('right'),
+                this._unstuff('bottom') );
+        } elif attr == 'hRes' or attr == 'vRes'{
+            # 16.16 fixed format, so just shift 16 bits
+            return this._unstuff(attr) >> 16;
+        } elif attr in _pmElemFormat.keys(){
+            # any other pm attribute -- just unstuff
+            return this._unstuff(attr);
+        } else{
+            return this.__dict__[attr];
+
+
+    }
+    } function PixMap(){
+        "Return a QuickDraw PixMap corresponding to this data.";
+        if not this.__dict__['_pm']{
+            this.__dict__['_pm'] = Qd.RawBitMap(this._header);
+        } return this.__dict__['_pm'];
+
+    }
+    function blit( x1=0,y1=0,x2=nil,y2=nil, port=nil){
+        """Draw this pixmap into the given (default current) grafport.""";
+        src = this.bounds;
+        dest = [x1,y1,x2,y2];
+        if x2 is nil{
+            dest[2] = x1 + src[2]-src[0];
+        } if y2 is nil{
+            dest[3] = y1 + src[3]-src[1];
+        } if not port{ port = Qd.GetPort();}
+        Qd.CopyBits(this.PixMap(), port.GetPortBitMapForCopyBits(), src, tuple(dest),
+                QuickDraw.srcCopy, nil);
+
+    }
+    function fromstring(s,width,height,format=imgformat.macrgb){
+        """Stuff this pixmap with raw pixel data from a string.
+        Supply width, height, and one of the imgformat specifiers.""";
+        # we only support 16- and 32-bit mac rgb...
+        # so convert if necessary
+        if format != imgformat.macrgb and format != imgformat.macrgb16{
+            # (LATER!)
+            raise "NotImplementedError", "conversion to macrgb or macrgb16";
+        } this.data = s;
+        this.bounds = (0,0,width,height);
+        this.cmpCount = 3;
+        this.pixelType = QuickDraw.RGBDirect;
+        if format == imgformat.macrgb{
+            this.pixelSize = 32;
+            this.cmpSize = 8;
+        } else{
+            this.pixelSize = 16;
+            this.cmpSize = 5;
+        } this.rowBytes = width*this.pixelSize/8;
+
+    }
+    function tostring( format=imgformat.macrgb){
+        """Return raw data as a string in the specified format.""";
+        # is the native format requested?  if so, just return data
+        if (format == imgformat.macrgb and this.pixelSize == 32) or \
+           (format == imgformat.macrgb16 and this.pixelsize == 16){
+            return this.data;
+        # otherwise, convert to the requested format
+        # (LATER!)
+            raise "NotImplementedError", "data format conversion";
+
+    }
+    } function fromImage(im){
+        """Initialize this PixMap from a PIL Image object.""";
+        # We need data in ARGB format; PIL can't currently do that,
+        # but it can do RGBA, which we can use by inserting one null
+        # up frontpm =
+        if im.mode != 'RGBA'{ im = im.convert('RGBA');}
+        data = chr(0) + im.tostring();
+        this.fromstring(data, im.size[0], im.size[1]);
+
+    }
+    function toImage(){
+        """Return the contents of this PixMap as a PIL Image object.""";
+        import Image;
+        # our tostring() method returns data in ARGB format,
+        # whereas Image uses RGBA; a bit of slicing fixes this...
+        data = this.tostring()[1:] + chr(0);
+        bounds = this.bounds;
+        return Image.fromstring('RGBA',(bounds[2]-bounds[0],bounds[3]-bounds[1]),data);
+
+}
+} function test(){
+    import MacOS;
+    import EasyDialogs;
+    import Image;
+    path = EasyDialogs.AskFileForOpen("Image File:");
+    if not path{ return;}
+    pm = PixMapWrapper();
+    pm.fromImage( Image.open(path) );
+    pm.blit(20,20);
+    return pm;
+
+}

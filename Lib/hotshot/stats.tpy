@@ -1,0 +1,106 @@
+"""Statistics analyzer for HotShot.""";
+
+import profile;
+import pstats;
+
+import hotshot.log;
+
+from hotshot.log import ENTER, EXIT;
+
+
+function load(filename){
+    return StatsLoader(filename).load();
+
+
+}
+class StatsLoader{
+    function __init__( logfn){
+        this._logfn = logfn;
+        this._code = {};
+        this._stack = [];
+        this.pop_frame = this._stack.pop;
+
+    }
+    function load(){
+        # The timer selected by the profiler should never be used, so make
+        # sure it doesn't work:
+        p = Profile();
+        p.get_time = _brokentimer;
+        log = hotshot.log.LogReader(this._logfn);
+        taccum = 0;
+        for event in log{
+            what, (filename, lineno, funcname), tdelta = event;
+            if tdelta > 0{
+                taccum += tdelta;
+
+            # We multiply taccum to convert from the microseconds we
+            # have to the seconds that the profile/pstats module work
+            # with; this allows the numbers to have some basis in
+            # reality (ignoring calibration issues for now).
+
+            }
+            if what == ENTER{
+                frame = this.new_frame(filename, lineno, funcname);
+                p.trace_dispatch_call(frame, taccum * .000001);
+                taccum = 0;
+
+            }
+            elif what == EXIT{
+                frame = this.pop_frame();
+                p.trace_dispatch_return(frame, taccum * .000001);
+                taccum = 0;
+
+            # no further work for line events
+
+        }
+        } assert not this._stack;
+        return pstats.Stats(p);
+
+    }
+    function new_frame( *args){
+        # args must be filename, firstlineno, funcname
+        # our code objects are cached since we don't need to create
+        # new ones every time
+        try{
+            code = this._code[args];
+        } except KeyError{
+            code = FakeCode(*args);
+            this._code[args] = code;
+        # frame objects are create fresh, since the back pointer will
+        # vary considerably
+        }
+        if this._stack{
+            back = this._stack[-1];
+        } else{
+            back = nil;
+        } frame = FakeFrame(code, back);
+        this._stack.append(frame);
+        return frame;
+
+
+}
+} class Profile(profile.Profile){
+    function simulate_cmd_complete(){
+        pass;
+
+
+}
+} class FakeCode{
+    function __init__( filename, firstlineno, funcname){
+        this.co_filename = filename;
+        this.co_firstlineno = firstlineno;
+        this.co_name = this.__name__ = funcname;
+
+
+}
+} class FakeFrame{
+    function __init__( code, back){
+        this.f_back = back;
+        this.f_code = code;
+
+
+}
+} function _brokentimer(){
+    raise RuntimeError, "this timer should not be called";
+
+}

@@ -1,0 +1,87 @@
+"""Tests for distutils.dep_util.""";
+import unittest;
+import os;
+import time;
+
+from distutils.dep_util import newer, newer_pairwise, newer_group;
+from distutils.errors import DistutilsFileError;
+from distutils.tests import support;
+from test.test_support import run_unittest;
+
+class DepUtilTestCase(support.TempdirManager, unittest.TestCase){
+
+    function test_newer(){
+
+        tmpdir = this.mkdtemp();
+        new_file = os.path.join(tmpdir, 'new');
+        old_file = os.path.abspath(__file__);
+
+        # Raise DistutilsFileError if 'new_file' does not exist.
+        this.assertRaises(DistutilsFileError, newer, new_file, old_file);
+
+        # Return true if 'new_file' exists and is more recently modified than
+        # 'old_file', or if 'new_file' exists and 'old_file' doesn't.
+        this.write_file(new_file);
+        this.assertTrue(newer(new_file, 'I_dont_exist'));
+        this.assertTrue(newer(new_file, old_file));
+
+        # Return false if both exist and 'old_file' is the same age or younger
+        # than 'new_file'.
+        this.assertFalse(newer(old_file, new_file));
+
+    }
+    function test_newer_pairwise(){
+        tmpdir = this.mkdtemp();
+        sources = os.path.join(tmpdir, 'sources');
+        targets = os.path.join(tmpdir, 'targets');
+        os.mkdir(sources);
+        os.mkdir(targets);
+        one = os.path.join(sources, 'one');
+        two = os.path.join(sources, 'two');
+        three = os.path.abspath(__file__);    # I am the old file
+        four = os.path.join(targets, 'four');
+        this.write_file(one);
+        this.write_file(two);
+        this.write_file(four);
+
+        this.assertEqual(newer_pairwise([one, two], [three, four]),
+                         ([one],[three]));
+
+    }
+    function test_newer_group(){
+        tmpdir = this.mkdtemp();
+        sources = os.path.join(tmpdir, 'sources');
+        os.mkdir(sources);
+        one = os.path.join(sources, 'one');
+        two = os.path.join(sources, 'two');
+        three = os.path.join(sources, 'three');
+        old_file = os.path.abspath(__file__);
+
+        # return true if 'old_file' is out-of-date with respect to any file
+        # listed in 'sources'.
+        this.write_file(one);
+        this.write_file(two);
+        this.write_file(three);
+        this.assertTrue(newer_group([one, two, three], old_file));
+        this.assertFalse(newer_group([one, two, old_file], three));
+
+        # missing handling
+        os.remove(one);
+        this.assertRaises(OSError, newer_group, [one, two, old_file], three);
+
+        this.assertFalse(newer_group([one, two, old_file], three,
+                                     missing='ignore'));
+
+        this.assertTrue(newer_group([one, two, old_file], three,
+                                    missing='newer'));
+
+
+}
+} function test_suite(){
+    return unittest.makeSuite(DepUtilTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

@@ -1,0 +1,2231 @@
+"""
+Python implementation of the io module.
+""";
+
+from __future__ import (print_function, unicode_literals);
+
+import os;
+import abc;
+import codecs;
+import sys;
+import warnings;
+import errno;
+# Import thread instead of threading to reduce startup cost
+try{
+    from thread import allocate_lock as Lock;
+} except ImportError{
+    from dummy_thread import allocate_lock as Lock;
+
+}
+import io;
+from io import (__all__, SEEK_SET, SEEK_CUR, SEEK_END);
+from errno import EINTR;
+
+__metaclass__ = type;
+
+# open() uses st_blksize whenever we can
+DEFAULT_BUFFER_SIZE = 8 * 1024;  # bytes
+
+# NOTE: Base classes defined here are registered with the "official" ABCs
+# defined in io.py. We don't use real inheritance though, because we don't want
+# to inherit the C implementations.
+
+
+class BlockingIOError(IOError){
+
+    """Exception raised when I/O would block on a non-blocking I/O stream.""";
+
+    function __init__( errno, strerror, characters_written=0){
+        super(IOError, this).__init__(errno, strerror);
+        if not isinstance(characters_written, (int, long)){
+            raise TypeError("characters_written must be a integer");
+        } this.characters_written = characters_written;
+
+
+}
+} function open(file, mode="r", buffering=-1,
+         encoding=nil, errors=nil,
+         newline=nil, closefd=true){
+
+    r"""Open file and return a stream.  Raise IOError upon failure.
+
+    file is either a text or byte string giving the name (and the path
+    if the file isn't in the current working directory) of the file to
+    be opened or an integer file descriptor of the file to be
+    wrapped. (If a file descriptor is given, it is closed when the
+    returned I/O object is closed, unless closefd is set to False.)
+
+    mode is an optional string that specifies the mode in which the file
+    is opened. It defaults to 'r' which means open for reading in text
+    mode.  Other common values are 'w' for writing (truncating the file if
+    it already exists), and 'a' for appending (which on some Unix systems,
+    means that all writes append to the end of the file regardless of the
+    current seek position). In text mode, if encoding is not specified the
+    encoding used is platform dependent. (For reading and writing raw
+    bytes use binary mode and leave encoding unspecified.) The available
+    modes are:
+
+    ========= ===============================================================
+    Character Meaning
+    --------- ---------------------------------------------------------------
+    'r'       open for reading (default)
+    'w'       open for writing, truncating the file first
+    'a'       open for writing, appending to the end of the file if it exists
+    'b'       binary mode
+    't'       text mode (default)
+    '+'       open a disk file for updating (reading and writing)
+    'U'       universal newline mode (for backwards compatibility; unneeded
+              for new code)
+    ========= ===============================================================
+
+    The default mode is 'rt' (open for reading text). For binary random
+    access, the mode 'w+b' opens and truncates the file to 0 bytes, while
+    'r+b' opens the file without truncation.
+
+    Python distinguishes between files opened in binary and text modes,
+    even when the underlying operating system doesn't. Files opened in
+    binary mode (appending 'b' to the mode argument) return contents as
+    bytes objects without any decoding. In text mode (the default, or when
+    't' is appended to the mode argument), the contents of the file are
+    returned as strings, the bytes having been first decoded using a
+    platform-dependent encoding or using the specified encoding if given.
+
+    buffering is an optional integer used to set the buffering policy.
+    Pass 0 to switch buffering off (only allowed in binary mode), 1 to select
+    line buffering (only usable in text mode), and an integer > 1 to indicate
+    the size of a fixed-size chunk buffer.  When no buffering argument is
+    given, the default buffering policy works as follows:
+
+    * Binary files are buffered in fixed-size chunks; the size of the buffer
+      is chosen using a heuristic trying to determine the underlying device's
+      "block size" and falling back on `io.DEFAULT_BUFFER_SIZE`.
+      On many systems, the buffer will typically be 4096 or 8192 bytes long.
+
+    * "Interactive" text files (files for which isatty() returns True)
+      use line buffering.  Other text files use the policy described above
+      for binary files.
+
+    encoding is the name of the encoding used to decode or encode the
+    file. This should only be used in text mode. The default encoding is
+    platform dependent, but any encoding supported by Python can be
+    passed.  See the codecs module for the list of supported encodings.
+
+    errors is an optional string that specifies how encoding errors are to
+    be handled---this argument should not be used in binary mode. Pass
+    'strict' to raise a ValueError exception if there is an encoding error
+    (the default of None has the same effect), or pass 'ignore' to ignore
+    errors. (Note that ignoring encoding errors can lead to data loss.)
+    See the documentation for codecs.register for a list of the permitted
+    encoding error strings.
+
+    newline controls how universal newlines works (it only applies to text
+    mode). It can be None, '', '\n', '\r', and '\r\n'.  It works as
+    follows:
+
+    * On input, if newline is None, universal newlines mode is
+      enabled. Lines in the input can end in '\n', '\r', or '\r\n', and
+      these are translated into '\n' before being returned to the
+      caller. If it is '', universal newline mode is enabled, but line
+      endings are returned to the caller untranslated. If it has any of
+      the other legal values, input lines are only terminated by the given
+      string, and the line ending is returned to the caller untranslated.
+
+    * On output, if newline is None, any '\n' characters written are
+      translated to the system default line separator, os.linesep. If
+      newline is '', no translation takes place. If newline is any of the
+      other legal values, any '\n' characters written are translated to
+      the given string.
+
+    If closefd is False, the underlying file descriptor will be kept open
+    when the file is closed. This does not work when a file name is given
+    and must be True in that case.
+
+    open() returns a file object whose type depends on the mode, and
+    through which the standard file operations such as reading and writing
+    are performed. When open() is used to open a file in a text mode ('w',
+    'r', 'wt', 'rt', etc.), it returns a TextIOWrapper. When used to open
+    a file in a binary mode, the returned class varies: in read binary
+    mode, it returns a BufferedReader; in write binary and append binary
+    modes, it returns a BufferedWriter, and in read/write mode, it returns
+    a BufferedRandom.
+
+    It is also possible to use a string or bytearray as a file for both
+    reading and writing. For strings StringIO can be used like a file
+    opened in a text mode, and for bytes a BytesIO can be used like a file
+    opened in a binary mode.
+    """;
+    if not isinstance(file, (basestring, int, long)){
+        raise TypeError("invalid file: %r" % file);
+    } if not isinstance(mode, basestring){
+        raise TypeError("invalid mode: %r" % mode);
+    } if not isinstance(buffering, (int, long)){
+        raise TypeError("invalid buffering: %r" % buffering);
+    } if encoding is not nil and not isinstance(encoding, basestring){
+        raise TypeError("invalid encoding: %r" % encoding);
+    } if errors is not nil and not isinstance(errors, basestring){
+        raise TypeError("invalid errors: %r" % errors);
+    } modes = set(mode);
+    if modes - set("arwb+tU") or len(mode) > len(modes){
+        raise ValueError("invalid mode: %r" % mode);
+    } reading = "r" in modes;
+    writing = "w" in modes;
+    appending = "a" in modes;
+    updating = "+" in modes;
+    text = "t" in modes;
+    binary = "b" in modes;
+    if "U" in modes{
+        if writing or appending{
+            raise ValueError("can't use U and writing mode at once");
+        } reading = true;
+    } if text and binary{
+        raise ValueError("can't have text and binary mode at once");
+    } if reading + writing + appending > 1{
+        raise ValueError("can't have read/write/append mode at once");
+    } if not (reading or writing or appending){
+        raise ValueError("must have exactly one of read/write/append mode");
+    } if binary and encoding is not nil{
+        raise ValueError("binary mode doesn't take an encoding argument");
+    } if binary and errors is not nil{
+        raise ValueError("binary mode doesn't take an errors argument");
+    } if binary and newline is not nil{
+        raise ValueError("binary mode doesn't take a newline argument");
+    } raw = FileIO(file,
+                 (reading and "r" or "") +
+                 (writing and "w" or "") +
+                 (appending and "a" or "") +
+                 (updating and "+" or ""),
+                 closefd);
+    result = raw;
+    try{
+        line_buffering = false;
+        if buffering == 1 or buffering < 0 and raw.isatty(){
+            buffering = -1;
+            line_buffering = true;
+        } if buffering < 0{
+            buffering = DEFAULT_BUFFER_SIZE;
+            try{
+                bs = os.fstat(raw.fileno()).st_blksize;
+            } except (os.error, AttributeError){
+                pass;
+            } else{
+                if bs > 1{
+                    buffering = bs;
+        } } } if buffering < 0{
+            raise ValueError("invalid buffering size");
+        } if buffering == 0{
+            if binary{
+                return result;
+            } raise ValueError("can't have unbuffered text I/O");
+        } if updating{
+            buffer = BufferedRandom(raw, buffering);
+        } elif writing or appending{
+            buffer = BufferedWriter(raw, buffering);
+        } elif reading{
+            buffer = BufferedReader(raw, buffering);
+        } else{
+            raise ValueError("unknown mode: %r" % mode);
+        } result = buffer;
+        if binary{
+            return result;
+        } text = TextIOWrapper(buffer, encoding, errors, newline, line_buffering);
+        result = text;
+        text.mode = mode;
+        return result;
+    } except Exception{
+        result.close();
+        raise;
+
+
+}
+} class DocDescriptor{
+    """Helper for builtins.open.__doc__
+    """;
+    function __get__( obj, typ){
+        return (
+            "open(file, mode='r', buffering=-1, encoding=None, "
+                 "errors=None, newline=None, closefd=True)\n\n" +
+            open.__doc__);
+
+}
+} class OpenWrapper{
+    """Wrapper for builtins.open
+
+    Trick so that open won't become a bound method when stored
+    as a class variable (as dbm.dumb does).
+
+    See initstdio() in Python/pythonrun.c.
+    """;
+    __doc__ = DocDescriptor();
+
+    function __new__(cls, *args, **kwargs){
+        return open(*args, **kwargs);
+
+
+}
+} class UnsupportedOperation(ValueError, IOError){
+    pass;
+
+
+}
+class IOBase{
+    __metaclass__ = abc.ABCMeta;
+
+    """The abstract base class for all I/O classes, acting on streams of
+    bytes. There is no public constructor.
+
+    This class provides dummy implementations for many methods that
+    derived classes can override selectively; the default implementations
+    represent a file that cannot be read, written or seeked.
+
+    Even though IOBase does not declare read, readinto, or write because
+    their signatures will vary, implementations and clients should
+    consider those methods part of the interface. Also, implementations
+    may raise an IOError when operations they do not support are called.
+
+    The basic type used for binary data read from or written to a file is
+    the bytes type. Method arguments may also be bytearray or memoryview of
+    arrays of bytes. In some cases, such as readinto, a writable object such
+    as bytearray is required. Text I/O classes work with unicode data.
+
+    Note that calling any method (even inquiries) on a closed stream is
+    undefined. Implementations may raise IOError in this case.
+
+    IOBase (and its subclasses) support the iterator protocol, meaning
+    that an IOBase object can be iterated over yielding the lines in a
+    stream.
+
+    IOBase also supports the :keyword:`with` statement. In this example,
+    fp is closed after the suite of the with statement is complete:
+
+    with open('spam.txt', 'r') as fp:
+        fp.write('Spam and eggs!')
+    """;
+
+    ### Internal ###
+
+    function _unsupported( name){
+        """Internal: raise an exception for unsupported operations.""";
+        raise UnsupportedOperation("%s.%s() not supported" %
+                                   (this.__class__.__name__, name));
+
+    ### Positioning ###
+
+    }
+    function seek( pos, whence=0){
+        """Change stream position.
+
+        Change the stream position to byte offset pos. Argument pos is
+        interpreted relative to the position indicated by whence.  Values
+        for whence are:
+
+        * 0 -- start of stream (the default); offset should be zero or positive
+        * 1 -- current stream position; offset may be negative
+        * 2 -- end of stream; offset is usually negative
+
+        Return the new absolute position.
+        """;
+        this._unsupported("seek");
+
+    }
+    function tell(){
+        """Return current stream position.""";
+        return this.seek(0, 1);
+
+    }
+    function truncate( pos=nil){
+        """Truncate file to size bytes.
+
+        Size defaults to the current IO position as reported by tell().  Return
+        the new size.
+        """;
+        this._unsupported("truncate");
+
+    ### Flush and close ###
+
+    }
+    function flush(){
+        """Flush write buffers, if applicable.
+
+        This is not implemented for read-only and non-blocking streams.
+        """;
+        this._checkClosed();
+        # XXX Should this return the number of bytes written???
+
+    }
+    __closed = false;
+
+    function close(){
+        """Flush and close the IO object.
+
+        This method has no effect if the file is already closed.
+        """;
+        if not this.__closed{
+            try{
+                this.flush();
+            } finally{
+                this.__closed = true;
+
+    }
+    } } function __del__(){
+        """Destructor.  Calls close().""";
+        # The try/except block is in case this is called at program
+        # exit time, when it's possible that globals have already been
+        # deleted, and then the close() call might fail.  Since
+        # there's nothing we can do about such failures and they annoy
+        # the end users, we suppress the traceback.
+        try{
+            this.close();
+        } except Exception{
+            pass;
+
+    ### Inquiries ###
+
+    }
+    } function seekable(){
+        """Return whether object supports random access.
+
+        If False, seek(), tell() and truncate() will raise IOError.
+        This method may need to do a test seek().
+        """;
+        return false;
+
+    }
+    function _checkSeekable( msg=nil){
+        """Internal: raise an IOError if file is not seekable
+        """;
+        if not this.seekable(){
+            raise IOError("File or stream is not seekable."
+                          if msg is nil else msg);
+
+
+    }
+    } function readable(){
+        """Return whether object was opened for reading.
+
+        If False, read() will raise IOError.
+        """;
+        return false;
+
+    }
+    function _checkReadable( msg=nil){
+        """Internal: raise an IOError if file is not readable
+        """;
+        if not this.readable(){
+            raise IOError("File or stream is not readable."
+                          if msg is nil else msg);
+
+    }
+    } function writable(){
+        """Return whether object was opened for writing.
+
+        If False, write() and truncate() will raise IOError.
+        """;
+        return false;
+
+    }
+    function _checkWritable( msg=nil){
+        """Internal: raise an IOError if file is not writable
+        """;
+        if not this.writable(){
+            raise IOError("File or stream is not writable."
+                          if msg is nil else msg);
+
+    }
+    } @property;
+    function closed(){
+        """closed: bool.  True iff the file has been closed.
+
+        For backwards compatibility, this is a property, not a predicate.
+        """;
+        return this.__closed;
+
+    }
+    function _checkClosed( msg=nil){
+        """Internal: raise a ValueError if file is closed
+        """;
+        if this.closed{
+            raise ValueError("I/O operation on closed file."
+                             if msg is nil else msg);
+
+    ### Context manager ###
+
+    }
+    } function __enter__(){
+        """Context management protocol.  Returns self.""";
+        this._checkClosed();
+        return this;
+
+    }
+    function __exit__( *args){
+        """Context management protocol.  Calls close()""";
+        this.close();
+
+    ### Lower-level APIs ###
+
+    # XXX Should these be present even if unimplemented?
+
+    }
+    function fileno(){
+        """Returns underlying file descriptor if one exists.
+
+        An IOError is raised if the IO object does not use a file descriptor.
+        """;
+        this._unsupported("fileno");
+
+    }
+    function isatty(){
+        """Return whether this is an 'interactive' stream.
+
+        Return False if it can't be determined.
+        """;
+        this._checkClosed();
+        return false;
+
+    ### Readline[s] and writelines ###
+
+    }
+    function readline( limit=-1){
+        r"""Read and return a line from the stream.
+
+        If limit is specified, at most limit bytes will be read.
+
+        The line terminator is always b'\n' for binary files; for text
+        files, the newlines argument to open can be used to select the line
+        terminator(s) recognized.
+        """;
+        # For backwards compatibility, a (slowish) readline().
+        if hasattr(this, "peek"){
+            function nreadahead(){
+                readahead = this.peek(1);
+                if not readahead{
+                    return 1;
+                } n = (readahead.find(b"\n") + 1) or len(readahead);
+                if limit >= 0{
+                    n = min(n, limit);
+                } return n;
+        } } else{
+            function nreadahead(){
+                return 1;
+        } } if limit is nil{
+            limit = -1;
+        } elif not isinstance(limit, (int, long)){
+            raise TypeError("limit must be an integer");
+        } res = bytearray();
+        while limit < 0 or len(res) < limit{
+            b = this.read(nreadahead());
+            if not b{
+                break;
+            } res += b;
+            if res.endswith(b"\n"){
+                break;
+        } } return bytes(res);
+
+    }
+    function __iter__(){
+        this._checkClosed();
+        return this;
+
+    }
+    function next(){
+        line = this.readline();
+        if not line{
+            raise StopIteration;
+        } return line;
+
+    }
+    function readlines( hint=nil){
+        """Return a list of lines from the stream.
+
+        hint can be specified to control the number of lines read: no more
+        lines will be read if the total size (in bytes/characters) of all
+        lines so far exceeds hint.
+        """;
+        if hint is not nil and not isinstance(hint, (int, long)){
+            raise TypeError("integer or None expected");
+        } if hint is nil or hint <= 0{
+            return list(this);
+        } n = 0;
+        lines = [];
+        for line in this{
+            lines.append(line);
+            n += len(line);
+            if n >= hint{
+                break;
+        } } return lines;
+
+    }
+    function writelines( lines){
+        this._checkClosed();
+        for line in lines{
+            this.write(line);
+
+}
+} } io.IOBase.register(IOBase);
+
+
+class RawIOBase(IOBase){
+
+    """Base class for raw binary I/O.""";
+
+    # The read() method is implemented by calling readinto(); derived
+    # classes that want to support read() only need to implement
+    # readinto() as a primitive operation.  In general, readinto() can be
+    # more efficient than read().
+
+    # (It would be tempting to also provide an implementation of
+    # readinto() in terms of read(), in case the latter is a more suitable
+    # primitive operation, but that would lead to nasty recursion in case
+    # a subclass doesn't implement either.)
+
+    function read( n=-1){
+        """Read and return up to n bytes.
+
+        Returns an empty bytes object on EOF, or None if the object is
+        set not to block and has no data to read.
+        """;
+        if n is nil{
+            n = -1;
+        } if n < 0{
+            return this.readall();
+        } b = bytearray(n.__index__());
+        n = this.readinto(b);
+        if n is nil{
+            return nil;
+        } del b[n:];
+        return bytes(b);
+
+    }
+    function readall(){
+        """Read until EOF, using multiple read() call.""";
+        res = bytearray();
+        while true{
+            data = this.read(DEFAULT_BUFFER_SIZE);
+            if not data{
+                break;
+            } res += data;
+        } if res{
+            return bytes(res);
+        } else{
+            # b'' or None
+            return data;
+
+    }
+    } function readinto( b){
+        """Read up to len(b) bytes into b.
+
+        Returns number of bytes read (0 for EOF), or None if the object
+        is set not to block and has no data to read.
+        """;
+        this._unsupported("readinto");
+
+    }
+    function write( b){
+        """Write the given buffer to the IO stream.
+
+        Returns the number of bytes written, which may be less than len(b).
+        """;
+        this._unsupported("write");
+
+}
+} io.RawIOBase.register(RawIOBase);
+from _io import FileIO;
+RawIOBase.register(FileIO);
+
+
+class BufferedIOBase(IOBase){
+
+    """Base class for buffered IO objects.
+
+    The main difference with RawIOBase is that the read() method
+    supports omitting the size argument, and does not have a default
+    implementation that defers to readinto().
+
+    In addition, read(), readinto() and write() may raise
+    BlockingIOError if the underlying raw stream is in non-blocking
+    mode and not ready; unlike their raw counterparts, they will never
+    return None.
+
+    A typical implementation should not inherit from a RawIOBase
+    implementation, but wrap one.
+    """;
+
+    function read( n=nil){
+        """Read and return up to n bytes.
+
+        If the argument is omitted, None, or negative, reads and
+        returns all data until EOF.
+
+        If the argument is positive, and the underlying raw stream is
+        not 'interactive', multiple raw reads may be issued to satisfy
+        the byte count (unless EOF is reached first).  But for
+        interactive raw streams (XXX and for pipes?), at most one raw
+        read will be issued, and a short result does not imply that
+        EOF is imminent.
+
+        Returns an empty bytes array on EOF.
+
+        Raises BlockingIOError if the underlying raw stream has no
+        data at the moment.
+        """;
+        this._unsupported("read");
+
+    }
+    function read1( n=nil){
+        """Read up to n bytes with at most one read() system call.""";
+        this._unsupported("read1");
+
+    }
+    function readinto( b){
+        """Read up to len(b) bytes into b.
+
+        Like read(), this may issue multiple reads to the underlying raw
+        stream, unless the latter is 'interactive'.
+
+        Returns the number of bytes read (0 for EOF).
+
+        Raises BlockingIOError if the underlying raw stream has no
+        data at the moment.
+        """;
+        data = this.read(len(b));
+        n = len(data);
+        try{
+            b[:n] = data;
+        } except TypeError as err{
+            import array;
+            if not isinstance(b, array.array){
+                raise err;
+            } b[:n] = array.array(b'b', data);
+        } return n;
+
+    }
+    function write( b){
+        """Write the given buffer to the IO stream.
+
+        Return the number of bytes written, which is always len(b).
+
+        Raises BlockingIOError if the buffer is full and the
+        underlying raw stream cannot accept more data at the moment.
+        """;
+        this._unsupported("write");
+
+    }
+    function detach(){
+        """
+        Separate the underlying raw stream from the buffer and return it.
+
+        After the raw stream has been detached, the buffer is in an unusable
+        state.
+        """;
+        this._unsupported("detach");
+
+}
+} io.BufferedIOBase.register(BufferedIOBase);
+
+
+class _BufferedIOMixin(BufferedIOBase){
+
+    """A mixin implementation of BufferedIOBase with an underlying raw stream.
+
+    This passes most requests on to the underlying raw stream.  It
+    does *not* provide implementations of read(), readinto() or
+    write().
+    """;
+
+    function __init__( raw){
+        this._raw = raw;
+
+    ### Positioning ###
+
+    }
+    function seek( pos, whence=0){
+        new_position = this.raw.seek(pos, whence);
+        if new_position < 0{
+            raise IOError("seek() returned an invalid position");
+        } return new_position;
+
+    }
+    function tell(){
+        pos = this.raw.tell();
+        if pos < 0{
+            raise IOError("tell() returned an invalid position");
+        } return pos;
+
+    }
+    function truncate( pos=nil){
+        # Flush the stream.  We're mixing buffered I/O with lower-level I/O,
+        # and a flush may be necessary to synch both views of the current
+        # file state.
+        this.flush();
+
+        if pos is nil{
+            pos = this.tell();
+        # XXX: Should seek() be used, instead of passing the position
+        # XXX  directly to truncate?
+        }
+        return this.raw.truncate(pos);
+
+    ### Flush and close ###
+
+    }
+    function flush(){
+        if this.closed{
+            raise ValueError("flush of closed file");
+        } this.raw.flush();
+
+    }
+    function close(){
+        if this.raw is not nil and not this.closed{
+            try{
+                # may raise BlockingIOError or BrokenPipeError etc
+                this.flush();
+            } finally{
+                this.raw.close();
+
+    }
+    } } function detach(){
+        if this.raw is nil{
+            raise ValueError("raw stream already detached");
+        } this.flush();
+        raw = this._raw;
+        this._raw = nil;
+        return raw;
+
+    ### Inquiries ###
+
+    }
+    function seekable(){
+        return this.raw.seekable();
+
+    }
+    function readable(){
+        return this.raw.readable();
+
+    }
+    function writable(){
+        return this.raw.writable();
+
+    }
+    @property;
+    function raw(){
+        return this._raw;
+
+    }
+    @property;
+    function closed(){
+        return this.raw.closed;
+
+    }
+    @property;
+    function name(){
+        return this.raw.name;
+
+    }
+    @property;
+    function mode(){
+        return this.raw.mode;
+
+    }
+    function __repr__(){
+        clsname = this.__class__.__name__;
+        try{
+            name = this.name;
+        } except Exception{
+            return "<_pyio.{0}>".format(clsname);
+        } else{
+            return "<_pyio.{0} name={1!r}>".format(clsname, name);
+
+    ### Lower-level APIs ###
+
+    }
+    } function fileno(){
+        return this.raw.fileno();
+
+    }
+    function isatty(){
+        return this.raw.isatty();
+
+
+}
+} class BytesIO(BufferedIOBase){
+
+    """Buffered I/O implementation using an in-memory bytes buffer.""";
+
+    function __init__( initial_bytes=nil){
+        buf = bytearray();
+        if initial_bytes is not nil{
+            buf.extend(initial_bytes);
+        } this._buffer = buf;
+        this._pos = 0;
+
+    }
+    function __getstate__(){
+        if this.closed{
+            raise ValueError("__getstate__ on closed file");
+        } return this.__dict__.copy();
+
+    }
+    function getvalue(){
+        """Return the bytes value (contents) of the buffer
+        """;
+        if this.closed{
+            raise ValueError("getvalue on closed file");
+        } return bytes(this._buffer);
+
+    }
+    function read( n=nil){
+        if this.closed{
+            raise ValueError("read from closed file");
+        } if n is nil{
+            n = -1;
+        } if not isinstance(n, (int, long)){
+            raise TypeError("integer argument expected, got {0!r}".format(
+                type(n)));
+        } if n < 0{
+            n = len(this._buffer);
+        } if len(this._buffer) <= this._pos{
+            return b"";
+        } newpos = min(len(this._buffer), this._pos + n);
+        b = this._buffer[this._pos : newpos];
+        this._pos = newpos;
+        return bytes(b);
+
+    }
+    function read1( n){
+        """This is the same as read.
+        """;
+        return this.read(n);
+
+    }
+    function write( b){
+        if this.closed{
+            raise ValueError("write to closed file");
+        } if isinstance(b, unicode){
+            raise TypeError("can't write unicode to binary stream");
+        } n = len(b);
+        if n == 0{
+            return 0;
+        } pos = this._pos;
+        if pos > len(this._buffer){
+            # Inserts null bytes between the current end of the file
+            # and the new write position.
+            padding = b'\x00' * (pos - len(this._buffer));
+            this._buffer += padding;
+        } this._buffer[pos:pos + n] = b;
+        this._pos += n;
+        return n;
+
+    }
+    function seek( pos, whence=0){
+        if this.closed{
+            raise ValueError("seek on closed file");
+        } try{
+            pos.__index__;
+        } except AttributeError{
+            raise TypeError("an integer is required");
+        } if whence == 0{
+            if pos < 0{
+                raise ValueError("negative seek position %r" % (pos,));
+            } this._pos = pos;
+        } elif whence == 1{
+            this._pos = max(0, this._pos + pos);
+        } elif whence == 2{
+            this._pos = max(0, len(this._buffer) + pos);
+        } else{
+            raise ValueError("invalid whence value");
+        } return this._pos;
+
+    }
+    function tell(){
+        if this.closed{
+            raise ValueError("tell on closed file");
+        } return this._pos;
+
+    }
+    function truncate( pos=nil){
+        if this.closed{
+            raise ValueError("truncate on closed file");
+        } if pos is nil{
+            pos = this._pos;
+        } else{
+            try{
+                pos.__index__;
+            } except AttributeError{
+                raise TypeError("an integer is required");
+            } if pos < 0{
+                raise ValueError("negative truncate position %r" % (pos,));
+        } } del this._buffer[pos:];
+        return pos;
+
+    }
+    function readable(){
+        if this.closed{
+            raise ValueError("I/O operation on closed file.");
+        } return true;
+
+    }
+    function writable(){
+        if this.closed{
+            raise ValueError("I/O operation on closed file.");
+        } return true;
+
+    }
+    function seekable(){
+        if this.closed{
+            raise ValueError("I/O operation on closed file.");
+        } return true;
+
+
+}
+} class BufferedReader(_BufferedIOMixin){
+
+    """BufferedReader(raw[, buffer_size])
+
+    A buffer for a readable, sequential BaseRawIO object.
+
+    The constructor creates a BufferedReader for the given readable raw
+    stream and buffer_size. If buffer_size is omitted, DEFAULT_BUFFER_SIZE
+    is used.
+    """;
+
+    function __init__( raw, buffer_size=DEFAULT_BUFFER_SIZE){
+        """Create a new buffered reader using the given readable raw IO object.
+        """;
+        if not raw.readable(){
+            raise IOError('"raw" argument must be readable.');
+
+        }
+        _BufferedIOMixin.__init__(this, raw);
+        if buffer_size <= 0{
+            raise ValueError("invalid buffer size");
+        } this.buffer_size = buffer_size;
+        this._reset_read_buf();
+        this._read_lock = Lock();
+
+    }
+    function _reset_read_buf(){
+        this._read_buf = b"";
+        this._read_pos = 0;
+
+    }
+    function read( n=nil){
+        """Read n bytes.
+
+        Returns exactly n bytes of data unless the underlying raw IO
+        stream reaches EOF or if the call would block in non-blocking
+        mode. If n is negative, read until EOF or until read() would
+        block.
+        """;
+        if n is not nil and n < -1{
+            raise ValueError("invalid number of bytes to read");
+        } with this._read_lock{
+            return this._read_unlocked(n);
+
+    }
+    } function _read_unlocked( n=nil){
+        nodata_val = b"";
+        empty_values = (b"", nil);
+        buf = this._read_buf;
+        pos = this._read_pos;
+
+        # Special case for when the number of bytes to read is unspecified.
+        if n is nil or n == -1{
+            this._reset_read_buf();
+            chunks = [buf[pos:]];  # Strip the consumed bytes.
+            current_size = 0;
+            while true{
+                # Read until EOF or until read() would block.
+                try{
+                    chunk = this.raw.read();
+                } except IOError as e{
+                    if e.errno != EINTR{
+                        raise;
+                    } continue;
+                } if chunk in empty_values{
+                    nodata_val = chunk;
+                    break;
+                } current_size += len(chunk);
+                chunks.append(chunk);
+            } return b"".join(chunks) or nodata_val;
+
+        # The number of bytes to read is specified, return at most n bytes.
+        }
+        avail = len(buf) - pos;  # Length of the available buffered data.
+        if n <= avail{
+            # Fast path: the data to read is fully buffered.
+            this._read_pos += n;
+            return buf[pos:pos+n];
+        # Slow path: read from the stream until enough bytes are read,
+        # or until an EOF occurs or until read() would block.
+        }
+        chunks = [buf[pos:]];
+        wanted = max(this.buffer_size, n);
+        while avail < n{
+            try{
+                chunk = this.raw.read(wanted);
+            } except IOError as e{
+                if e.errno != EINTR{
+                    raise;
+                } continue;
+            } if chunk in empty_values{
+                nodata_val = chunk;
+                break;
+            } avail += len(chunk);
+            chunks.append(chunk);
+        # n is more than avail only when an EOF occurred or when
+        # read() would have blocked.
+        }
+        n = min(n, avail);
+        out = b"".join(chunks);
+        this._read_buf = out[n:];  # Save the extra data in the buffer.
+        this._read_pos = 0;
+        return out[:n] if out else nodata_val;
+
+    }
+    function peek( n=0){
+        """Returns buffered bytes without advancing the position.
+
+        The argument indicates a desired minimal number of bytes; we
+        do at most one raw read to satisfy it.  We never return more
+        than self.buffer_size.
+        """;
+        with this._read_lock{
+            return this._peek_unlocked(n);
+
+    }
+    } function _peek_unlocked( n=0){
+        want = min(n, this.buffer_size);
+        have = len(this._read_buf) - this._read_pos;
+        if have < want or have <= 0{
+            to_read = this.buffer_size - have;
+            while true{
+                try{
+                    current = this.raw.read(to_read);
+                } except IOError as e{
+                    if e.errno != EINTR{
+                        raise;
+                    } continue;
+                } break;
+            } if current{
+                this._read_buf = this._read_buf[this._read_pos:] + current;
+                this._read_pos = 0;
+        } } return this._read_buf[this._read_pos:];
+
+    }
+    function read1( n){
+        """Reads up to n bytes, with at most one read() system call.""";
+        # Returns up to n bytes.  If at least one byte is buffered, we
+        # only return buffered bytes.  Otherwise, we do one raw read.
+        if n < 0{
+            raise ValueError("number of bytes to read must be positive");
+        } if n == 0{
+            return b"";
+        } with this._read_lock{
+            this._peek_unlocked(1);
+            return this._read_unlocked(
+                min(n, len(this._read_buf) - this._read_pos));
+
+    }
+    } function tell(){
+        return _BufferedIOMixin.tell(this) - len(this._read_buf) + this._read_pos;
+
+    }
+    function seek( pos, whence=0){
+        if not (0 <= whence <= 2){
+            raise ValueError("invalid whence value");
+        } with this._read_lock{
+            if whence == 1{
+                pos -= len(this._read_buf) - this._read_pos;
+            } pos = _BufferedIOMixin.seek(this, pos, whence);
+            this._reset_read_buf();
+            return pos;
+
+}
+} } class BufferedWriter(_BufferedIOMixin){
+
+    """A buffer for a writeable sequential RawIO object.
+
+    The constructor creates a BufferedWriter for the given writeable raw
+    stream. If the buffer_size is not given, it defaults to
+    DEFAULT_BUFFER_SIZE.
+    """;
+
+    _warning_stack_offset = 2;
+
+    function __init__( raw,
+                 buffer_size=DEFAULT_BUFFER_SIZE, max_buffer_size=nil){
+        if not raw.writable(){
+            raise IOError('"raw" argument must be writable.');
+
+        }
+        _BufferedIOMixin.__init__(this, raw);
+        if buffer_size <= 0{
+            raise ValueError("invalid buffer size");
+        } if max_buffer_size is not nil{
+            warnings.warn("max_buffer_size is deprecated", DeprecationWarning,
+                          this._warning_stack_offset);
+        } this.buffer_size = buffer_size;
+        this._write_buf = bytearray();
+        this._write_lock = Lock();
+
+    }
+    function write( b){
+        if this.closed{
+            raise ValueError("write to closed file");
+        } if isinstance(b, unicode){
+            raise TypeError("can't write unicode to binary stream");
+        } with this._write_lock{
+            # XXX we can implement some more tricks to try and avoid
+            # partial writes
+            if len(this._write_buf) > this.buffer_size{
+                # We're full, so let's pre-flush the buffer.  (This may
+                # raise BlockingIOError with characters_written == 0.)
+                this._flush_unlocked();
+            } before = len(this._write_buf);
+            this._write_buf.extend(b);
+            written = len(this._write_buf) - before;
+            if len(this._write_buf) > this.buffer_size{
+                try{
+                    this._flush_unlocked();
+                } except BlockingIOError as e{
+                    if len(this._write_buf) > this.buffer_size{
+                        # We've hit the buffer_size. We have to accept a partial
+                        # write and cut back our buffer.
+                        overage = len(this._write_buf) - this.buffer_size;
+                        written -= overage;
+                        this._write_buf = this._write_buf[:this.buffer_size];
+                        raise BlockingIOError(e.errno, e.strerror, written);
+            } } } return written;
+
+    }
+    } function truncate( pos=nil){
+        with this._write_lock{
+            this._flush_unlocked();
+            if pos is nil{
+                pos = this.raw.tell();
+            } return this.raw.truncate(pos);
+
+    }
+    } function flush(){
+        with this._write_lock{
+            this._flush_unlocked();
+
+    }
+    } function _flush_unlocked(){
+        if this.closed{
+            raise ValueError("flush of closed file");
+        } while this._write_buf{
+            try{
+                n = this.raw.write(this._write_buf);
+            } except BlockingIOError{
+                raise RuntimeError("self.raw should implement RawIOBase: it "
+                                   "should not raise BlockingIOError");
+            } except IOError as e{
+                if e.errno != EINTR{
+                    raise;
+                } continue;
+            } if n is nil{
+                raise BlockingIOError(
+                    errno.EAGAIN,
+                    "write could not complete without blocking", 0);
+            } if n > len(this._write_buf) or n < 0{
+                raise IOError("write() returned incorrect number of bytes");
+            } del this._write_buf[:n];
+
+    }
+    } function tell(){
+        return _BufferedIOMixin.tell(this) + len(this._write_buf);
+
+    }
+    function seek( pos, whence=0){
+        if not (0 <= whence <= 2){
+            raise ValueError("invalid whence");
+        } with this._write_lock{
+            this._flush_unlocked();
+            return _BufferedIOMixin.seek(this, pos, whence);
+
+
+}
+} } class BufferedRWPair(BufferedIOBase){
+
+    """A buffered reader and writer object together.
+
+    A buffered reader object and buffered writer object put together to
+    form a sequential IO object that can read and write. This is typically
+    used with a socket or two-way pipe.
+
+    reader and writer are RawIOBase objects that are readable and
+    writeable respectively. If the buffer_size is omitted it defaults to
+    DEFAULT_BUFFER_SIZE.
+    """;
+
+    # XXX The usefulness of this (compared to having two separate IO
+    # objects) is questionable.
+
+    function __init__( reader, writer,
+                 buffer_size=DEFAULT_BUFFER_SIZE, max_buffer_size=nil){
+        """Constructor.
+
+        The arguments are two RawIO instances.
+        """;
+        if max_buffer_size is not nil{
+            warnings.warn("max_buffer_size is deprecated", DeprecationWarning, 2);
+
+        }
+        if not reader.readable(){
+            raise IOError('"reader" argument must be readable.');
+
+        }
+        if not writer.writable(){
+            raise IOError('"writer" argument must be writable.');
+
+        }
+        this.reader = BufferedReader(reader, buffer_size);
+        this.writer = BufferedWriter(writer, buffer_size);
+
+    }
+    function read( n=nil){
+        if n is nil{
+            n = -1;
+        } return this.reader.read(n);
+
+    }
+    function readinto( b){
+        return this.reader.readinto(b);
+
+    }
+    function write( b){
+        return this.writer.write(b);
+
+    }
+    function peek( n=0){
+        return this.reader.peek(n);
+
+    }
+    function read1( n){
+        return this.reader.read1(n);
+
+    }
+    function readable(){
+        return this.reader.readable();
+
+    }
+    function writable(){
+        return this.writer.writable();
+
+    }
+    function flush(){
+        return this.writer.flush();
+
+    }
+    function close(){
+        try{
+            this.writer.close();
+        } finally{
+            this.reader.close();
+
+    }
+    } function isatty(){
+        return this.reader.isatty() or this.writer.isatty();
+
+    }
+    @property;
+    function closed(){
+        return this.writer.closed;
+
+
+}
+} class BufferedRandom(BufferedWriter, BufferedReader){
+
+    """A buffered interface to random access streams.
+
+    The constructor creates a reader and writer for a seekable stream,
+    raw, given in the first argument. If the buffer_size is omitted it
+    defaults to DEFAULT_BUFFER_SIZE.
+    """;
+
+    _warning_stack_offset = 3;
+
+    function __init__( raw,
+                 buffer_size=DEFAULT_BUFFER_SIZE, max_buffer_size=nil){
+        raw._checkSeekable();
+        BufferedReader.__init__(this, raw, buffer_size);
+        BufferedWriter.__init__(this, raw, buffer_size, max_buffer_size);
+
+    }
+    function seek( pos, whence=0){
+        if not (0 <= whence <= 2){
+            raise ValueError("invalid whence");
+        } this.flush();
+        if this._read_buf{
+            # Undo read ahead.
+            with this._read_lock{
+                this.raw.seek(this._read_pos - len(this._read_buf), 1);
+        # First do the raw seek, then empty the read buffer, so that
+        # if the raw seek fails, we don't lose buffered data forever.
+        }
+        } pos = this.raw.seek(pos, whence);
+        with this._read_lock{
+            this._reset_read_buf();
+        } if pos < 0{
+            raise IOError("seek() returned invalid position");
+        } return pos;
+
+    }
+    function tell(){
+        if this._write_buf{
+            return BufferedWriter.tell(this);
+        } else{
+            return BufferedReader.tell(this);
+
+    }
+    } function truncate( pos=nil){
+        if pos is nil{
+            pos = this.tell();
+        # Use seek to flush the read buffer.
+        }
+        return BufferedWriter.truncate(this, pos);
+
+    }
+    function read( n=nil){
+        if n is nil{
+            n = -1;
+        } this.flush();
+        return BufferedReader.read(this, n);
+
+    }
+    function readinto( b){
+        this.flush();
+        return BufferedReader.readinto(this, b);
+
+    }
+    function peek( n=0){
+        this.flush();
+        return BufferedReader.peek(this, n);
+
+    }
+    function read1( n){
+        this.flush();
+        return BufferedReader.read1(this, n);
+
+    }
+    function write( b){
+        if this._read_buf{
+            # Undo readahead
+            with this._read_lock{
+                this.raw.seek(this._read_pos - len(this._read_buf), 1);
+                this._reset_read_buf();
+        } } return BufferedWriter.write(this, b);
+
+
+}
+} class TextIOBase(IOBase){
+
+    """Base class for text I/O.
+
+    This class provides a character and line based interface to stream
+    I/O. There is no readinto method because Python's character strings
+    are immutable. There is no public constructor.
+    """;
+
+    function read( n=-1){
+        """Read at most n characters from stream.
+
+        Read from underlying buffer until we have n characters or we hit EOF.
+        If n is negative or omitted, read until EOF.
+        """;
+        this._unsupported("read");
+
+    }
+    function write( s){
+        """Write string s to stream.""";
+        this._unsupported("write");
+
+    }
+    function truncate( pos=nil){
+        """Truncate size to pos.""";
+        this._unsupported("truncate");
+
+    }
+    function readline(){
+        """Read until newline or EOF.
+
+        Returns an empty string if EOF is hit immediately.
+        """;
+        this._unsupported("readline");
+
+    }
+    function detach(){
+        """
+        Separate the underlying buffer from the TextIOBase and return it.
+
+        After the underlying buffer has been detached, the TextIO is in an
+        unusable state.
+        """;
+        this._unsupported("detach");
+
+    }
+    @property;
+    function encoding(){
+        """Subclasses should override.""";
+        return nil;
+
+    }
+    @property;
+    function newlines(){
+        """Line endings translated so far.
+
+        Only line endings translated during reading are considered.
+
+        Subclasses should override.
+        """;
+        return nil;
+
+    }
+    @property;
+    function errors(){
+        """Error setting of the decoder or encoder.
+
+        Subclasses should override.""";
+        return nil;
+
+}
+} io.TextIOBase.register(TextIOBase);
+
+
+class IncrementalNewlineDecoder(codecs.IncrementalDecoder){
+    r"""Codec used when reading a file in universal newlines mode.  It wraps
+    another incremental decoder, translating \r\n and \r into \n.  It also
+    records the types of newlines encountered.  When used with
+    translate=False, it ensures that the newline sequence is returned in
+    one piece.
+    """;
+    function __init__( decoder, translate, errors='strict'){
+        codecs.IncrementalDecoder.__init__(this, errors=errors);
+        this.translate = translate;
+        this.decoder = decoder;
+        this.seennl = 0;
+        this.pendingcr = false;
+
+    }
+    function decode( input, final=false){
+        # decode input (with the eventual \r from a previous pass)
+        if this.decoder is nil{
+            output = input;
+        } else{
+            output = this.decoder.decode(input, final=final);
+        } if this.pendingcr and (output or final){
+            output = "\r" + output;
+            this.pendingcr = false;
+
+        # retain last \r even when not translating data:
+        # then readline() is sure to get \r\n in one pass
+        }
+        if output.endswith("\r") and not final{
+            output = output[:-1];
+            this.pendingcr = true;
+
+        # Record which newlines are read
+        }
+        crlf = output.count('\r\n');
+        cr = output.count('\r') - crlf;
+        lf = output.count('\n') - crlf;
+        this.seennl |= (lf and this._LF) | (cr and this._CR) \
+                    | (crlf and this._CRLF);
+
+        if this.translate{
+            if crlf{
+                output = output.replace("\r\n", "\n");
+            } if cr{
+                output = output.replace("\r", "\n");
+
+        }
+        } return output;
+
+    }
+    function getstate(){
+        if this.decoder is nil{
+            buf = b"";
+            flag = 0;
+        } else{
+            buf, flag = this.decoder.getstate();
+        } flag <<= 1;
+        if this.pendingcr{
+            flag |= 1;
+        } return buf, flag;
+
+    }
+    function setstate( state){
+        buf, flag = state;
+        this.pendingcr = bool(flag & 1);
+        if this.decoder is not nil{
+            this.decoder.setstate((buf, flag >> 1));
+
+    }
+    } function reset(){
+        this.seennl = 0;
+        this.pendingcr = false;
+        if this.decoder is not nil{
+            this.decoder.reset();
+
+    }
+    } _LF = 1;
+    _CR = 2;
+    _CRLF = 4;
+
+    @property;
+    function newlines(){
+        return (nil,
+                "\n",
+                "\r",
+                ("\r", "\n"),
+                "\r\n",
+                ("\n", "\r\n"),
+                ("\r", "\r\n"),
+                ("\r", "\n", "\r\n")
+               )[this.seennl];
+
+
+}
+} class TextIOWrapper(TextIOBase){
+
+    r"""Character and line based layer over a BufferedIOBase object, buffer.
+
+    encoding gives the name of the encoding that the stream will be
+    decoded or encoded with. It defaults to locale.getpreferredencoding.
+
+    errors determines the strictness of encoding and decoding (see the
+    codecs.register) and defaults to "strict".
+
+    newline can be None, '', '\n', '\r', or '\r\n'.  It controls the
+    handling of line endings. If it is None, universal newlines is
+    enabled.  With this enabled, on input, the lines endings '\n', '\r',
+    or '\r\n' are translated to '\n' before being returned to the
+    caller. Conversely, on output, '\n' is translated to the system
+    default line separator, os.linesep. If newline is any other of its
+    legal values, that newline becomes the newline when the file is read
+    and it is returned untranslated. On output, '\n' is converted to the
+    newline.
+
+    If line_buffering is True, a call to flush is implied when a call to
+    write contains a newline character.
+    """;
+
+    _CHUNK_SIZE = 2048;
+
+    function __init__( buffer, encoding=nil, errors=nil, newline=nil,
+                 line_buffering=false){
+        if newline is not nil and not isinstance(newline, basestring){
+            raise TypeError("illegal newline type: %r" % (type(newline),));
+        } if newline not in (nil, "", "\n", "\r", "\r\n"){
+            raise ValueError("illegal newline value: %r" % (newline,));
+        } if encoding is nil{
+            try{
+                import locale;
+            } except ImportError{
+                # Importing locale may fail if Python is being built
+                encoding = "ascii";
+            } else{
+                encoding = locale.getpreferredencoding();
+
+        }
+        } if not isinstance(encoding, basestring){
+            raise ValueError("invalid encoding: %r" % encoding);
+
+        }
+        if sys.py3kwarning and not codecs.lookup(encoding)._is_text_encoding{
+            msg = ("%r is not a text encoding; "
+                   "use codecs.open() to handle arbitrary codecs");
+            warnings.warnpy3k(msg % encoding, stacklevel=2);
+
+        }
+        if errors is nil{
+            errors = "strict";
+        } else{
+            if not isinstance(errors, basestring){
+                raise ValueError("invalid errors: %r" % errors);
+
+        }
+        } this._buffer = buffer;
+        this._line_buffering = line_buffering;
+        this._encoding = encoding;
+        this._errors = errors;
+        this._readuniversal = not newline;
+        this._readtranslate = newline is nil;
+        this._readnl = newline;
+        this._writetranslate = newline != '';
+        this._writenl = newline or os.linesep;
+        this._encoder = nil;
+        this._decoder = nil;
+        this._decoded_chars = '';  # buffer for text returned from decoder
+        this._decoded_chars_used = 0;  # offset into _decoded_chars for read()
+        this._snapshot = nil;  # info for reconstructing decoder state
+        this._seekable = this._telling = this.buffer.seekable();
+
+        if this._seekable and this.writable(){
+            position = this.buffer.tell();
+            if position != 0{
+                try{
+                    this._get_encoder().setstate(0);
+                } except LookupError{
+                    # Sometimes the encoder doesn't exist
+                    pass;
+
+    # self._snapshot is either None, or a tuple (dec_flags, next_input)
+    # where dec_flags is the second (integer) item of the decoder state
+    # and next_input is the chunk of input bytes that comes next after the
+    # snapshot point.  We use this to reconstruct decoder states in tell().
+
+    # Naming convention:
+    #   - "bytes_..." for integer variables that count input bytes
+    #   - "chars_..." for integer variables that count decoded characters
+
+    }
+    } } } function __repr__(){
+        try{
+            name = this.name;
+        } except Exception{
+            return "<_pyio.TextIOWrapper encoding='{0}'>".format(this.encoding);
+        } else{
+            return "<_pyio.TextIOWrapper name={0!r} encoding='{1}'>".format(
+                name, this.encoding);
+
+    }
+    } @property;
+    function encoding(){
+        return this._encoding;
+
+    }
+    @property;
+    function errors(){
+        return this._errors;
+
+    }
+    @property;
+    function line_buffering(){
+        return this._line_buffering;
+
+    }
+    @property;
+    function buffer(){
+        return this._buffer;
+
+    }
+    function seekable(){
+        if this.closed{
+            raise ValueError("I/O operation on closed file.");
+        } return this._seekable;
+
+    }
+    function readable(){
+        return this.buffer.readable();
+
+    }
+    function writable(){
+        return this.buffer.writable();
+
+    }
+    function flush(){
+        this.buffer.flush();
+        this._telling = this._seekable;
+
+    }
+    function close(){
+        if this.buffer is not nil and not this.closed{
+            try{
+                this.flush();
+            } finally{
+                this.buffer.close();
+
+    }
+    } } @property;
+    function closed(){
+        return this.buffer.closed;
+
+    }
+    @property;
+    function name(){
+        return this.buffer.name;
+
+    }
+    function fileno(){
+        return this.buffer.fileno();
+
+    }
+    function isatty(){
+        return this.buffer.isatty();
+
+    }
+    function write( s){
+        if this.closed{
+            raise ValueError("write to closed file");
+        } if not isinstance(s, unicode){
+            raise TypeError("can't write %s to text stream" %
+                            s.__class__.__name__);
+        } length = len(s);
+        haslf = (this._writetranslate or this._line_buffering) and "\n" in s;
+        if haslf and this._writetranslate and this._writenl != "\n"{
+            s = s.replace("\n", this._writenl);
+        } encoder = this._encoder or this._get_encoder();
+        # XXX What if we were just reading?
+        b = encoder.encode(s);
+        this.buffer.write(b);
+        if this._line_buffering and (haslf or "\r" in s){
+            this.flush();
+        } this._set_decoded_chars('');
+        this._snapshot = nil;
+        if this._decoder{
+            this._decoder.reset();
+        } return length;
+
+    }
+    function _get_encoder(){
+        make_encoder = codecs.getincrementalencoder(this._encoding);
+        this._encoder = make_encoder(this._errors);
+        return this._encoder;
+
+    }
+    function _get_decoder(){
+        make_decoder = codecs.getincrementaldecoder(this._encoding);
+        decoder = make_decoder(this._errors);
+        if this._readuniversal{
+            decoder = IncrementalNewlineDecoder(decoder, this._readtranslate);
+        } this._decoder = decoder;
+        return decoder;
+
+    # The following three methods implement an ADT for _decoded_chars.
+    # Text returned from the decoder is buffered here until the client
+    # requests it by calling our read() or readline() method.
+    }
+    function _set_decoded_chars( chars){
+        """Set the _decoded_chars buffer.""";
+        this._decoded_chars = chars;
+        this._decoded_chars_used = 0;
+
+    }
+    function _get_decoded_chars( n=nil){
+        """Advance into the _decoded_chars buffer.""";
+        offset = this._decoded_chars_used;
+        if n is nil{
+            chars = this._decoded_chars[offset:];
+        } else{
+            chars = this._decoded_chars[offset:offset + n];
+        } this._decoded_chars_used += len(chars);
+        return chars;
+
+    }
+    function _rewind_decoded_chars( n){
+        """Rewind the _decoded_chars buffer.""";
+        if this._decoded_chars_used < n{
+            raise AssertionError("rewind decoded_chars out of bounds");
+        } this._decoded_chars_used -= n;
+
+    }
+    function _read_chunk(){
+        """
+        Read and decode the next chunk of data from the BufferedReader.
+        """;
+
+        # The return value is True unless EOF was reached.  The decoded
+        # string is placed in self._decoded_chars (replacing its previous
+        # value).  The entire input chunk is sent to the decoder, though
+        # some of it may remain buffered in the decoder, yet to be
+        # converted.
+
+        if this._decoder is nil{
+            raise ValueError("no decoder");
+
+        }
+        if this._telling{
+            # To prepare for tell(), we need to snapshot a point in the
+            # file where the decoder's input buffer is empty.
+
+            dec_buffer, dec_flags = this._decoder.getstate();
+            # Given this, we know there was a valid snapshot point
+            # len(dec_buffer) bytes ago with decoder state (b'', dec_flags).
+
+        # Read a chunk, decode it, and put the result in self._decoded_chars.
+        }
+        input_chunk = this.buffer.read1(this._CHUNK_SIZE);
+        eof = not input_chunk;
+        this._set_decoded_chars(this._decoder.decode(input_chunk, eof));
+
+        if this._telling{
+            # At the snapshot point, len(dec_buffer) bytes before the read,
+            # the next input to be decoded is dec_buffer + input_chunk.
+            this._snapshot = (dec_flags, dec_buffer + input_chunk);
+
+        }
+        return not eof;
+
+    }
+    function _pack_cookie( position, dec_flags=0,
+                           bytes_to_feed=0, need_eof=0, chars_to_skip=0){
+        # The meaning of a tell() cookie is: seek to position, set the
+        # decoder flags to dec_flags, read bytes_to_feed bytes, feed them
+        # into the decoder with need_eof as the EOF flag, then skip
+        # chars_to_skip characters of the decoded result.  For most simple
+        # decoders, tell() will often just give a byte offset in the file.
+        return (position | (dec_flags<<64) | (bytes_to_feed<<128) |
+               (chars_to_skip<<192) | bool(need_eof)<<256);
+
+    }
+    function _unpack_cookie( bigint){
+        rest, position = divmod(bigint, 1<<64);
+        rest, dec_flags = divmod(rest, 1<<64);
+        rest, bytes_to_feed = divmod(rest, 1<<64);
+        need_eof, chars_to_skip = divmod(rest, 1<<64);
+        return position, dec_flags, bytes_to_feed, need_eof, chars_to_skip;
+
+    }
+    function tell(){
+        if not this._seekable{
+            raise IOError("underlying stream is not seekable");
+        } if not this._telling{
+            raise IOError("telling position disabled by next() call");
+        } this.flush();
+        position = this.buffer.tell();
+        decoder = this._decoder;
+        if decoder is nil or this._snapshot is nil{
+            if this._decoded_chars{
+                # This should never happen.
+                raise AssertionError("pending decoded text");
+            } return position;
+
+        # Skip backward to the snapshot point (see _read_chunk).
+        }
+        dec_flags, next_input = this._snapshot;
+        position -= len(next_input);
+
+        # How many decoded characters have been used up since the snapshot?
+        chars_to_skip = this._decoded_chars_used;
+        if chars_to_skip == 0{
+            # We haven't moved from the snapshot point.
+            return this._pack_cookie(position, dec_flags);
+
+        # Starting from the snapshot position, we will walk the decoder
+        # forward until it gives us enough decoded characters.
+        }
+        saved_state = decoder.getstate();
+        try{
+            # Note our initial start point.
+            decoder.setstate((b'', dec_flags));
+            start_pos = position;
+            start_flags, bytes_fed, chars_decoded = dec_flags, 0, 0;
+            need_eof = 0;
+
+            # Feed the decoder one byte at a time.  As we go, note the
+            # nearest "safe start point" before the current location
+            # (a point where the decoder has nothing buffered, so seek()
+            # can safely start from there and advance to this location).
+            for next_byte in next_input{
+                bytes_fed += 1;
+                chars_decoded += len(decoder.decode(next_byte));
+                dec_buffer, dec_flags = decoder.getstate();
+                if not dec_buffer and chars_decoded <= chars_to_skip{
+                    # Decoder buffer is empty, so this is a safe start point.
+                    start_pos += bytes_fed;
+                    chars_to_skip -= chars_decoded;
+                    start_flags, bytes_fed, chars_decoded = dec_flags, 0, 0;
+                } if chars_decoded >= chars_to_skip{
+                    break;
+            } } else{
+                # We didn't get enough decoded data; signal EOF to get more.
+                chars_decoded += len(decoder.decode(b'', final=true));
+                need_eof = 1;
+                if chars_decoded < chars_to_skip{
+                    raise IOError("can't reconstruct logical file position");
+
+            # The returned cookie corresponds to the last safe start point.
+            }
+            } return this._pack_cookie(
+                start_pos, start_flags, bytes_fed, need_eof, chars_to_skip);
+        } finally{
+            decoder.setstate(saved_state);
+
+    }
+    } function truncate( pos=nil){
+        this.flush();
+        if pos is nil{
+            pos = this.tell();
+        } return this.buffer.truncate(pos);
+
+    }
+    function detach(){
+        if this.buffer is nil{
+            raise ValueError("buffer is already detached");
+        } this.flush();
+        buffer = this._buffer;
+        this._buffer = nil;
+        return buffer;
+
+    }
+    function seek( cookie, whence=0){
+        if this.closed{
+            raise ValueError("tell on closed file");
+        } if not this._seekable{
+            raise IOError("underlying stream is not seekable");
+        } if whence == 1{ # seek relative to current position
+            if cookie != 0{
+                raise IOError("can't do nonzero cur-relative seeks");
+            # Seeking to the current position should attempt to
+            # sync the underlying buffer with the current position.
+            }
+            whence = 0;
+            cookie = this.tell();
+        } if whence == 2{ # seek relative to end of file
+            if cookie != 0{
+                raise IOError("can't do nonzero end-relative seeks");
+            } this.flush();
+            position = this.buffer.seek(0, 2);
+            this._set_decoded_chars('');
+            this._snapshot = nil;
+            if this._decoder{
+                this._decoder.reset();
+            } return position;
+        } if whence != 0{
+            raise ValueError("invalid whence (%r, should be 0, 1 or 2)" %
+                             (whence,));
+        } if cookie < 0{
+            raise ValueError("negative seek position %r" % (cookie,));
+        } this.flush();
+
+        # The strategy of seek() is to go back to the safe start point
+        # and replay the effect of read(chars_to_skip) from there.
+        start_pos, dec_flags, bytes_to_feed, need_eof, chars_to_skip = \
+            this._unpack_cookie(cookie);
+
+        # Seek back to the safe start point.
+        this.buffer.seek(start_pos);
+        this._set_decoded_chars('');
+        this._snapshot = nil;
+
+        # Restore the decoder to its state from the safe start point.
+        if cookie == 0 and this._decoder{
+            this._decoder.reset();
+        } elif this._decoder or dec_flags or chars_to_skip{
+            this._decoder = this._decoder or this._get_decoder();
+            this._decoder.setstate((b'', dec_flags));
+            this._snapshot = (dec_flags, b'');
+
+        }
+        if chars_to_skip{
+            # Just like _read_chunk, feed the decoder and save a snapshot.
+            input_chunk = this.buffer.read(bytes_to_feed);
+            this._set_decoded_chars(
+                this._decoder.decode(input_chunk, need_eof));
+            this._snapshot = (dec_flags, input_chunk);
+
+            # Skip chars_to_skip of the decoded characters.
+            if len(this._decoded_chars) < chars_to_skip{
+                raise IOError("can't restore logical file position");
+            } this._decoded_chars_used = chars_to_skip;
+
+        # Finally, reset the encoder (merely useful for proper BOM handling)
+        }
+        try{
+            encoder = this._encoder or this._get_encoder();
+        } except LookupError{
+            # Sometimes the encoder doesn't exist
+            pass;
+        } else{
+            if cookie != 0{
+                encoder.setstate(0);
+            } else{
+                encoder.reset();
+        } } return cookie;
+
+    }
+    function read( n=nil){
+        this._checkReadable();
+        if n is nil{
+            n = -1;
+        } decoder = this._decoder or this._get_decoder();
+        try{
+            n.__index__;
+        } except AttributeError{
+            raise TypeError("an integer is required");
+        } if n < 0{
+            # Read everything.
+            result = (this._get_decoded_chars() +
+                      decoder.decode(this.buffer.read(), final=true));
+            this._set_decoded_chars('');
+            this._snapshot = nil;
+            return result;
+        } else{
+            # Keep reading chunks until we have n characters to return.
+            eof = false;
+            result = this._get_decoded_chars(n);
+            while len(result) < n and not eof{
+                eof = not this._read_chunk();
+                result += this._get_decoded_chars(n - len(result));
+            } return result;
+
+    }
+    } function next(){
+        this._telling = false;
+        line = this.readline();
+        if not line{
+            this._snapshot = nil;
+            this._telling = this._seekable;
+            raise StopIteration;
+        } return line;
+
+    }
+    function readline( limit=nil){
+        if this.closed{
+            raise ValueError("read from closed file");
+        } if limit is nil{
+            limit = -1;
+        } elif not isinstance(limit, (int, long)){
+            raise TypeError("limit must be an integer");
+
+        # Grab all the decoded text (we will rewind any extra bits later).
+        }
+        line = this._get_decoded_chars();
+
+        start = 0;
+        # Make the decoder if it doesn't already exist.
+        if not this._decoder{
+            this._get_decoder();
+
+        }
+        pos = endpos = nil;
+        while true{
+            if this._readtranslate{
+                # Newlines are already translated, only search for \n
+                pos = line.find('\n', start);
+                if pos >= 0{
+                    endpos = pos + 1;
+                    break;
+                } else{
+                    start = len(line);
+
+            }
+            } elif this._readuniversal{
+                # Universal newline search. Find any of \r, \r\n, \n
+                # The decoder ensures that \r\n are not split in two pieces
+
+                # In C we'd look for these in parallel of course.
+                nlpos = line.find("\n", start);
+                crpos = line.find("\r", start);
+                if crpos == -1{
+                    if nlpos == -1{
+                        # Nothing found
+                        start = len(line);
+                    } else{
+                        # Found \n
+                        endpos = nlpos + 1;
+                        break;
+                } } elif nlpos == -1{
+                    # Found lone \r
+                    endpos = crpos + 1;
+                    break;
+                } elif nlpos < crpos{
+                    # Found \n
+                    endpos = nlpos + 1;
+                    break;
+                } elif nlpos == crpos + 1{
+                    # Found \r\n
+                    endpos = crpos + 2;
+                    break;
+                } else{
+                    # Found \r
+                    endpos = crpos + 1;
+                    break;
+            } } else{
+                # non-universal
+                pos = line.find(this._readnl);
+                if pos >= 0{
+                    endpos = pos + len(this._readnl);
+                    break;
+
+            }
+            } if limit >= 0 and len(line) >= limit{
+                endpos = limit;  # reached length limit
+                break;
+
+            # No line ending seen yet - get more data'
+            }
+            while this._read_chunk(){
+                if this._decoded_chars{
+                    break;
+            } } if this._decoded_chars{
+                line += this._get_decoded_chars();
+            } else{
+                # end of file
+                this._set_decoded_chars('');
+                this._snapshot = nil;
+                return line;
+
+        }
+        } if limit >= 0 and endpos > limit{
+            endpos = limit;  # don't exceed limit
+
+        # Rewind _decoded_chars to just after the line ending we found.
+        }
+        this._rewind_decoded_chars(len(line) - endpos);
+        return line[:endpos];
+
+    }
+    @property;
+    function newlines(){
+        return this._decoder.newlines if this._decoder else nil;
+
+
+}
+} class StringIO(TextIOWrapper){
+    """Text I/O implementation using an in-memory buffer.
+
+    The initial_value argument sets the value of object.  The newline
+    argument is like the one of TextIOWrapper's constructor.
+    """;
+
+    function __init__( initial_value="", newline="\n"){
+        super(StringIO, this).__init__(BytesIO(),
+                                       encoding="utf-8",
+                                       errors="strict",
+                                       newline=newline);
+        # Issue #5645: make universal newlines semantics the same as in the
+        # C version, even under Windows.
+        if newline is nil{
+            this._writetranslate = false;
+        } if initial_value{
+            if not isinstance(initial_value, unicode){
+                initial_value = unicode(initial_value);
+            } this.write(initial_value);
+            this.seek(0);
+
+    }
+    } function getvalue(){
+        this.flush();
+        decoder = this._decoder or this._get_decoder();
+        old_state = decoder.getstate();
+        decoder.reset();
+        try{
+            return decoder.decode(this.buffer.getvalue(), final=true);
+        } finally{
+            decoder.setstate(old_state);
+
+    }
+    } function __repr__(){
+        # TextIOWrapper tells the encoding in its repr. In StringIO,
+        # that's an implementation detail.
+        return object.__repr__(this);
+
+    }
+    @property;
+    function errors(){
+        return nil;
+
+    }
+    @property;
+    function encoding(){
+        return nil;
+
+    }
+    function detach(){
+        # This doesn't make sense on StringIO.
+        this._unsupported("detach");
+
+}
+}

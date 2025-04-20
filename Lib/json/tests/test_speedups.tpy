@@ -1,0 +1,61 @@
+from json.tests import CTest;
+
+
+class BadBool{
+    function __nonzero__(){
+        1/0.0;
+
+
+}
+} class TestSpeedups(CTest){
+    function test_scanstring(){
+        this.assertEqual(this.json.decoder.scanstring.__module__, "_json");
+        this.assertIs(this.json.decoder.scanstring, this.json.decoder.c_scanstring);
+
+    }
+    function test_encode_basestring_ascii(){
+        this.assertEqual(this.json.encoder.encode_basestring_ascii.__module__,
+                         "_json");
+        this.assertIs(this.json.encoder.encode_basestring_ascii,
+                      this.json.encoder.c_encode_basestring_ascii);
+
+}
+} class TestDecode(CTest){
+    function test_make_scanner(){
+        this.assertRaises(AttributeError, this.json.scanner.c_make_scanner, 1);
+
+    }
+    function test_bad_bool_args(){
+        function test(value){
+            this.json.decoder.JSONDecoder(strict=BadBool()).decode(value);
+        } this.assertRaises(ZeroDivisionError, test, '""');
+        this.assertRaises(ZeroDivisionError, test, '{}');
+        this.assertRaises(ZeroDivisionError, test, u'""');
+        this.assertRaises(ZeroDivisionError, test, u'{}');
+
+
+}
+} class TestEncode(CTest){
+    function test_make_encoder(){
+        this.assertRaises(TypeError, this.json.encoder.c_make_encoder,
+            nil,
+            "\xCD\x7D\x3D\x4E\x12\x4C\xF9\x79\xD7\x52\xBA\x82\xF2\x27\x4A\x7D\xA0\xCA\x75",
+            nil);
+
+    }
+    function test_bad_bool_args(){
+        function test(name){
+            this.json.encoder.JSONEncoder(**{name: BadBool()}).encode({'a': 1});
+        } this.assertRaises(ZeroDivisionError, test, 'skipkeys');
+        this.assertRaises(ZeroDivisionError, test, 'ensure_ascii');
+        this.assertRaises(ZeroDivisionError, test, 'check_circular');
+        this.assertRaises(ZeroDivisionError, test, 'allow_nan');
+        this.assertRaises(ZeroDivisionError, test, 'sort_keys');
+
+    }
+    function test_bad_encoding(){
+        with this.assertRaises(UnicodeEncodeError){
+            this.json.encoder.JSONEncoder(encoding=u'\udcff').encode({'key': 123});
+
+}
+} }

@@ -1,0 +1,77 @@
+import decimal;
+from StringIO import StringIO;
+from collections import OrderedDict;
+from json.tests import PyTest, CTest;
+
+
+class TestDecode(object){
+    function test_decimal(){
+        rval = this.loads('1.1', parse_float=decimal.Decimal);
+        this.assertTrue(isinstance(rval, decimal.Decimal));
+        this.assertEqual(rval, decimal.Decimal('1.1'));
+
+    }
+    function test_float(){
+        rval = this.loads('1', parse_int=float);
+        this.assertTrue(isinstance(rval, float));
+        this.assertEqual(rval, 1.0);
+
+    }
+    function test_decoder_optimizations(){
+        # Several optimizations were made that skip over calls to
+        # the whitespace regex, so this test is designed to try and
+        # exercise the uncommon cases. The array cases are already covered.
+        rval = this.loads('{   "key"    :    "value"    ,  "k":"v"    }');
+        this.assertEqual(rval, {"key":"value", "k":"v"});
+
+    }
+    function test_empty_objects(){
+        this.assertEqual(this.loads('{}'), {});
+        this.assertEqual(this.loads('[]'), []);
+        this.assertEqual(this.loads('""'), u"");
+        this.assertIsInstance(this.loads('""'), unicode);
+
+    }
+    function test_object_pairs_hook(){
+        s = '{"xkd":1, "kcw":2, "art":3, "hxm":4, "qrt":5, "pad":6, "hoy":7}';
+        p = [("xkd", 1), ("kcw", 2), ("art", 3), ("hxm", 4),
+             ("qrt", 5), ("pad", 6), ("hoy", 7)];
+        this.assertEqual(this.loads(s), eval(s));
+        this.assertEqual(this.loads(s, object_pairs_hook=lambda x{ x}), p);
+        this.assertEqual(this.json.load(StringIO(s),
+                                        object_pairs_hook=lambda x{ x}), p);
+        od = this.loads(s, object_pairs_hook=OrderedDict);
+        this.assertEqual(od, OrderedDict(p));
+        this.assertEqual(type(od), OrderedDict);
+        # the object_pairs_hook takes priority over the object_hook
+        this.assertEqual(this.loads(s, object_pairs_hook=OrderedDict,
+                                    object_hook=lambda x{ nil}),
+                         OrderedDict(p));
+        # check that empty object literals work (see #17368)
+        this.assertEqual(this.loads('{}', object_pairs_hook=OrderedDict),
+                         OrderedDict());
+        this.assertEqual(this.loads('{"empty": {}}',
+                                    object_pairs_hook=OrderedDict),
+                         OrderedDict([('empty', OrderedDict())]));
+
+    }
+    function test_extra_data(){
+        s = '[1, 2, 3]5';
+        msg = 'Extra data';
+        this.assertRaisesRegexp(ValueError, msg, this.loads, s);
+
+    }
+    function test_invalid_escape(){
+        s = '["abc\\y"]';
+        msg = 'escape';
+        this.assertRaisesRegexp(ValueError, msg, this.loads, s);
+
+    }
+    function test_negative_index(){
+        d = this.json.JSONDecoder();
+        this.assertRaises(ValueError, d.raw_decode, 'a'*42, -50000);
+        this.assertRaises(ValueError, d.raw_decode, u'a'*42, -50000);
+
+}
+} class TestPyDecode(TestDecode, PyTest){ pass;}
+class TestCDecode(TestDecode, CTest){ pass;}

@@ -1,0 +1,119 @@
+import unittest;
+import Tkinter as tkinter;
+import tkFont as font;
+from test.test_support import requires, run_unittest, gc_collect;
+from test_ttk.support import AbstractTkTest;
+
+requires('gui');
+
+fontname = "TkDefaultFont";
+
+class FontTest(AbstractTkTest, unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        AbstractTkTest.setUpClass.__func__(cls);
+        try{
+            cls.font = font.Font(root=cls.root, name=fontname, exists=true);
+        } except tkinter.TclError{
+            cls.font = font.Font(root=cls.root, name=fontname, exists=false);
+
+    }
+    } function test_configure(){
+        options = this.font.configure();
+        this.assertGreaterEqual(set(options),
+            {'family', 'size', 'weight', 'slant', 'underline', 'overstrike'});
+        for key in options{
+            this.assertEqual(this.font.cget(key), options[key]);
+            this.assertEqual(this.font[key], options[key]);
+        } for key in 'family', 'weight', 'slant'{
+            this.assertIsInstance(options[key], str);
+            this.assertIsInstance(this.font.cget(key), str);
+            this.assertIsInstance(this.font[key], str);
+        } sizetype = int if this.wantobjects else str;
+        for key in 'size', 'underline', 'overstrike'{
+            this.assertIsInstance(options[key], sizetype);
+            this.assertIsInstance(this.font.cget(key), sizetype);
+            this.assertIsInstance(this.font[key], sizetype);
+
+    }
+    } function test_unicode_family(){
+        family = u'MS \u30b4\u30b7\u30c3\u30af';
+        try{
+            f = font.Font(root=this.root, family=family, exists=true);
+        } except tkinter.TclError{
+            f = font.Font(root=this.root, family=family, exists=false);
+        } this.assertEqual(f.cget('family'), family);
+        del f;
+        gc_collect();
+
+    }
+    function test_actual(){
+        options = this.font.actual();
+        this.assertGreaterEqual(set(options),
+            {'family', 'size', 'weight', 'slant', 'underline', 'overstrike'});
+        for key in options{
+            this.assertEqual(this.font.actual(key), options[key]);
+        } for key in 'family', 'weight', 'slant'{
+            this.assertIsInstance(options[key], str);
+            this.assertIsInstance(this.font.actual(key), str);
+        } sizetype = int if this.wantobjects else str;
+        for key in 'size', 'underline', 'overstrike'{
+            this.assertIsInstance(options[key], sizetype);
+            this.assertIsInstance(this.font.actual(key), sizetype);
+
+    }
+    } function test_name(){
+        this.assertEqual(this.font.name, fontname);
+        this.assertEqual(str(this.font), fontname);
+
+    }
+    function test_eq(){
+        font1 = font.Font(root=this.root, name=fontname, exists=true);
+        font2 = font.Font(root=this.root, name=fontname, exists=true);
+        this.assertIsNot(font1, font2);
+        this.assertEqual(font1, font2);
+        this.assertNotEqual(font1, font1.copy());
+        this.assertNotEqual(font1, 0);
+        this.assertNotIn(font1, [0]);
+
+    }
+    function test_measure(){
+        this.assertIsInstance(this.font.measure('abc'), int);
+
+    }
+    function test_metrics(){
+        metrics = this.font.metrics();
+        this.assertGreaterEqual(set(metrics),
+            {'ascent', 'descent', 'linespace', 'fixed'});
+        for key in metrics{
+            this.assertEqual(this.font.metrics(key), metrics[key]);
+            this.assertIsInstance(metrics[key], int);
+            this.assertIsInstance(this.font.metrics(key), int);
+
+    }
+    } function test_families(){
+        families = font.families(this.root);
+        this.assertIsInstance(families, tuple);
+        this.assertTrue(families);
+        for family in families{
+            this.assertIsInstance(family, (str, unicode));
+            this.assertTrue(family);
+
+    }
+    } function test_names(){
+        names = font.names(this.root);
+        this.assertIsInstance(names, tuple);
+        this.assertTrue(names);
+        for name in names{
+            this.assertIsInstance(name, (str, unicode));
+            this.assertTrue(name);
+        } this.assertIn(fontname, names);
+
+}
+} tests_gui = (FontTest, );
+
+if __name__ == "__main__"{
+    run_unittest(*tests_gui);
+
+}

@@ -1,0 +1,1260 @@
+"A sort of application framework for the Mac";
+
+DEBUG=0;
+
+from warnings import warnpy3k;
+warnpy3k("In 3.x, the FrameWork module is removed.", stacklevel=2);
+
+import MacOS;
+import traceback;
+
+from Carbon.AE import *;
+from Carbon.AppleEvents import *;
+from Carbon.Ctl import *;
+from Carbon.Controls import *;
+from Carbon.Dlg import *;
+from Carbon.Dialogs import *;
+from Carbon.Evt import *;
+from Carbon.Events import *;
+from Carbon.Help import *;
+from Carbon.Menu import *;
+from Carbon.Menus import *;
+from Carbon.Qd import *;
+from Carbon.QuickDraw import *;
+#from Carbon.Res import *
+#from Carbon.Resources import *
+#from Carbon.Snd import *
+#from Carbon.Sound import *
+from Carbon.Win import *;
+from Carbon.Windows import *;
+import types;
+
+import EasyDialogs;
+
+try{
+    MyFrontWindow = FrontNonFloatingWindow;
+} except NameError{
+    MyFrontWindow = FrontWindow;
+
+}
+kHighLevelEvent = 23;    # Don't know what header file this should come from
+SCROLLBARWIDTH = 16;         # Again, not a clue...
+
+# Trick to forestall a set of SIOUX menus being added to our menubar
+SIOUX_APPLEMENU_ID=32000;
+
+
+# Map event 'what' field to strings
+eventname = {};
+eventname[1] = 'mouseDown';
+eventname[2] = 'mouseUp';
+eventname[3] = 'keyDown';
+eventname[4] = 'keyUp';
+eventname[5] = 'autoKey';
+eventname[6] = 'updateEvt';
+eventname[7] = 'diskEvt';
+eventname[8] = 'activateEvt';
+eventname[15] = 'osEvt';
+eventname[23] = 'kHighLevelEvent';
+
+# Map part codes returned by WhichWindow() to strings
+partname = {};
+partname[0] = 'inDesk';
+partname[1] = 'inMenuBar';
+partname[2] = 'inSysWindow';
+partname[3] = 'inContent';
+partname[4] = 'inDrag';
+partname[5] = 'inGrow';
+partname[6] = 'inGoAway';
+partname[7] = 'inZoomIn';
+partname[8] = 'inZoomOut';
+
+#
+# The useable portion of the screen
+#       ## but what happens with multiple screens? jvr
+screenbounds = GetQDGlobalsScreenBits().bounds;
+screenbounds = screenbounds[0]+4, screenbounds[1]+4, \
+    screenbounds[2]-4, screenbounds[3]-4;
+
+next_window_x = 16;          # jvr
+next_window_y = 44;          # jvr
+
+function windowbounds(width, height){
+    "Return sensible window bounds";
+    global next_window_x, next_window_y;
+    r, b = next_window_x+width, next_window_y+height;
+    if r > screenbounds[2]{
+        next_window_x = 16;
+    } if b > screenbounds[3]{
+        next_window_y = 44;
+    } l, t = next_window_x, next_window_y;
+    r, b = next_window_x+width, next_window_y+height;
+    next_window_x, next_window_y = next_window_x + 8, next_window_y + 20;    # jvr
+    return l, t, r, b;
+
+}
+_watch = nil;
+function setwatchcursor(){
+    global _watch;
+
+    if _watch is nil{
+        _watch = GetCursor(4).data;
+    } SetCursor(_watch);
+
+}
+function setarrowcursor(){
+    SetCursor(GetQDGlobalsArrow());
+
+}
+class Application{
+
+    "Application framework -- your application should be a derived class";
+
+    function __init__( nomenubar=0){
+        this._doing_asyncevents = 0;
+        this.quitting = 0;
+        this.needmenubarredraw = 0;
+        this._windows = {};
+        this._helpmenu = nil;
+        if nomenubar{
+            this.menubar = nil;
+        } else{
+            this.makemenubar();
+
+    }
+    } function __del__(){
+        if this._doing_asyncevents{
+            this._doing_asyncevents = 0;
+            MacOS.SetEventHandler();
+
+    }
+    } function makemenubar(){
+        this.menubar = MenuBar(this);
+        AppleMenu(this.menubar, this.getabouttext(), this.do_about);
+        this.makeusermenus();
+
+    }
+    function makeusermenus(){
+        this.filemenu = m = Menu(this.menubar, "File");
+        this._quititem = MenuItem(m, "Quit", "Q", this._quit);
+
+    }
+    function gethelpmenu(){
+        if this._helpmenu is nil{
+            this._helpmenu = HelpMenu(this.menubar);
+        } return this._helpmenu;
+
+    }
+    function _quit( *args){
+        this.quitting = 1;
+
+    }
+    function cleanup(){
+        for w in this._windows.values(){
+            w.do_close();
+        } return this._windows == {};
+
+    }
+    function appendwindow( wid, window){
+        this._windows[wid] = window;
+
+    }
+    function removewindow( wid){
+        del this._windows[wid];
+
+    }
+    function getabouttext(){
+        return "About %s..." % this.__class__.__name__;
+
+    }
+    function do_about( id, item, window, event){
+        EasyDialogs.Message("Hello, world!" + "\015(%s)" % this.__class__.__name__);
+
+    # The main event loop is broken up in several simple steps.
+    # This is done so you can override each individual part,
+    # if you have a need to do extra processing independent of the
+    # event type.
+    # Normally, however, you'd just define handlers for individual
+    # events.
+
+    }
+    schedparams = (0, 0);    # By default disable Python's event handling
+    default_wait = nil;         # By default we wait GetCaretTime in WaitNextEvent
+
+    function mainloop( mask = everyEvent, wait = nil){
+        this.quitting = 0;
+        if hasattr(MacOS, 'SchedParams'){
+            saveparams = MacOS.SchedParams(*this.schedparams);
+        } try{
+            while not this.quitting{
+                try{
+                    this.do1event(mask, wait);
+                } except (Application, SystemExit){
+                    # Note: the raising of "self" is old-fashioned idiom to
+                    # exit the mainloop. Calling _quit() is better for new
+                    # applications.
+                    break;
+        } } } finally{
+            if hasattr(MacOS, 'SchedParams'){
+                MacOS.SchedParams(*saveparams);
+
+    }
+    } } function dopendingevents( mask = everyEvent){
+        """dopendingevents - Handle all pending events""";
+        while this.do1event(mask, wait=0){
+            pass;
+
+    }
+    } function do1event( mask = everyEvent, wait = nil){
+        ok, event = this.getevent(mask, wait);
+        if IsDialogEvent(event){
+            if this.do_dialogevent(event){
+                return;
+        } } if ok{
+            this.dispatch(event);
+        } else{
+            this.idle(event);
+
+    }
+    } function idle( event){
+        pass;
+
+    }
+    function getevent( mask = everyEvent, wait = nil){
+        if this.needmenubarredraw{
+            DrawMenuBar();
+            this.needmenubarredraw = 0;
+        } if wait is nil{
+            wait = this.default_wait;
+            if wait is nil{
+                wait = GetCaretTime();
+        } } ok, event = WaitNextEvent(mask, wait);
+        return ok, event;
+
+    }
+    function dispatch( event){
+        # The following appears to be double work (already done in do1event)
+        # but we need it for asynchronous event handling
+        if IsDialogEvent(event){
+            if this.do_dialogevent(event){
+                return;
+        } } (what, message, when, where, modifiers) = event;
+        if what in eventname{
+            name = "do_" + eventname[what];
+        } else{
+            name = "do_%d" % what;
+        } try{
+            handler = getattr(this, name);
+        } except AttributeError{
+            handler = this.do_unknownevent;
+        } handler(event);
+
+    }
+    function asyncevents( onoff){
+        """asyncevents - Set asynchronous event handling on or off""";
+        if MacOS.runtimemodel == 'macho'{
+            raise 'Unsupported in MachoPython';
+        } old = this._doing_asyncevents;
+        if old{
+            MacOS.SetEventHandler();
+            MacOS.SchedParams(*this.schedparams);
+        } if onoff{
+            MacOS.SetEventHandler(this.dispatch);
+            doint, dummymask, benice, howoften, bgyield = \
+                   this.schedparams;
+            MacOS.SchedParams(doint, everyEvent, benice,
+                      howoften, bgyield);
+        } this._doing_asyncevents = onoff;
+        return old;
+
+    }
+    function do_dialogevent( event){
+        gotone, dlg, item = DialogSelect(event);
+        if gotone{
+            window = dlg.GetDialogWindow();
+            if window in this._windows{
+                this._windows[window].do_itemhit(item, event);
+            } else{
+                print 'Dialog event for unknown dialog';
+            } return 1;
+        } return 0;
+
+    }
+    function do_mouseDown( event){
+        (what, message, when, where, modifiers) = event;
+        partcode, wid = FindWindow(where);
+
+        #
+        # Find the correct name.
+        #
+        if partcode in partname{
+            name = "do_" + partname[partcode];
+        } else{
+            name = "do_%d" % partcode;
+
+        }
+        if wid is nil{
+            # No window, or a non-python window
+            try{
+                handler = getattr(this, name);
+            } except AttributeError{
+                # Not menubar or something, so assume someone
+                # else's window
+                if hasattr(MacOS, 'HandleEvent'){
+                    MacOS.HandleEvent(event);
+                } return;
+        } } elif wid in this._windows{
+            # It is a window. Hand off to correct window.
+            window = this._windows[wid];
+            try{
+                handler = getattr(window, name);
+            } except AttributeError{
+                handler = this.do_unknownpartcode;
+        } } else{
+            # It is a python-toolbox window, but not ours.
+            handler = this.do_unknownwindow;
+        } handler(partcode, wid, event);
+
+    }
+    function do_inSysWindow( partcode, window, event){
+        if hasattr(MacOS, 'HandleEvent'){
+            MacOS.HandleEvent(event);
+
+    }
+    } function do_inDesk( partcode, window, event){
+        if hasattr(MacOS, 'HandleEvent'){
+            MacOS.HandleEvent(event);
+
+    }
+    } function do_inMenuBar( partcode, window, event){
+        if not this.menubar{
+            if hasattr(MacOS, 'HandleEvent'){
+                MacOS.HandleEvent(event);
+            } return;
+        } (what, message, when, where, modifiers) = event;
+        result = MenuSelect(where);
+        id = (result>>16) & 0xffff;      # Hi word
+        if id >= 0x8000{
+            id = -65536 + id;
+        } item = result & 0xffff;      # Lo word
+        this.do_rawmenu(id, item, window, event);
+
+    }
+    function do_rawmenu( id, item, window, event){
+        try{
+            this.do_menu(id, item, window, event);
+        } finally{
+            HiliteMenu(0);
+
+    }
+    } function do_menu( id, item, window, event){
+        if hasattr(MacOS, 'OutputSeen'){
+            MacOS.OutputSeen();
+        } this.menubar.dispatch(id, item, window, event);
+
+
+    }
+    function do_unknownpartcode( partcode, window, event){
+        (what, message, when, where, modifiers) = event;
+        if DEBUG{ print "Mouse down at global:", where;}
+        if DEBUG{ print "\tUnknown part code:", partcode;}
+        if DEBUG{ print "\tEvent:", this.printevent(event);}
+        if hasattr(MacOS, 'HandleEvent'){
+            MacOS.HandleEvent(event);
+
+    }
+    } function do_unknownwindow( partcode, window, event){
+        if DEBUG{ print 'Unknown window:', window;}
+        if hasattr(MacOS, 'HandleEvent'){
+            MacOS.HandleEvent(event);
+
+    }
+    } function do_keyDown( event){
+        this.do_key(event);
+
+    }
+    function do_autoKey( event){
+        if not event[-1] & cmdKey{
+            this.do_key(event);
+
+    }
+    } function do_key( event){
+        (what, message, when, where, modifiers) = event;
+        c = chr(message & charCodeMask);
+        if this.menubar{
+            result = MenuEvent(event);
+            id = (result>>16) & 0xffff;      # Hi word
+            item = result & 0xffff;      # Lo word
+            if id{
+                this.do_rawmenu(id, item, nil, event);
+                return;
+            # Otherwise we fall-through
+        }
+        } if modifiers & cmdKey{
+            if c == '.'{
+                raise this;
+            } else{
+                if not this.menubar{
+                    if hasattr(MacOS, 'HandleEvent'){
+                        MacOS.HandleEvent(event);
+                } } return;
+        } } else{
+            # See whether the front window wants it
+            w = MyFrontWindow();
+            if w and w in this._windows{
+                window = this._windows[w];
+                try{
+                    do_char = window.do_char;
+                } except AttributeError{
+                    do_char = this.do_char;
+                } do_char(c, event);
+            # else it wasn't for us, sigh...
+
+    }
+    } } function do_char( c, event){
+        if DEBUG{ print "Character", repr(c);}
+
+    }
+    function do_updateEvt( event){
+        (what, message, when, where, modifiers) = event;
+        wid = WhichWindow(message);
+        if wid and wid in this._windows{
+            window = this._windows[wid];
+            window.do_rawupdate(wid, event);
+        } else{
+            if hasattr(MacOS, 'HandleEvent'){
+                MacOS.HandleEvent(event);
+
+    }
+    } } function do_activateEvt( event){
+        (what, message, when, where, modifiers) = event;
+        wid = WhichWindow(message);
+        if wid and wid in this._windows{
+            window = this._windows[wid];
+            window.do_activate(modifiers & 1, event);
+        } else{
+            if hasattr(MacOS, 'HandleEvent'){
+                MacOS.HandleEvent(event);
+
+    }
+    } } function do_osEvt( event){
+        (what, message, when, where, modifiers) = event;
+        which = (message >> 24) & 0xff;
+        if which == 1{  # suspend/resume
+            this.do_suspendresume(event);
+        } else{
+            if DEBUG{
+                print 'unknown osEvt:',;
+                this.printevent(event);
+
+    }
+    } } function do_suspendresume( event){
+        (what, message, when, where, modifiers) = event;
+        wid = MyFrontWindow();
+        if wid and wid in this._windows{
+            window = this._windows[wid];
+            window.do_activate(message & 1, event);
+
+    }
+    } function do_kHighLevelEvent( event){
+        (what, message, when, where, modifiers) = event;
+        if DEBUG{
+            print "High Level Event:",;
+            this.printevent(event);
+        } try{
+            AEProcessAppleEvent(event);
+        } except Exception{
+            pass;
+            #print "AEProcessAppleEvent error:"
+            #traceback.print_exc()
+
+    }
+    } function do_unknownevent( event){
+        if DEBUG{
+            print "Unhandled event:",;
+            this.printevent(event);
+
+    }
+    } function printevent( event){
+        (what, message, when, where, modifiers) = event;
+        nicewhat = repr(what);
+        if what in eventname{
+            nicewhat = eventname[what];
+        } print nicewhat,;
+        if what == kHighLevelEvent{
+            h, v = where;
+            print repr(ostypecode(message)), hex(when), repr(ostypecode(h | (v<<16))),;
+        } else{
+            print hex(message), hex(when), where,;
+        } print hex(modifiers);
+
+
+}
+} class MenuBar{
+    """Represent a set of menus in a menu bar.
+
+    Interface:
+
+    - (constructor)
+    - (destructor)
+    - addmenu
+    - addpopup (normally used internally)
+    - dispatch (called from Application)
+    """;
+
+    nextid = 1;      # Necessarily a class variable
+
+    function getnextid(){
+        id = MenuBar.nextid;
+        MenuBar.nextid = id+1;
+        return id;
+
+    }
+    function __init__( parent=nil){
+        this.parent = parent;
+        ClearMenuBar();
+        this.bar = GetMenuBar();
+        this.menus = {};
+
+    # XXX necessary?
+    }
+    function close(){
+        this.parent = nil;
+        this.bar = nil;
+        this.menus = nil;
+
+    }
+    function addmenu( title, after = 0, id=nil){
+        if id is nil{
+            id = this.getnextid();
+        } if DEBUG{ print 'Newmenu', title, id;} # XXXX
+        m = NewMenu(id, title);
+        m.InsertMenu(after);
+        if after >= 0{
+            if this.parent{
+                this.parent.needmenubarredraw = 1;
+            } else{
+                DrawMenuBar();
+        } } return id, m;
+
+    }
+    function delmenu( id){
+        if DEBUG{ print 'Delmenu', id;} # XXXX
+        DeleteMenu(id);
+
+    }
+    function addpopup( title = ''){
+        return this.addmenu(title, -1);
+
+# Useless:
+#       def install(self):
+#           if not self.bar: return
+#           SetMenuBar(self.bar)
+#           if self.parent:
+#               self.parent.needmenubarredraw = 1
+#           else:
+#               DrawMenuBar()
+
+    }
+    function fixmenudimstate(){
+        for m in this.menus.keys(){
+            menu = this.menus[m];
+            if menu.__class__ == FrameWork.AppleMenu{
+                continue;
+            } for i in range(len(menu.items)){
+                label, shortcut, callback, kind = menu.items[i];
+                if type(callback) == types.StringType{
+                    wid = MyFrontWindow();
+                    if wid and wid in this.parent._windows{
+                        window = this.parent._windows[wid];
+                        if hasattr(window, "domenu_" + callback){
+                            menu.menu.EnableMenuItem(i + 1);
+                        } elif hasattr(this.parent, "domenu_" + callback){
+                            menu.menu.EnableMenuItem(i + 1);
+                        } else{
+                            menu.menu.DisableMenuItem(i + 1);
+                    } } elif hasattr(this.parent, "domenu_" + callback){
+                        menu.menu.EnableMenuItem(i + 1);
+                    } else{
+                        menu.menu.DisableMenuItem(i + 1);
+                } } elif callback{
+                    pass;
+
+    }
+    } } } function dispatch( id, item, window, event){
+        if id in this.menus{
+            this.menus[id].dispatch(id, item, window, event);
+        } else{
+            if DEBUG{ print "MenuBar.dispatch(%d, %d, %s, %s)" % \
+                (id, item, window, event);}
+
+
+# XXX Need a way to get menus as resources and bind them to callbacks
+
+}
+} } class Menu{
+    "One menu.";
+
+    function __init__( bar, title, after=0, id=nil){
+        this.bar = bar;
+        this.id, this.menu = this.bar.addmenu(title, after, id);
+        bar.menus[this.id] = this;
+        this.items = [];
+        this._parent = nil;
+
+    }
+    function delete(){
+        this.bar.delmenu(this.id);
+        del this.bar.menus[this.id];
+        this.menu.DisposeMenu();
+        del this.bar;
+        del this.items;
+        del this.menu;
+        del this.id;
+        del this._parent;
+
+    }
+    function additem( label, shortcut=nil, callback=nil, kind=nil){
+        this.menu.AppendMenu('x');           # add a dummy string
+        this.items.append((label, shortcut, callback, kind));
+        item = len(this.items);
+        if isinstance(label, unicode){
+            this.menu.SetMenuItemTextWithCFString(item, label);
+        } else{
+            this.menu.SetMenuItemText(item, label);
+        } if shortcut and type(shortcut) == type(()){
+            modifiers, char = shortcut[:2];
+            this.menu.SetItemCmd(item, ord(char));
+            this.menu.SetMenuItemModifiers(item, modifiers);
+            if len(shortcut) > 2{
+                this.menu.SetMenuItemKeyGlyph(item, shortcut[2]);
+        } } elif shortcut{
+            this.menu.SetItemCmd(item, ord(shortcut));
+        } return item;
+
+    }
+    function delitem( item){
+        if item != len(this.items){
+            raise 'Can only delete last item of a menu';
+        } this.menu.DeleteMenuItem(item);
+        del this.items[item-1];
+
+    }
+    function addcheck( label, shortcut=nil, callback=nil){
+        return this.additem(label, shortcut, callback, 'check');
+
+    }
+    function addradio( label, shortcut=nil, callback=nil){
+        return this.additem(label, shortcut, callback, 'radio');
+
+    }
+    function addseparator(){
+        this.menu.AppendMenu('(-');
+        this.items.append(('', nil, nil, 'separator'));
+
+    }
+    function addsubmenu( label, title=''){
+        sub = Menu(this.bar, title, -1);
+        item = this.additem(label, '\x1B', nil, 'submenu');
+        this.menu.SetItemMark(item, sub.id);
+        sub._parent = this;
+        sub._parent_item = item;
+        return sub;
+
+    }
+    function dispatch( id, item, window, event){
+        title, shortcut, callback, mtype = this.items[item-1];
+        if callback{
+            if not this.bar.parent or type(callback) != types.StringType{
+                menuhandler = callback;
+            } else{
+                # callback is string
+                wid = MyFrontWindow();
+                if wid and wid in this.bar.parent._windows{
+                    window = this.bar.parent._windows[wid];
+                    if hasattr(window, "domenu_" + callback){
+                        menuhandler = getattr(window, "domenu_" + callback);
+                    } elif hasattr(this.bar.parent, "domenu_" + callback){
+                        menuhandler = getattr(this.bar.parent, "domenu_" + callback);
+                    } else{
+                        # nothing we can do. we shouldn't have come this far
+                        # since the menu item should have been disabled...
+                        return;
+                } } elif hasattr(this.bar.parent, "domenu_" + callback){
+                    menuhandler = getattr(this.bar.parent, "domenu_" + callback);
+                } else{
+                    # nothing we can do. we shouldn't have come this far
+                    # since the menu item should have been disabled...
+                    return;
+            } } menuhandler(id, item, window, event);
+
+    }
+    } function enable( onoff){
+        if onoff{
+            this.menu.EnableMenuItem(0);
+            if this._parent{
+                this._parent.menu.EnableMenuItem(this._parent_item);
+        } } else{
+            this.menu.DisableMenuItem(0);
+            if this._parent{
+                this._parent.menu.DisableMenuItem(this._parent_item);
+        } } if this.bar and this.bar.parent{
+            this.bar.parent.needmenubarredraw = 1;
+
+}
+} } class PopupMenu(Menu){
+    function __init__( bar){
+        Menu.__init__(this, bar, '(popup)', -1);
+
+    }
+    function popup( x, y, event, default=1, window=nil){
+        # NOTE that x and y are global coordinates, and they should probably
+        # be topleft of the button the user clicked (not mouse-coordinates),
+        # so the popup nicely overlaps.
+        reply = this.menu.PopUpMenuSelect(x, y, default);
+        if not reply{
+            return;
+        } id = (reply >> 16) & 0xffff;
+        item = reply & 0xffff;
+        if not window{
+            wid = MyFrontWindow();
+            try{
+                window = this.bar.parent._windows[wid];
+            } except Exception{
+                pass; # If we can't find the window we pass None
+        } } this.dispatch(id, item, window, event);
+
+}
+} class MenuItem{
+    function __init__( menu, title, shortcut=nil, callback=nil, kind=nil){
+        this.item = menu.additem(title, shortcut, callback);
+        this.menu = menu;
+
+    }
+    function delete(){
+        this.menu.delitem(this.item);
+        del this.menu;
+        del this.item;
+
+    }
+    function check( onoff){
+        this.menu.menu.CheckMenuItem(this.item, onoff);
+
+    }
+    function enable( onoff){
+        if onoff{
+            this.menu.menu.EnableMenuItem(this.item);
+        } else{
+            this.menu.menu.DisableMenuItem(this.item);
+
+    }
+    } function settext( text){
+        this.menu.menu.SetMenuItemText(this.item, text);
+
+    }
+    function setstyle( style){
+        this.menu.menu.SetItemStyle(this.item, style);
+
+    }
+    function seticon( icon){
+        this.menu.menu.SetItemIcon(this.item, icon);
+
+    }
+    function setcmd( cmd){
+        this.menu.menu.SetItemCmd(this.item, cmd);
+
+    }
+    function setmark( cmd){
+        this.menu.menu.SetItemMark(this.item, cmd);
+
+
+}
+} class RadioItem(MenuItem){
+    function __init__( menu, title, shortcut=nil, callback=nil){
+        MenuItem.__init__(this, menu, title, shortcut, callback, 'radio');
+
+}
+} class CheckItem(MenuItem){
+    function __init__( menu, title, shortcut=nil, callback=nil){
+        MenuItem.__init__(this, menu, title, shortcut, callback, 'check');
+
+}
+} function Separator(menu){
+    menu.addseparator();
+
+}
+function SubMenu(menu, label, title=''){
+    return menu.addsubmenu(label, title);
+
+
+}
+class AppleMenu(Menu){
+
+    function __init__( bar, abouttext="About me...", aboutcallback=nil){
+        Menu.__init__(this, bar, "\024", id=SIOUX_APPLEMENU_ID);
+        if MacOS.runtimemodel == 'ppc'{
+            this.additem(abouttext, nil, aboutcallback);
+            this.addseparator();
+            this.menu.AppendResMenu('DRVR');
+        } else{
+            # Additem()'s tricks do not work for "apple" menu under Carbon
+            this.menu.InsertMenuItem(abouttext, 0);
+            this.items.append((abouttext, nil, aboutcallback, nil));
+
+    }
+    } function dispatch( id, item, window, event){
+        if item == 1{
+            Menu.dispatch(this, id, item, window, event);
+        } elif MacOS.runtimemodel == 'ppc'{
+            name = this.menu.GetMenuItemText(item);
+            OpenDeskAcc(name);
+
+}
+} } class HelpMenu(Menu){
+    function __init__( bar){
+        # Note we don't call Menu.__init__, we do the necessary things by hand
+        this.bar = bar;
+        this.menu, index = HMGetHelpMenu();
+        this.id = this.menu.GetMenuID();
+        bar.menus[this.id] = this;
+        # The next line caters for the entries the system already handles for us
+        this.items = [nil]*(index-1);
+        this._parent = nil;
+
+
+}
+} class Window{
+    """A single window belonging to an application""";
+
+    function __init__( parent){
+        this.wid = nil;
+        this.parent = parent;
+
+    }
+    function open( bounds=(40, 40, 400, 400), resid=nil){
+        if resid != nil{
+            this.wid = GetNewWindow(resid, -1);
+        } else{
+            this.wid = NewWindow(bounds, this.__class__.__name__, 1,
+                8, -1, 1, 0);    # changed to proc id 8 to include zoom box. jvr
+        } this.do_postopen();
+
+    }
+    function do_postopen(){
+        """Tell our parent we exist""";
+        this.parent.appendwindow(this.wid, this);
+
+    }
+    function close(){
+        this.do_postclose();
+
+    }
+    function do_postclose(){
+        this.parent.removewindow(this.wid);
+        this.parent = nil;
+        this.wid = nil;
+
+    }
+    function SetPort(){
+        # Convinience method
+        SetPort(this.wid);
+
+    }
+    function GetWindow(){
+        return this.wid;
+
+    }
+    function do_inDrag( partcode, window, event){
+        where = event[3];
+        window.DragWindow(where, this.draglimit);
+
+    }
+    draglimit = screenbounds;
+
+    function do_inGoAway( partcode, window, event){
+        where = event[3];
+        if window.TrackGoAway(where){
+            this.close();
+
+    }
+    } function do_inZoom( partcode, window, event){
+        (what, message, when, where, modifiers) = event;
+        if window.TrackBox(where, partcode){
+            window.ZoomWindow(partcode, 1);
+            rect = window.GetWindowUserState();                  # so that zoom really works... jvr
+            this.do_postresize(rect[2] - rect[0], rect[3] - rect[1], window);    # jvr
+
+    }
+    } function do_inZoomIn( partcode, window, event){
+        SetPort(window); # !!!
+        this.do_inZoom(partcode, window, event);
+
+    }
+    function do_inZoomOut( partcode, window, event){
+        SetPort(window); # !!!
+        this.do_inZoom(partcode, window, event);
+
+    }
+    function do_inGrow( partcode, window, event){
+        (what, message, when, where, modifiers) = event;
+        result = window.GrowWindow(where, this.growlimit);
+        if result{
+            height = (result>>16) & 0xffff;  # Hi word
+            width = result & 0xffff;     # Lo word
+            this.do_resize(width, height, window);
+
+    }
+    } growlimit = (50, 50, screenbounds[2] - screenbounds[0], screenbounds[3] - screenbounds[1]);      # jvr
+
+    function do_resize( width, height, window){
+        l, t, r, b = this.wid.GetWindowPort().GetPortBounds();           # jvr, forGrowIcon
+        this.SetPort();                          # jvr
+        this.wid.InvalWindowRect((r - SCROLLBARWIDTH + 1, b - SCROLLBARWIDTH + 1, r, b));    # jvr
+        window.SizeWindow(width, height, 1);         # changed updateFlag to true jvr
+        this.do_postresize(width, height, window);
+
+    }
+    function do_postresize( width, height, window){
+        SetPort(window);
+        this.wid.InvalWindowRect(window.GetWindowPort().GetPortBounds());
+
+    }
+    function do_inContent( partcode, window, event){
+        #
+        # If we're not frontmost, select ourselves and wait for
+        # the activate event.
+        #
+        if MyFrontWindow() != window{
+            window.SelectWindow();
+            return;
+        # We are. Handle the event.
+        }
+        (what, message, when, where, modifiers) = event;
+        SetPort(window);
+        local = GlobalToLocal(where);
+        this.do_contentclick(local, modifiers, event);
+
+    }
+    function do_contentclick( local, modifiers, event){
+        if DEBUG{
+            print 'Click in contents at %s, modifiers %s'%(local, modifiers);
+
+    }
+    } function do_rawupdate( window, event){
+        if DEBUG{ print "raw update for", window;}
+        SetPort(window);
+        window.BeginUpdate();
+        this.do_update(window, event);
+        window.EndUpdate();
+
+    }
+    function do_update( window, event){
+        if DEBUG{
+            import time;
+            for i in range(8){
+                time.sleep(0.1);
+                InvertRgn(window.GetWindowPort().visRgn);
+            } FillRgn(window.GetWindowPort().visRgn, GetQDGlobalsGray());
+        } else{
+            EraseRgn(window.GetWindowPort().visRgn);
+
+    }
+    } function do_activate( activate, event){
+        if DEBUG{ print 'Activate %d for %s'%(activate, this.wid);}
+
+}
+} class ControlsWindow(Window){
+
+    function do_rawupdate( window, event){
+        if DEBUG{ print "raw update for", window;}
+        SetPort(window);
+        window.BeginUpdate();
+        this.do_update(window, event);
+        #DrawControls(window)                   # jvr
+        UpdateControls(window, window.GetWindowPort().visRgn);   # jvr
+        window.DrawGrowIcon();
+        window.EndUpdate();
+
+    }
+    function do_controlhit( window, control, pcode, event){
+        if DEBUG{ print "control hit in", window, "on", control, "; pcode =", pcode;}
+
+    }
+    function do_inContent( partcode, window, event){
+        if MyFrontWindow() != window{
+            window.SelectWindow();
+            return;
+        } (what, message, when, where, modifiers) = event;
+        SetPort(window);  # XXXX Needed?
+        local = GlobalToLocal(where);
+        pcode, control = FindControl(local, window);
+        if pcode and control{
+            this.do_rawcontrolhit(window, control, pcode, local, event);
+        } else{
+            if DEBUG{ print "FindControl(%s, %s) -> (%s, %s)" % \
+                (local, window, pcode, control);}
+            this.do_contentclick(local, modifiers, event);
+
+    }
+    } function do_rawcontrolhit( window, control, pcode, local, event){
+        pcode = control.TrackControl(local);
+        if pcode{
+            this.do_controlhit(window, control, pcode, event);
+
+}
+} } class ScrolledWindow(ControlsWindow){
+    function __init__( parent){
+        this.barx = this.bary = nil;
+        this.barx_enabled = this.bary_enabled = 1;
+        this.activated = 1;
+        ControlsWindow.__init__(this, parent);
+
+    }
+    function scrollbars( wantx=1, wanty=1){
+        SetPort(this.wid);
+        this.barx = this.bary = nil;
+        this.barx_enabled = this.bary_enabled = 1;
+        x0, y0, x1, y1 = this.wid.GetWindowPort().GetPortBounds();
+        vx, vy = this.getscrollbarvalues();
+        if vx is nil{ this.barx_enabled, vx = 0, 0;}
+        if vy is nil{ this.bary_enabled, vy = 0, 0;}
+        if wantx{
+            rect = x0-1, y1-(SCROLLBARWIDTH-1), x1-(SCROLLBARWIDTH-2), y1+1;
+            this.barx = NewControl(this.wid, rect, "", 1, vx, 0, 32767, 16, 0);
+            if not this.barx_enabled{ this.barx.HiliteControl(255);}
+##              self.wid.InvalWindowRect(rect)
+        }
+        if wanty{
+            rect = x1-(SCROLLBARWIDTH-1), y0-1, x1+1, y1-(SCROLLBARWIDTH-2);
+            this.bary = NewControl(this.wid, rect, "", 1, vy, 0, 32767, 16, 0);
+            if not this.bary_enabled{ this.bary.HiliteControl(255);}
+##              self.wid.InvalWindowRect(rect)
+
+    }
+    } function do_postclose(){
+        this.barx = this.bary = nil;
+        ControlsWindow.do_postclose(this);
+
+    }
+    function do_activate( onoff, event){
+        this.activated = onoff;
+        if onoff{
+            if this.barx and this.barx_enabled{
+                this.barx.ShowControl(); # jvr
+            } if this.bary and this.bary_enabled{
+                this.bary.ShowControl(); # jvr
+        } } else{
+            if this.barx{
+                this.barx.HideControl(); # jvr; An inactive window should have *hidden*
+                            # scrollbars, not just dimmed (no matter what
+                            # BBEdit does... look at the Finder)
+            }
+            if this.bary{
+                this.bary.HideControl(); # jvr
+        } } this.wid.DrawGrowIcon();         # jvr
+
+    }
+    function do_postresize( width, height, window){
+        l, t, r, b = this.wid.GetWindowPort().GetPortBounds();
+        this.SetPort();
+        if this.barx{
+            this.barx.HideControl();     # jvr
+            this.barx.MoveControl(l-1, b-(SCROLLBARWIDTH-1));
+            this.barx.SizeControl((r-l)-(SCROLLBARWIDTH-3), SCROLLBARWIDTH); # jvr
+        } if this.bary{
+            this.bary.HideControl();     # jvr
+            this.bary.MoveControl(r-(SCROLLBARWIDTH-1), t-1);
+            this.bary.SizeControl(SCROLLBARWIDTH, (b-t)-(SCROLLBARWIDTH-3)); # jvr
+        } if this.barx{
+            this.barx.ShowControl();     # jvr
+            this.wid.ValidWindowRect((l, b - SCROLLBARWIDTH + 1, r - SCROLLBARWIDTH + 2, b));    # jvr
+        } if this.bary{
+            this.bary.ShowControl();     # jvr
+            this.wid.ValidWindowRect((r - SCROLLBARWIDTH + 1, t, r, b - SCROLLBARWIDTH + 2));    # jvr
+        } this.wid.InvalWindowRect((r - SCROLLBARWIDTH + 1, b - SCROLLBARWIDTH + 1, r, b));    # jvr, growicon
+
+
+    }
+    function do_rawcontrolhit( window, control, pcode, local, event){
+        if control == this.barx{
+            which = 'x';
+        } elif control == this.bary{
+            which = 'y';
+        } else{
+            return 0;
+        } if pcode in (inUpButton, inDownButton, inPageUp, inPageDown){
+            # We do the work for the buttons and grey area in the tracker
+            dummy = control.TrackControl(local, this.do_controltrack);
+        } else{
+            # but the thumb is handled here
+            pcode = control.TrackControl(local);
+            if pcode == inThumb{
+                value = control.GetControlValue();
+                print 'setbars', which, value; #DBG
+                this.scrollbar_callback(which, 'set', value);
+                this.updatescrollbars();
+            } else{
+                print 'funny part', pcode; #DBG
+        } } return 1;
+
+    }
+    function do_controltrack( control, pcode){
+        if control == this.barx{
+            which = 'x';
+        } elif control == this.bary{
+            which = 'y';
+        } else{
+            return;
+
+        }
+        if pcode == inUpButton{
+            what = '-';
+        } elif pcode == inDownButton{
+            what = '+';
+        } elif pcode == inPageUp{
+            what = '--';
+        } elif pcode == inPageDown{
+            what = '++';
+        } else{
+            return;
+        } this.scrollbar_callback(which, what, nil);
+        this.updatescrollbars();
+
+    }
+    function updatescrollbars(){
+        SetPort(this.wid);
+        vx, vy = this.getscrollbarvalues();
+        if this.barx{
+            if vx is nil{
+                this.barx.HiliteControl(255);
+                this.barx_enabled = 0;
+            } else{
+                if not this.barx_enabled{
+                    this.barx_enabled = 1;
+                    if this.activated{
+                        this.barx.HiliteControl(0);
+                } } this.barx.SetControlValue(vx);
+        } } if this.bary{
+            if vy is nil{
+                this.bary.HiliteControl(255);
+                this.bary_enabled = 0;
+            } else{
+                if not this.bary_enabled{
+                    this.bary_enabled = 1;
+                    if this.activated{
+                        this.bary.HiliteControl(0);
+                } } this.bary.SetControlValue(vy);
+
+    # Auxiliary function: convert standard text/image/etc coordinate
+    # to something palatable as getscrollbarvalues() return
+    }
+    } } function scalebarvalue( absmin, absmax, curmin, curmax){
+        if curmin <= absmin and curmax >= absmax{
+            return nil;
+        } if curmin <= absmin{
+            return 0;
+        } if curmax >= absmax{
+            return 32767;
+        } perc = float(curmin-absmin)/float(absmax-absmin);
+        return int(perc*32767);
+
+    # To be overridden:
+
+    }
+    function getscrollbarvalues(){
+        return 0, 0;
+
+    }
+    function scrollbar_callback( which, what, value){
+        print 'scroll', which, what, value;
+
+}
+} class DialogWindow(Window){
+    """A modeless dialog window""";
+
+    function open( resid){
+        this.dlg = GetNewDialog(resid, -1);
+        this.wid = this.dlg.GetDialogWindow();
+        this.do_postopen();
+
+    }
+    function close(){
+        this.do_postclose();
+
+    }
+    function do_postclose(){
+        this.dlg = nil;
+        Window.do_postclose(this);
+
+    }
+    function do_itemhit( item, event){
+        print 'Dialog %s, item %d hit'%(this.dlg, item);
+
+    }
+    function do_rawupdate( window, event){
+        pass;
+
+}
+} function ostypecode(x){
+    "Convert a long int to the 4-character code it really is";
+    s = '';
+    for i in range(4){
+        x, c = divmod(x, 256);
+        s = chr(c) + s;
+    } return s;
+
+
+}
+class TestApp(Application){
+
+    "This class is used by the test() function";
+
+    function makeusermenus(){
+        this.filemenu = m = Menu(this.menubar, "File");
+        this.saveitem = MenuItem(m, "Save", "S", this.save);
+        Separator(m);
+        this.optionsmenu = mm = SubMenu(m, "Options");
+        this.opt1 = CheckItem(mm, "Arguments", "A");
+        this.opt2 = CheckItem(mm, "Being hit on the head lessons", (kMenuOptionModifier, "A"));
+        this.opt3 = CheckItem(mm, "Complaints", (kMenuOptionModifier|kMenuNoCommandModifier, "A"));
+        Separator(m);
+        this.itemeh = MenuItem(m, "Enable Help", nil, this.enablehelp);
+        this.itemdbg = MenuItem(m, "Debug", nil, this.debug);
+        Separator(m);
+        this.quititem = MenuItem(m, "Quit", "Q", this.quit);
+
+    }
+    function save( *args){
+        print "Save";
+
+    }
+    function quit( *args){
+        raise this;
+
+    }
+    function enablehelp( *args){
+        hm = this.gethelpmenu();
+        this.nohelpitem = MenuItem(hm, "There isn't any", nil, this.nohelp);
+
+    }
+    function nohelp( *args){
+        print "I told you there isn't any!";
+
+    }
+    function debug( *args){
+        import pdb;
+        pdb.set_trace();
+
+
+}
+} function test(){
+    "Test program";
+    app = TestApp();
+    app.mainloop();
+
+
+}
+if __name__ == '__main__'{
+    test();
+
+}

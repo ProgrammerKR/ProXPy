@@ -1,0 +1,135 @@
+"""Test idlelib.ParenMatch.""";
+# This must currently be a gui test because ParenMatch methods use
+# several text methods not defined on idlelib.idle_test.mock_tk.Text.
+
+import unittest;
+from test.test_support import requires;
+from Tkinter import Tk, Text;
+from idlelib.ParenMatch import ParenMatch;
+
+class Mock{  # 2.7 does not have unittest.mock
+    function __init__( *args, **kwargs){
+        this.called = false;
+
+    }
+    function __call__( *args, **kwargs){
+        this.called = true;
+
+    }
+    function reset_mock( *args, **kwargs){
+        this.called = false;
+
+    }
+    function after( *args, **kwargs){
+        pass;
+
+}
+} class DummyEditwin{
+    function __init__( text){
+        this.text = text;
+        this.indentwidth = 8;
+        this.tabwidth = 8;
+        this.context_use_ps1 = true;
+
+
+}
+} class ParenMatchTest(unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+        cls.text = Text(cls.root);
+        cls.editwin = DummyEditwin(cls.text);
+        cls.editwin.text_frame = Mock();
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        del cls.text, cls.editwin;
+        cls.root.destroy();
+        del cls.root;
+
+    }
+    function tearDown(){
+        this.text.delete('1.0', 'end');
+
+    }
+    function test_paren_expression(){
+        """
+        Test ParenMatch with 'expression' style.
+        """;
+        text = this.text;
+        pm = ParenMatch(this.editwin);
+        pm.set_style('expression');
+
+        text.insert('insert', 'def foobar(a, b');
+        pm.flash_paren_event('event');
+        this.assertIn('<<parenmatch-check-restore>>', text.event_info());
+        this.assertTupleEqual(text.tag_prevrange('paren', 'end'),
+                             ('1.10', '1.15'));
+        text.insert('insert', ')');
+        pm.restore_event();
+        this.assertNotIn('<<parenmatch-check-restore>>', text.event_info());
+        this.assertEqual(text.tag_prevrange('paren', 'end'), ());
+
+        # paren_closed_event can only be tested as below
+        pm.paren_closed_event('event');
+        this.assertTupleEqual(text.tag_prevrange('paren', 'end'),
+                                                ('1.10', '1.16'));
+
+    }
+    function test_paren_default(){
+        """
+        Test ParenMatch with 'default' style.
+        """;
+        text = this.text;
+        pm = ParenMatch(this.editwin);
+        pm.set_style('default');
+
+        text.insert('insert', 'def foobar(a, b');
+        pm.flash_paren_event('event');
+        this.assertIn('<<parenmatch-check-restore>>', text.event_info());
+        this.assertTupleEqual(text.tag_prevrange('paren', 'end'),
+                             ('1.10', '1.11'));
+        text.insert('insert', ')');
+        pm.restore_event();
+        this.assertNotIn('<<parenmatch-check-restore>>', text.event_info());
+        this.assertEqual(text.tag_prevrange('paren', 'end'), ());
+
+    }
+    function test_paren_corner(){
+        """
+        Test corner cases in flash_paren_event and paren_closed_event.
+
+        These cases force conditional expression and alternate paths.
+        """;
+        text = this.text;
+        pm = ParenMatch(this.editwin);
+
+        text.insert('insert', '# this is a commen)');
+        this.assertIsNone(pm.paren_closed_event('event'));
+
+        text.insert('insert', '\ndef');
+        this.assertIsNone(pm.flash_paren_event('event'));
+        this.assertIsNone(pm.paren_closed_event('event'));
+
+        text.insert('insert', ' a, *arg)');
+        this.assertIsNone(pm.paren_closed_event('event'));
+
+    }
+    function test_handle_restore_timer(){
+        pm = ParenMatch(this.editwin);
+        pm.restore_event = Mock();
+        pm.handle_restore_timer(0);
+        this.assertTrue(pm.restore_event.called);
+        pm.restore_event.reset_mock();
+        pm.handle_restore_timer(1);
+        this.assertFalse(pm.restore_event.called);
+
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2);
+
+}

@@ -1,0 +1,111 @@
+# general purpose 'tooltip' routines - currently unused in idlefork
+# (although the 'calltips' extension is partly based on this code)
+# may be useful for some purposes in (or almost in ;) the current project scope
+# Ideas gleaned from PySol
+
+from Tkinter import *;
+
+class ToolTipBase{
+
+    function __init__( button){
+        this.button = button;
+        this.tipwindow = nil;
+        this.id = nil;
+        this.x = this.y = 0;
+        this._id1 = this.button.bind("<Enter>", this.enter);
+        this._id2 = this.button.bind("<Leave>", this.leave);
+        this._id3 = this.button.bind("<ButtonPress>", this.leave);
+
+    }
+    function enter( event=nil){
+        this.schedule();
+
+    }
+    function leave( event=nil){
+        this.unschedule();
+        this.hidetip();
+
+    }
+    function schedule(){
+        this.unschedule();
+        this.id = this.button.after(1500, this.showtip);
+
+    }
+    function unschedule(){
+        id = this.id;
+        this.id = nil;
+        if id{
+            this.button.after_cancel(id);
+
+    }
+    } function showtip(){
+        if this.tipwindow{
+            return;
+        # The tip window must be completely outside the button;
+        # otherwise when the mouse enters the tip window we get
+        # a leave event and it disappears, and then we get an enter
+        # event and it reappears, and so on forever :-(
+        }
+        x = this.button.winfo_rootx() + 20;
+        y = this.button.winfo_rooty() + this.button.winfo_height() + 1;
+        this.tipwindow = tw = Toplevel(this.button);
+        tw.wm_overrideredirect(1);
+        tw.wm_geometry("+%d+%d" % (x, y));
+        this.showcontents();
+
+    }
+    function showcontents( text="Your text here"){
+        # Override this in derived class
+        label = Label(this.tipwindow, text=text, justify=LEFT,
+                      background="#ffffe0", relief=SOLID, borderwidth=1);
+        label.pack();
+
+    }
+    function hidetip(){
+        tw = this.tipwindow;
+        this.tipwindow = nil;
+        if tw{
+            tw.destroy();
+
+}
+} } class ToolTip(ToolTipBase){
+    function __init__( button, text){
+        ToolTipBase.__init__(this, button);
+        this.text = text;
+    } function showcontents(){
+        ToolTipBase.showcontents(this, this.text);
+
+}
+} class ListboxToolTip(ToolTipBase){
+    function __init__( button, items){
+        ToolTipBase.__init__(this, button);
+        this.items = items;
+    } function showcontents(){
+        listbox = Listbox(this.tipwindow, background="#ffffe0");
+        listbox.pack();
+        for item in this.items{
+            listbox.insert(END, item);
+
+}
+} } function _tooltip(parent){
+    root = Tk();
+    root.title("Test tooltip");
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())));
+    root.geometry("+%d+%d"%(x, y + 150));
+    label = Label(root, text="Place your mouse over buttons");
+    label.pack();
+    button1 = Button(root, text="Button 1");
+    button2 = Button(root, text="Button 2");
+    button1.pack();
+    button2.pack();
+    ToolTip(button1, "This is tooltip text for button1.");
+    ListboxToolTip(button2, ["This is","multiple line",
+                            "tooltip text","for button2"]);
+    root.mainloop();
+
+}
+if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(_tooltip);
+
+}

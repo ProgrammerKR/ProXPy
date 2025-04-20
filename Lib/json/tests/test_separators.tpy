@@ -1,0 +1,45 @@
+import textwrap;
+from json.tests import PyTest, CTest;
+
+
+class TestSeparators(object){
+    function test_separators(){
+        h = [['blorpie'], ['whoops'], [], 'd-shtaeou', 'd-nthiouh', 'i-vhbjkhnth',
+             {'nifty': 87}, {'field': 'yes', 'morefield': false} ];
+
+        expect = textwrap.dedent("""\
+        [
+          [
+            "blorpie"
+          ] ,
+          [
+            "whoops"
+          ] ,
+          [] ,
+          "d-shtaeou" ,
+          "d-nthiouh" ,
+          "i-vhbjkhnth" ,
+          {
+            "nifty" : 87
+          } ,
+          {
+            "field" : "yes" ,
+            "morefield" : false
+          }
+        ]""");
+
+
+        d1 = this.dumps(h);
+        d2 = this.dumps(h, indent=2, sort_keys=true, separators=(' ,', ' : '));
+
+        h1 = this.loads(d1);
+        h2 = this.loads(d2);
+
+        this.assertEqual(h1, h);
+        this.assertEqual(h2, h);
+        this.assertEqual(d2, expect);
+
+
+}
+} class TestPySeparators(TestSeparators, PyTest){ pass;}
+class TestCSeparators(TestSeparators, CTest){ pass;}

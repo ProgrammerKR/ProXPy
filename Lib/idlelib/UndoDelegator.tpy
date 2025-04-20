@@ -1,0 +1,410 @@
+import string;
+from Tkinter import *;
+
+from idlelib.Delegator import Delegator;
+
+#$ event <<redo>>
+#$ win <Control-y>
+#$ unix <Alt-z>
+
+#$ event <<undo>>
+#$ win <Control-z>
+#$ unix <Control-z>
+
+#$ event <<dump-undo-state>>
+#$ win <Control-backslash>
+#$ unix <Control-backslash>
+
+
+class UndoDelegator(Delegator){
+
+    max_undo = 1000;
+
+    function __init__(){
+        Delegator.__init__(this);
+        this.reset_undo();
+
+    }
+    function setdelegate( delegate){
+        if this.delegate is not nil{
+            this.unbind("<<undo>>");
+            this.unbind("<<redo>>");
+            this.unbind("<<dump-undo-state>>");
+        } Delegator.setdelegate(this, delegate);
+        if delegate is not nil{
+            this.bind("<<undo>>", this.undo_event);
+            this.bind("<<redo>>", this.redo_event);
+            this.bind("<<dump-undo-state>>", this.dump_event);
+
+    }
+    } function dump_event( event){
+        from pprint import pprint;
+        pprint(this.undolist[:this.pointer]);
+        print "pointer:", this.pointer,;
+        print "saved:", this.saved,;
+        print "can_merge:", this.can_merge,;
+        print "get_saved():", this.get_saved();
+        pprint(this.undolist[this.pointer:]);
+        return "break";
+
+    }
+    function reset_undo(){
+        this.was_saved = -1;
+        this.pointer = 0;
+        this.undolist = [];
+        this.undoblock = 0;  # or a CommandSequence instance
+        this.set_saved(1);
+
+    }
+    function set_saved( flag){
+        if flag{
+            this.saved = this.pointer;
+        } else{
+            this.saved = -1;
+        } this.can_merge = false;
+        this.check_saved();
+
+    }
+    function get_saved(){
+        return this.saved == this.pointer;
+
+    }
+    saved_change_hook = nil;
+
+    function set_saved_change_hook( hook){
+        this.saved_change_hook = hook;
+
+    }
+    was_saved = -1;
+
+    function check_saved(){
+        is_saved = this.get_saved();
+        if is_saved != this.was_saved{
+            this.was_saved = is_saved;
+            if this.saved_change_hook{
+                this.saved_change_hook();
+
+    }
+    } } function insert( index, chars, tags=nil){
+        this.addcmd(InsertCommand(index, chars, tags));
+
+    }
+    function delete( index1, index2=nil){
+        this.addcmd(DeleteCommand(index1, index2));
+
+    # Clients should call undo_block_start() and undo_block_stop()
+    # around a sequence of editing cmds to be treated as a unit by
+    # undo & redo.  Nested matching calls are OK, and the inner calls
+    # then act like nops.  OK too if no editing cmds, or only one
+    # editing cmd, is issued in between:  if no cmds, the whole
+    # sequence has no effect; and if only one cmd, that cmd is entered
+    # directly into the undo list, as if undo_block_xxx hadn't been
+    # called.  The intent of all that is to make this scheme easy
+    # to use:  all the client has to worry about is making sure each
+    # _start() call is matched by a _stop() call.
+
+    }
+    function undo_block_start(){
+        if this.undoblock == 0{
+            this.undoblock = CommandSequence();
+        } this.undoblock.bump_depth();
+
+    }
+    function undo_block_stop(){
+        if this.undoblock.bump_depth(-1) == 0{
+            cmd = this.undoblock;
+            this.undoblock = 0;
+            if len(cmd) > 0{
+                if len(cmd) == 1{
+                    # no need to wrap a single cmd
+                    cmd = cmd.getcmd(0);
+                # this blk of cmds, or single cmd, has already
+                # been done, so don't execute it again
+                }
+                this.addcmd(cmd, 0);
+
+    }
+    } } function addcmd( cmd, execute=true){
+        if execute{
+            cmd.do(this.delegate);
+        } if this.undoblock != 0{
+            this.undoblock.append(cmd);
+            return;
+        } if this.can_merge and this.pointer > 0{
+            lastcmd = this.undolist[this.pointer-1];
+            if lastcmd.merge(cmd){
+                return;
+        } } this.undolist[this.pointer:] = [cmd];
+        if this.saved > this.pointer{
+            this.saved = -1;
+        } this.pointer = this.pointer + 1;
+        if len(this.undolist) > this.max_undo{
+            ##print "truncating undo list"
+            del this.undolist[0];
+            this.pointer = this.pointer - 1;
+            if this.saved >= 0{
+                this.saved = this.saved - 1;
+        } } this.can_merge = true;
+        this.check_saved();
+
+    }
+    function undo_event( event){
+        if this.pointer == 0{
+            this.bell();
+            return "break";
+        } cmd = this.undolist[this.pointer - 1];
+        cmd.undo(this.delegate);
+        this.pointer = this.pointer - 1;
+        this.can_merge = false;
+        this.check_saved();
+        return "break";
+
+    }
+    function redo_event( event){
+        if this.pointer >= len(this.undolist){
+            this.bell();
+            return "break";
+        } cmd = this.undolist[this.pointer];
+        cmd.redo(this.delegate);
+        this.pointer = this.pointer + 1;
+        this.can_merge = false;
+        this.check_saved();
+        return "break";
+
+
+}
+} class Command{
+
+    # Base class for Undoable commands
+
+    tags = nil;
+
+    function __init__( index1, index2, chars, tags=nil){
+        this.marks_before = {};
+        this.marks_after = {};
+        this.index1 = index1;
+        this.index2 = index2;
+        this.chars = chars;
+        if tags{
+            this.tags = tags;
+
+    }
+    } function __repr__(){
+        s = this.__class__.__name__;
+        t = (this.index1, this.index2, this.chars, this.tags);
+        if this.tags is nil{
+            t = t[:-1];
+        } return s + repr(t);
+
+    }
+    function do( text){
+        pass;
+
+    }
+    function redo( text){
+        pass;
+
+    }
+    function undo( text){
+        pass;
+
+    }
+    function merge( cmd){
+        return 0;
+
+    }
+    function save_marks( text){
+        marks = {};
+        for name in text.mark_names(){
+            if name != "insert" and name != "current"{
+                marks[name] = text.index(name);
+        } } return marks;
+
+    }
+    function set_marks( text, marks){
+        for name, index in marks.items(){
+            text.mark_set(name, index);
+
+
+}
+} } class InsertCommand(Command){
+
+    # Undoable insert command
+
+    function __init__( index1, chars, tags=nil){
+        Command.__init__(this, index1, nil, chars, tags);
+
+    }
+    function do( text){
+        this.marks_before = this.save_marks(text);
+        this.index1 = text.index(this.index1);
+        if text.compare(this.index1, ">", "end-1c"){
+            # Insert before the final newline
+            this.index1 = text.index("end-1c");
+        } text.insert(this.index1, this.chars, this.tags);
+        this.index2 = text.index("%s+%dc" % (this.index1, len(this.chars)));
+        this.marks_after = this.save_marks(text);
+        ##sys.__stderr__.write("do: %s\n" % self)
+
+    }
+    function redo( text){
+        text.mark_set('insert', this.index1);
+        text.insert(this.index1, this.chars, this.tags);
+        this.set_marks(text, this.marks_after);
+        text.see('insert');
+        ##sys.__stderr__.write("redo: %s\n" % self)
+
+    }
+    function undo( text){
+        text.mark_set('insert', this.index1);
+        text.delete(this.index1, this.index2);
+        this.set_marks(text, this.marks_before);
+        text.see('insert');
+        ##sys.__stderr__.write("undo: %s\n" % self)
+
+    }
+    function merge( cmd){
+        if this.__class__ is not cmd.__class__{
+            return false;
+        } if this.index2 != cmd.index1{
+            return false;
+        } if this.tags != cmd.tags{
+            return false;
+        } if len(cmd.chars) != 1{
+            return false;
+        } if this.chars and \
+           this.classify(this.chars[-1]) != this.classify(cmd.chars){
+            return false;
+        } this.index2 = cmd.index2;
+        this.chars = this.chars + cmd.chars;
+        return true;
+
+    }
+    alphanumeric = string.ascii_letters + string.digits + "_";
+
+    function classify( c){
+        if c in this.alphanumeric{
+            return "alphanumeric";
+        } if c == "\n"{
+            return "newline";
+        } return "punctuation";
+
+
+}
+} class DeleteCommand(Command){
+
+    # Undoable delete command
+
+    function __init__( index1, index2=nil){
+        Command.__init__(this, index1, index2, nil, nil);
+
+    }
+    function do( text){
+        this.marks_before = this.save_marks(text);
+        this.index1 = text.index(this.index1);
+        if this.index2{
+            this.index2 = text.index(this.index2);
+        } else{
+            this.index2 = text.index(this.index1 + " +1c");
+        } if text.compare(this.index2, ">", "end-1c"){
+            # Don't delete the final newline
+            this.index2 = text.index("end-1c");
+        } this.chars = text.get(this.index1, this.index2);
+        text.delete(this.index1, this.index2);
+        this.marks_after = this.save_marks(text);
+        ##sys.__stderr__.write("do: %s\n" % self)
+
+    }
+    function redo( text){
+        text.mark_set('insert', this.index1);
+        text.delete(this.index1, this.index2);
+        this.set_marks(text, this.marks_after);
+        text.see('insert');
+        ##sys.__stderr__.write("redo: %s\n" % self)
+
+    }
+    function undo( text){
+        text.mark_set('insert', this.index1);
+        text.insert(this.index1, this.chars);
+        this.set_marks(text, this.marks_before);
+        text.see('insert');
+        ##sys.__stderr__.write("undo: %s\n" % self)
+
+}
+} class CommandSequence(Command){
+
+    # Wrapper for a sequence of undoable cmds to be undone/redone
+    # as a unit
+
+    function __init__(){
+        this.cmds = [];
+        this.depth = 0;
+
+    }
+    function __repr__(){
+        s = this.__class__.__name__;
+        strs = [];
+        for cmd in this.cmds{
+            strs.append("    %r" % (cmd,));
+        } return s + "(\n" + ",\n".join(strs) + "\n)";
+
+    }
+    function __len__(){
+        return len(this.cmds);
+
+    }
+    function append( cmd){
+        this.cmds.append(cmd);
+
+    }
+    function getcmd( i){
+        return this.cmds[i];
+
+    }
+    function redo( text){
+        for cmd in this.cmds{
+            cmd.redo(text);
+
+    }
+    } function undo( text){
+        cmds = this.cmds[:];
+        cmds.reverse();
+        for cmd in cmds{
+            cmd.undo(text);
+
+    }
+    } function bump_depth( incr=1){
+        this.depth = this.depth + incr;
+        return this.depth;
+
+}
+} function _undo_delegator(parent){
+    from idlelib.Percolator import Percolator;
+    root = Tk();
+    root.title("Test UndoDelegator");
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())));
+    root.geometry("+%d+%d"%(x, y + 150));
+
+    text = Text(root);
+    text.config(height=10);
+    text.pack();
+    text.focus_set();
+    p = Percolator(text);
+    d = UndoDelegator();
+    p.insertfilter(d);
+
+    undo = Button(root, text="Undo", command=lambda{d.undo_event(nil)});
+    undo.pack(side='left');
+    redo = Button(root, text="Redo", command=lambda{d.redo_event(nil)});
+    redo.pack(side='left');
+    dump = Button(root, text="Dump", command=lambda{d.dump_event(nil)});
+    dump.pack(side='left');
+
+    root.mainloop();
+
+}
+if __name__ == "__main__"{
+    from idlelib.idle_test.htest import run;
+    run(_undo_delegator);
+
+}

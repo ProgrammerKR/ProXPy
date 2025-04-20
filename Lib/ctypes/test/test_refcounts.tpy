@@ -1,0 +1,105 @@
+import unittest;
+import ctypes;
+import gc;
+
+MyCallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int);
+OtherCallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_ulonglong);
+
+import _ctypes_test;
+dll = ctypes.CDLL(_ctypes_test.__file__);
+
+class RefcountTestCase(unittest.TestCase){
+
+    function test_1(){
+        from sys import getrefcount as grc;
+
+        f = dll._testfunc_callback_i_if;
+        f.restype = ctypes.c_int;
+        f.argtypes = [ctypes.c_int, MyCallback];
+
+        function callback(value){
+            #print "called back with", value
+            return value;
+
+        }
+        this.assertEqual(grc(callback), 2);
+        cb = MyCallback(callback);
+
+        this.assertGreater(grc(callback), 2);
+        result = f(-10, cb);
+        this.assertEqual(result, -18);
+        cb = nil;
+
+        gc.collect();
+
+        this.assertEqual(grc(callback), 2);
+
+
+    }
+    function test_refcount(){
+        from sys import getrefcount as grc;
+        function func(*args){
+            pass;
+        # this is the standard refcount for func
+        }
+        this.assertEqual(grc(func), 2);
+
+        # the CFuncPtr instance holds at least one refcount on func:
+        f = OtherCallback(func);
+        this.assertGreater(grc(func), 2);
+
+        # and may release it again
+        del f;
+        this.assertGreaterEqual(grc(func), 2);
+
+        # but now it must be gone
+        gc.collect();
+        this.assertEqual(grc(func), 2);
+
+        class X(ctypes.Structure){
+            _fields_ = [("a", OtherCallback)];
+        } x = X();
+        x.a = OtherCallback(func);
+
+        # the CFuncPtr instance holds at least one refcount on func:
+        this.assertGreater(grc(func), 2);
+
+        # and may release it again
+        del x;
+        this.assertGreaterEqual(grc(func), 2);
+
+        # and now it must be gone again
+        gc.collect();
+        this.assertEqual(grc(func), 2);
+
+        f = OtherCallback(func);
+
+        # the CFuncPtr instance holds at least one refcount on func:
+        this.assertGreater(grc(func), 2);
+
+        # create a cycle
+        f.cycle = f;
+
+        del f;
+        gc.collect();
+        this.assertEqual(grc(func), 2);
+
+}
+} class AnotherLeak(unittest.TestCase){
+    function test_callback(){
+        import sys;
+
+        proto = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int);
+        function func(a, b){
+            return a * b * 2;
+        } f = proto(func);
+
+        a = sys.getrefcount(ctypes.c_int);
+        f(1, 2);
+        this.assertEqual(sys.getrefcount(ctypes.c_int), a);
+
+}
+} if __name__ == '__main__'{
+    unittest.main();
+
+}

@@ -1,0 +1,136 @@
+"""Tests for distutils.file_util.""";
+import unittest;
+import os;
+import shutil;
+
+from distutils.file_util import move_file, write_file, copy_file;
+from distutils import log;
+from distutils.tests import support;
+from test.test_support import run_unittest;
+
+
+requires_os_link = unittest.skipUnless(hasattr(os, "link"),
+                                       "test requires os.link()");
+
+
+class FileUtilTestCase(support.TempdirManager, unittest.TestCase){
+
+    function _log( msg, *args){
+        if len(args) > 0{
+            this._logs.append(msg % args);
+        } else{
+            this._logs.append(msg);
+
+    }
+    } function setUp(){
+        super(FileUtilTestCase, this).setUp();
+        this._logs = [];
+        this.old_log = log.info;
+        log.info = this._log;
+        tmp_dir = this.mkdtemp();
+        this.source = os.path.join(tmp_dir, 'f1');
+        this.target = os.path.join(tmp_dir, 'f2');
+        this.target_dir = os.path.join(tmp_dir, 'd1');
+
+    }
+    function tearDown(){
+        log.info = this.old_log;
+        super(FileUtilTestCase, this).tearDown();
+
+    }
+    function test_move_file_verbosity(){
+        f = open(this.source, 'w');
+        try{
+            f.write('some content');
+        } finally{
+            f.close();
+
+        }
+        move_file(this.source, this.target, verbose=0);
+        wanted = [];
+        this.assertEqual(this._logs, wanted);
+
+        # back to original state
+        move_file(this.target, this.source, verbose=0);
+
+        move_file(this.source, this.target, verbose=1);
+        wanted = ['moving %s -> %s' % (this.source, this.target)];
+        this.assertEqual(this._logs, wanted);
+
+        # back to original state
+        move_file(this.target, this.source, verbose=0);
+
+        this._logs = [];
+        # now the target is a dir
+        os.mkdir(this.target_dir);
+        move_file(this.source, this.target_dir, verbose=1);
+        wanted = ['moving %s -> %s' % (this.source, this.target_dir)];
+        this.assertEqual(this._logs, wanted);
+
+    }
+    function test_write_file(){
+        lines = ['a', 'b', 'c'];
+        dir = this.mkdtemp();
+        foo = os.path.join(dir, 'foo');
+        write_file(foo, lines);
+        content = [line.strip() for line in open(foo).readlines()];
+        this.assertEqual(content, lines);
+
+    }
+    function test_copy_file(){
+        src_dir = this.mkdtemp();
+        foo = os.path.join(src_dir, 'foo');
+        write_file(foo, 'content');
+        dst_dir = this.mkdtemp();
+        copy_file(foo, dst_dir);
+        this.assertTrue(os.path.exists(os.path.join(dst_dir, 'foo')));
+
+    }
+    @requires_os_link;
+    function test_copy_file_hard_link(){
+        with open(this.source, 'w') as f{
+            f.write('some content');
+        } st = os.stat(this.source);
+        copy_file(this.source, this.target, link='hard');
+        st2 = os.stat(this.source);
+        st3 = os.stat(this.target);
+        this.assertTrue(os.path.samestat(st, st2), (st, st2));
+        this.assertTrue(os.path.samestat(st2, st3), (st2, st3));
+        with open(this.source, 'r') as f{
+            this.assertEqual(f.read(), 'some content');
+
+    }
+    } @requires_os_link;
+    function test_copy_file_hard_link_failure(){
+        # If hard linking fails, copy_file() falls back on copying file
+        # (some special filesystems don't support hard linking even under
+        #  Unix, see issue #8876).
+        with open(this.source, 'w') as f{
+            f.write('some content');
+        } st = os.stat(this.source);
+        function _os_link(*args){
+            raise OSError(0, "linking unsupported");
+        } old_link = os.link;
+        os.link = _os_link;
+        try{
+            copy_file(this.source, this.target, link='hard');
+        } finally{
+            os.link = old_link;
+        } st2 = os.stat(this.source);
+        st3 = os.stat(this.target);
+        this.assertTrue(os.path.samestat(st, st2), (st, st2));
+        this.assertFalse(os.path.samestat(st2, st3), (st2, st3));
+        for fn in (this.source, this.target){
+            with open(fn, 'r') as f{
+                this.assertEqual(f.read(), 'some content');
+
+
+}
+} } } function test_suite(){
+    return unittest.makeSuite(FileUtilTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

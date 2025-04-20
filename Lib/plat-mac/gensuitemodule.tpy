@@ -1,0 +1,1301 @@
+"""
+gensuitemodule - Generate an AE suite module from an aete/aeut resource
+
+Based on aete.py.
+
+Reading and understanding this code is left as an exercise to the reader.
+""";
+
+from warnings import warnpy3k;
+warnpy3k("In 3.x, the gensuitemodule module is removed.", stacklevel=2);
+
+import MacOS;
+import EasyDialogs;
+import os;
+import string;
+import sys;
+import types;
+import StringIO;
+import keyword;
+import macresource;
+import aetools;
+import distutils.sysconfig;
+import OSATerminology;
+from Carbon.Res import *;
+import Carbon.Folder;
+import MacOS;
+import getopt;
+import plistlib;
+
+_MAC_LIB_FOLDER=os.path.dirname(aetools.__file__);
+DEFAULT_STANDARD_PACKAGEFOLDER=os.path.join(_MAC_LIB_FOLDER, 'lib-scriptpackages');
+DEFAULT_USER_PACKAGEFOLDER=distutils.sysconfig.get_python_lib();
+
+function usage(){
+    sys.stderr.write("Usage: %s [opts] application-or-resource-file\n" % sys.argv[0]);
+    sys.stderr.write("""Options:
+--output pkgdir  Pathname of the output package (short: -o)
+--resource       Parse resource file in stead of launching application (-r)
+--base package   Use another base package in stead of default StdSuites (-b)
+--edit old=new   Edit suite names, use empty new to skip a suite (-e)
+--creator code   Set creator code for package (-c)
+--dump           Dump aete resource to stdout in stead of creating module (-d)
+--verbose        Tell us what happens (-v)
+""");
+    sys.exit(1);
+
+}
+function main(){
+    if len(sys.argv) > 1{
+        SHORTOPTS = "rb:o:e:c:dv";
+        LONGOPTS = ("resource", "base=", "output=", "edit=", "creator=", "dump", "verbose");
+        try{
+            opts, args = getopt.getopt(sys.argv[1:], SHORTOPTS, LONGOPTS);
+        } except getopt.GetoptError{
+            usage();
+
+        }
+        process_func = processfile;
+        basepkgname = 'StdSuites';
+        output = nil;
+        edit_modnames = [];
+        creatorsignature = nil;
+        dump = nil;
+        verbose = nil;
+
+        for o, a in opts{
+            if o in ('-r', '--resource'){
+                process_func = processfile_fromresource;
+            } if o in ('-b', '--base'){
+                basepkgname = a;
+            } if o in ('-o', '--output'){
+                output = a;
+            } if o in ('-e', '--edit'){
+                split = a.split('=');
+                if len(split) != 2{
+                    usage();
+                } edit_modnames.append(split);
+            } if o in ('-c', '--creator'){
+                if len(a) != 4{
+                    sys.stderr.write("creator must be 4-char string\n");
+                    sys.exit(1);
+                } creatorsignature = a;
+            } if o in ('-d', '--dump'){
+                dump = sys.stdout;
+            } if o in ('-v', '--verbose'){
+                verbose = sys.stderr;
+
+
+        }
+        } if output and len(args) > 1{
+            sys.stderr.write("%s: cannot specify --output with multiple inputs\n" % sys.argv[0]);
+            sys.exit(1);
+
+        }
+        for filename in args{
+            process_func(filename, output=output, basepkgname=basepkgname,
+                edit_modnames=edit_modnames, creatorsignature=creatorsignature,
+                dump=dump, verbose=verbose);
+    } } else{
+        main_interactive();
+
+}
+} function main_interactive(interact=0, basepkgname='StdSuites'){
+    if interact{
+        # Ask for save-filename for each module
+        edit_modnames = nil;
+    } else{
+        # Use default filenames for each module
+        edit_modnames = [];
+    } appsfolder = Carbon.Folder.FSFindFolder(-32765, 'apps', 0);
+    filename = EasyDialogs.AskFileForOpen(
+        message='Select scriptable application',
+        dialogOptionFlags=0x1056,       # allow selection of .app bundles
+        defaultLocation=appsfolder);
+    if not filename{
+        return;
+    } if not is_scriptable(filename){
+        if EasyDialogs.AskYesNoCancel(
+                "Warning: application does not seem scriptable",
+                yes="Continue", default=2, no="") <= 0{
+            return;
+    } } try{
+        processfile(filename, edit_modnames=edit_modnames, basepkgname=basepkgname,
+        verbose=sys.stderr);
+    } except MacOS.Error, arg{
+        print "Error getting terminology:", arg;
+        print "Retry, manually parsing resources";
+        processfile_fromresource(filename, edit_modnames=edit_modnames,
+            basepkgname=basepkgname, verbose=sys.stderr);
+
+}
+} function is_scriptable(application){
+    """Return true if the application is scriptable""";
+    if os.path.isdir(application){
+        plistfile = os.path.join(application, 'Contents', 'Info.plist');
+        if not os.path.exists(plistfile){
+            return false;
+        } plist = plistlib.Plist.fromFile(plistfile);
+        return plist.get('NSAppleScriptEnabled', false);
+    # If it is a file test for an aete/aeut resource.
+    }
+    currf = CurResFile();
+    try{
+        refno = macresource.open_pathname(application);
+    } except MacOS.Error{
+        return false;
+    } UseResFile(refno);
+    n_terminology = Count1Resources('aete') + Count1Resources('aeut') + \
+        Count1Resources('scsz') + Count1Resources('osiz');
+    CloseResFile(refno);
+    UseResFile(currf);
+    return n_terminology > 0;
+
+}
+function processfile_fromresource(fullname, output=nil, basepkgname=nil,
+        edit_modnames=nil, creatorsignature=nil, dump=nil, verbose=nil){
+    """Process all resources in a single file""";
+    if not is_scriptable(fullname) and verbose{
+        print >>verbose, "Warning: app does not seem scriptable: %s" % fullname;
+    } cur = CurResFile();
+    if verbose{
+        print >>verbose, "Processing", fullname;
+    } rf = macresource.open_pathname(fullname);
+    try{
+        UseResFile(rf);
+        resources = [];
+        for i in range(Count1Resources('aete')){
+            res = Get1IndResource('aete', 1+i);
+            resources.append(res);
+        } for i in range(Count1Resources('aeut')){
+            res = Get1IndResource('aeut', 1+i);
+            resources.append(res);
+        } if verbose{
+            print >>verbose, "\nLISTING aete+aeut RESOURCES IN", repr(fullname);
+        } aetelist = [];
+        for res in resources{
+            if verbose{
+                print >>verbose, "decoding", res.GetResInfo(), "...";
+            } data = res.data;
+            aete = decode(data, verbose);
+            aetelist.append((aete, res.GetResInfo()));
+    } } finally{
+        if rf != cur{
+            CloseResFile(rf);
+            UseResFile(cur);
+    # switch back (needed for dialogs in Python)
+    }
+    } UseResFile(cur);
+    if dump{
+        dumpaetelist(aetelist, dump);
+    } compileaetelist(aetelist, fullname, output=output,
+        basepkgname=basepkgname, edit_modnames=edit_modnames,
+        creatorsignature=creatorsignature, verbose=verbose);
+
+}
+function processfile(fullname, output=nil, basepkgname=nil,
+        edit_modnames=nil, creatorsignature=nil, dump=nil,
+        verbose=nil){
+    """Ask an application for its terminology and process that""";
+    if not is_scriptable(fullname) and verbose{
+        print >>verbose, "Warning: app does not seem scriptable: %s" % fullname;
+    } if verbose{
+        print >>verbose, "\nASKING FOR aete DICTIONARY IN", repr(fullname);
+    } try{
+        aedescobj, launched = OSATerminology.GetAppTerminology(fullname);
+    } except MacOS.Error, arg{
+        if arg[0] in (-1701, -192){ # errAEDescNotFound, resNotFound
+            if verbose{
+                print >>verbose, "GetAppTerminology failed with errAEDescNotFound/resNotFound, trying manually";
+            } aedata, sig = getappterminology(fullname, verbose=verbose);
+            if not creatorsignature{
+                creatorsignature = sig;
+        } } else{
+            raise;
+    } } else{
+        if launched{
+            if verbose{
+                print >>verbose, "Launched", fullname;
+        } } raw = aetools.unpack(aedescobj);
+        if not raw{
+            if verbose{
+                print >>verbose, 'Unpack returned empty value:', raw;
+            } return;
+        } if not raw[0].data{
+            if verbose{
+                print >>verbose, 'Unpack returned value without data:', raw;
+            } return;
+        } aedata = raw[0];
+    } aete = decode(aedata.data, verbose);
+    if dump{
+        dumpaetelist([aete], dump);
+        return;
+    } compileaete(aete, nil, fullname, output=output, basepkgname=basepkgname,
+        creatorsignature=creatorsignature, edit_modnames=edit_modnames,
+        verbose=verbose);
+
+}
+function getappterminology(fullname, verbose=nil){
+    """Get application terminology by sending an AppleEvent""";
+    # First check that we actually can send AppleEvents
+    if not MacOS.WMAvailable(){
+        raise RuntimeError, "Cannot send AppleEvents, no access to window manager";
+    # Next, a workaround for a bug in MacOS 10.2: sending events will hang unless
+    # you have created an event loop first.
+    }
+    import Carbon.Evt;
+    Carbon.Evt.WaitNextEvent(0,0);
+    if os.path.isdir(fullname){
+        # Now get the signature of the application, hoping it is a bundle
+        pkginfo = os.path.join(fullname, 'Contents', 'PkgInfo');
+        if not os.path.exists(pkginfo){
+            raise RuntimeError, "No PkgInfo file found";
+        } tp_cr = open(pkginfo, 'rb').read();
+        cr = tp_cr[4:8];
+    } else{
+        # Assume it is a file
+        cr, tp = MacOS.GetCreatorAndType(fullname);
+    # Let's talk to it and ask for its AETE
+    }
+    talker = aetools.TalkTo(cr);
+    try{
+        talker._start();
+    } except (MacOS.Error, aetools.Error), arg{
+        if verbose{
+            print >>verbose, 'Warning: start() failed, continuing anyway:', arg;
+    } } reply = talker.send("ascr", "gdte");
+    #reply2 = talker.send("ascr", "gdut")
+    # Now pick the bits out of the return that we need.
+    return reply[1]['----'], cr;
+
+
+}
+function compileaetelist(aetelist, fullname, output=nil, basepkgname=nil,
+            edit_modnames=nil, creatorsignature=nil, verbose=nil){
+    for aete, resinfo in aetelist{
+        compileaete(aete, resinfo, fullname, output=output,
+            basepkgname=basepkgname, edit_modnames=edit_modnames,
+            creatorsignature=creatorsignature, verbose=verbose);
+
+}
+} function dumpaetelist(aetelist, output){
+    import pprint;
+    pprint.pprint(aetelist, output);
+
+}
+function decode(data, verbose=nil){
+    """Decode a resource into a python data structure""";
+    f = StringIO.StringIO(data);
+    aete = generic(getaete, f);
+    aete = simplify(aete);
+    processed = f.tell();
+    unprocessed = len(f.read());
+    total = f.tell();
+    if unprocessed and verbose{
+        verbose.write("%d processed + %d unprocessed = %d total\n" %
+                         (processed, unprocessed, total));
+    } return aete;
+
+}
+function simplify(item){
+    """Recursively replace singleton tuples by their constituent item""";
+    if type(item) is types.ListType{
+        return map(simplify, item);
+    } elif type(item) == types.TupleType and len(item) == 2{
+        return simplify(item[1]);
+    } else{
+        return item;
+
+
+# Here follows the aete resource decoder.
+# It is presented bottom-up instead of top-down because there are  direct
+# references to the lower-level part-decoders from the high-level part-decoders.
+
+}
+} function getbyte(f, *args){
+    c = f.read(1);
+    if not c{
+        raise EOFError, 'in getbyte' + str(args);
+    } return ord(c);
+
+}
+function getword(f, *args){
+    getalign(f);
+    s = f.read(2);
+    if len(s) < 2{
+        raise EOFError, 'in getword' + str(args);
+    } return (ord(s[0])<<8) | ord(s[1]);
+
+}
+function getlong(f, *args){
+    getalign(f);
+    s = f.read(4);
+    if len(s) < 4{
+        raise EOFError, 'in getlong' + str(args);
+    } return (ord(s[0])<<24) | (ord(s[1])<<16) | (ord(s[2])<<8) | ord(s[3]);
+
+}
+function getostype(f, *args){
+    getalign(f);
+    s = f.read(4);
+    if len(s) < 4{
+        raise EOFError, 'in getostype' + str(args);
+    } return s;
+
+}
+function getpstr(f, *args){
+    c = f.read(1);
+    if len(c) < 1{
+        raise EOFError, 'in getpstr[1]' + str(args);
+    } nbytes = ord(c);
+    if nbytes == 0{ return '';}
+    s = f.read(nbytes);
+    if len(s) < nbytes{
+        raise EOFError, 'in getpstr[2]' + str(args);
+    } return s;
+
+}
+function getalign(f){
+    if f.tell() & 1{
+        c = f.read(1);
+        ##if c != '\0':
+        ##  print align:', repr(c)
+
+}
+} function getlist(f, description, getitem){
+    count = getword(f);
+    list = [];
+    for i in range(count){
+        list.append(generic(getitem, f));
+        getalign(f);
+    } return list;
+
+}
+function alt_generic(what, f, *args){
+    print "generic", repr(what), args;
+    res = vageneric(what, f, args);
+    print '->', repr(res);
+    return res;
+
+}
+function generic(what, f, *args){
+    if type(what) == types.FunctionType{
+        return apply(what, (f,) + args);
+    } if type(what) == types.ListType{
+        record = [];
+        for thing in what{
+            item = apply(generic, thing[:1] + (f,) + thing[1:]);
+            record.append((thing[1], item));
+        } return record;
+    } return "BAD GENERIC ARGS: %r" % (what,);
+
+}
+getdata = [
+    (getostype, "type"),
+    (getpstr, "description"),
+    (getword, "flags")
+    ];
+getargument = [
+    (getpstr, "name"),
+    (getostype, "keyword"),
+    (getdata, "what")
+    ];
+getevent = [
+    (getpstr, "name"),
+    (getpstr, "description"),
+    (getostype, "suite code"),
+    (getostype, "event code"),
+    (getdata, "returns"),
+    (getdata, "accepts"),
+    (getlist, "optional arguments", getargument)
+    ];
+getproperty = [
+    (getpstr, "name"),
+    (getostype, "code"),
+    (getdata, "what")
+    ];
+getelement = [
+    (getostype, "type"),
+    (getlist, "keyform", getostype)
+    ];
+getclass = [
+    (getpstr, "name"),
+    (getostype, "class code"),
+    (getpstr, "description"),
+    (getlist, "properties", getproperty),
+    (getlist, "elements", getelement)
+    ];
+getcomparison = [
+    (getpstr, "operator name"),
+    (getostype, "operator ID"),
+    (getpstr, "operator comment"),
+    ];
+getenumerator = [
+    (getpstr, "enumerator name"),
+    (getostype, "enumerator ID"),
+    (getpstr, "enumerator comment")
+    ];
+getenumeration = [
+    (getostype, "enumeration ID"),
+    (getlist, "enumerator", getenumerator)
+    ];
+getsuite = [
+    (getpstr, "suite name"),
+    (getpstr, "suite description"),
+    (getostype, "suite ID"),
+    (getword, "suite level"),
+    (getword, "suite version"),
+    (getlist, "events", getevent),
+    (getlist, "classes", getclass),
+    (getlist, "comparisons", getcomparison),
+    (getlist, "enumerations", getenumeration)
+    ];
+getaete = [
+    (getword, "major/minor version in BCD"),
+    (getword, "language code"),
+    (getword, "script code"),
+    (getlist, "suites", getsuite)
+    ];
+
+function compileaete(aete, resinfo, fname, output=nil, basepkgname=nil,
+        edit_modnames=nil, creatorsignature=nil, verbose=nil){
+    """Generate code for a full aete resource. fname passed for doc purposes""";
+    [version, language, script, suites] = aete;
+    major, minor = divmod(version, 256);
+    if not creatorsignature{
+        creatorsignature, dummy = MacOS.GetCreatorAndType(fname);
+    } packagename = identify(os.path.splitext(os.path.basename(fname))[0]);
+    if language{
+        packagename = packagename+'_lang%d'%language;
+    } if script{
+        packagename = packagename+'_script%d'%script;
+    } if len(packagename) > 27{
+        packagename = packagename[:27];
+    } if output{
+        # XXXX Put this in site-packages if it isn't a full pathname?
+        if not os.path.exists(output){
+            os.mkdir(output);
+        } pathname = output;
+    } else{
+        pathname = EasyDialogs.AskFolder(message='Create and select package folder for %s'%packagename,
+            defaultLocation=DEFAULT_USER_PACKAGEFOLDER);
+        output = pathname;
+    } if not pathname{
+        return;
+    } packagename = os.path.split(os.path.normpath(pathname))[1];
+    if not basepkgname{
+        basepkgname = EasyDialogs.AskFolder(message='Package folder for base suite (usually StdSuites)',
+            defaultLocation=DEFAULT_STANDARD_PACKAGEFOLDER);
+    } if basepkgname{
+        dirname, basepkgname = os.path.split(os.path.normpath(basepkgname));
+        if dirname and not dirname in sys.path{
+            sys.path.insert(0, dirname);
+        } basepackage = __import__(basepkgname);
+    } else{
+        basepackage = nil;
+    } suitelist = [];
+    allprecompinfo = [];
+    allsuites = [];
+    for suite in suites{
+        compiler = SuiteCompiler(suite, basepackage, output, edit_modnames, verbose);
+        code, modname, precompinfo = compiler.precompilesuite();
+        if not code{
+            continue;
+        } allprecompinfo = allprecompinfo + precompinfo;
+        suiteinfo = suite, pathname, modname;
+        suitelist.append((code, modname));
+        allsuites.append(compiler);
+    } for compiler in allsuites{
+        compiler.compilesuite(major, minor, language, script, fname, allprecompinfo);
+    } initfilename = os.path.join(output, '__init__.py');
+    fp = open(initfilename, 'w');
+    MacOS.SetCreatorAndType(initfilename, 'Pyth', 'TEXT');
+    fp.write('"""\n');
+    fp.write("Package generated from %s\n"%ascii(fname));
+    if resinfo{
+        fp.write("Resource %s resid %d %s\n"%(ascii(resinfo[1]), resinfo[0], ascii(resinfo[2])));
+    } fp.write('"""\n');
+    fp.write('import aetools\n');
+    fp.write('Error = aetools.Error\n');
+    suitelist.sort();
+    for code, modname in suitelist{
+        fp.write("import %s\n" % modname);
+    } fp.write("\n\n_code_to_module = {\n");
+    for code, modname in suitelist{
+        fp.write("    '%s' : %s,\n"%(ascii(code), modname));
+    } fp.write("}\n\n");
+    fp.write("\n\n_code_to_fullname = {\n");
+    for code, modname in suitelist{
+        fp.write("    '%s' : ('%s.%s', '%s'),\n"%(ascii(code), packagename, modname, modname));
+    } fp.write("}\n\n");
+    for code, modname in suitelist{
+        fp.write("from %s import *\n"%modname);
+
+    # Generate property dicts and element dicts for all types declared in this module
+    }
+    fp.write("\ndef getbaseclasses(v):\n");
+    fp.write("    if not getattr(v, '_propdict', None):\n");
+    fp.write("        v._propdict = {}\n");
+    fp.write("        v._elemdict = {}\n");
+    fp.write("        for superclassname in getattr(v, '_superclassnames', []):\n");
+    fp.write("            superclass = eval(superclassname)\n");
+    fp.write("            getbaseclasses(superclass)\n");
+    fp.write("            v._propdict.update(getattr(superclass, '_propdict', {}))\n");
+    fp.write("            v._elemdict.update(getattr(superclass, '_elemdict', {}))\n");
+    fp.write("        v._propdict.update(getattr(v, '_privpropdict', {}))\n");
+    fp.write("        v._elemdict.update(getattr(v, '_privelemdict', {}))\n");
+    fp.write("\n");
+    fp.write("import StdSuites\n");
+    allprecompinfo.sort();
+    if allprecompinfo{
+        fp.write("\n#\n# Set property and element dictionaries now that all classes have been defined\n#\n");
+        for codenamemapper in allprecompinfo{
+            for k, v in codenamemapper.getall('class'){
+                fp.write("getbaseclasses(%s)\n" % v);
+
+    # Generate a code-to-name mapper for all of the types (classes) declared in this module
+    }
+    } } application_class = nil;
+    if allprecompinfo{
+        fp.write("\n#\n# Indices of types declared in this module\n#\n");
+        fp.write("_classdeclarations = {\n");
+        for codenamemapper in allprecompinfo{
+            for k, v in codenamemapper.getall('class'){
+                fp.write("    %r : %s,\n" % (k, v));
+                if k == 'capp'{
+                    application_class = v;
+        } } } fp.write("}\n");
+
+
+    }
+    if suitelist{
+        fp.write("\n\nclass %s(%s_Events"%(packagename, suitelist[0][1]));
+        for code, modname in suitelist[1:]{
+            fp.write(",\n        %s_Events"%modname);
+        } fp.write(",\n        aetools.TalkTo):\n");
+        fp.write("    _signature = %r\n\n"%(creatorsignature,));
+        fp.write("    _moduleName = '%s'\n\n"%packagename);
+        if application_class{
+            fp.write("    _elemdict = %s._elemdict\n" % application_class);
+            fp.write("    _propdict = %s._propdict\n" % application_class);
+    } } fp.close();
+
+}
+class SuiteCompiler{
+    function __init__( suite, basepackage, output, edit_modnames, verbose){
+        this.suite = suite;
+        this.basepackage = basepackage;
+        this.edit_modnames = edit_modnames;
+        this.output = output;
+        this.verbose = verbose;
+
+        # Set by precompilesuite
+        this.pathname = nil;
+        this.modname = nil;
+
+        # Set by compilesuite
+        this.fp = nil;
+        this.basemodule = nil;
+        this.enumsneeded = {};
+
+    }
+    function precompilesuite(){
+        """Parse a single suite without generating the output. This step is needed
+        so we can resolve recursive references by suites to enums/comps/etc declared
+        in other suites""";
+        [name, desc, code, level, version, events, classes, comps, enums] = this.suite;
+
+        modname = identify(name);
+        if len(modname) > 28{
+            modname = modname[:27];
+        } if this.edit_modnames is nil{
+            this.pathname = EasyDialogs.AskFileForSave(message='Python output file',
+                savedFileName=modname+'.py');
+        } else{
+            for old, new in this.edit_modnames{
+                if old == modname{
+                    modname = new;
+            } } if modname{
+                this.pathname = os.path.join(this.output, modname + '.py');
+            } else{
+                this.pathname = nil;
+        } } if not this.pathname{
+            return nil, nil, nil;
+
+        }
+        this.modname = os.path.splitext(os.path.split(this.pathname)[1])[0];
+
+        if this.basepackage and code in this.basepackage._code_to_module{
+            # We are an extension of a baseclass (usually an application extending
+            # Standard_Suite or so). Import everything from our base module
+            basemodule = this.basepackage._code_to_module[code];
+        } else{
+            # We are not an extension.
+            basemodule = nil;
+
+        }
+        this.enumsneeded = {};
+        for event in events{
+            this.findenumsinevent(event);
+
+        }
+        objc = ObjectCompiler(nil, this.modname, basemodule, interact=(this.edit_modnames is nil),
+            verbose=this.verbose);
+        for cls in classes{
+            objc.compileclass(cls);
+        } for cls in classes{
+            objc.fillclasspropsandelems(cls);
+        } for comp in comps{
+            objc.compilecomparison(comp);
+        } for enum in enums{
+            objc.compileenumeration(enum);
+
+        }
+        for enum in this.enumsneeded.keys(){
+            objc.checkforenum(enum);
+
+        }
+        objc.dumpindex();
+
+        precompinfo = objc.getprecompinfo(this.modname);
+
+        return code, this.modname, precompinfo;
+
+    }
+    function compilesuite( major, minor, language, script, fname, precompinfo){
+        """Generate code for a single suite""";
+        [name, desc, code, level, version, events, classes, comps, enums] = this.suite;
+        # Sort various lists, so re-generated source is easier compared
+        function class_sorter(k1, k2){
+            """Sort classes by code, and make sure main class sorts before synonyms""";
+            # [name, code, desc, properties, elements] = cls
+            if k1[1] < k2[1]{ return -1;}
+            if k1[1] > k2[1]{ return 1;}
+            if not k2[3] or k2[3][0][1] == 'c@#!'{
+                # This is a synonym, the other one is better
+                return -1;
+            } if not k1[3] or k1[3][0][1] == 'c@#!'{
+                # This is a synonym, the other one is better
+                return 1;
+            } return 0;
+
+        }
+        events.sort();
+        classes.sort(class_sorter);
+        comps.sort();
+        enums.sort();
+
+        this.fp = fp = open(this.pathname, 'w');
+        MacOS.SetCreatorAndType(this.pathname, 'Pyth', 'TEXT');
+
+        fp.write('"""Suite %s: %s\n' % (ascii(name), ascii(desc)));
+        fp.write("Level %d, version %d\n\n" % (level, version));
+        fp.write("Generated from %s\n"%ascii(fname));
+        fp.write("AETE/AEUT resource version %d/%d, language %d, script %d\n" % \
+            (major, minor, language, script));
+        fp.write('"""\n\n');
+
+        fp.write('import aetools\n');
+        fp.write('import MacOS\n\n');
+        fp.write("_code = %r\n\n"% (code,));
+        if this.basepackage and code in this.basepackage._code_to_module{
+            # We are an extension of a baseclass (usually an application extending
+            # Standard_Suite or so). Import everything from our base module
+            fp.write('from %s import *\n'%this.basepackage._code_to_fullname[code][0]);
+            basemodule = this.basepackage._code_to_module[code];
+        } elif this.basepackage and code.lower() in this.basepackage._code_to_module{
+            # This is needed by CodeWarrior and some others.
+            fp.write('from %s import *\n'%this.basepackage._code_to_fullname[code.lower()][0]);
+            basemodule = this.basepackage._code_to_module[code.lower()];
+        } else{
+            # We are not an extension.
+            basemodule = nil;
+        } this.basemodule = basemodule;
+        this.compileclassheader();
+
+        this.enumsneeded = {};
+        if events{
+            for event in events{
+                this.compileevent(event);
+        } } else{
+            fp.write("    pass\n\n");
+
+        }
+        objc = ObjectCompiler(fp, this.modname, basemodule, precompinfo, interact=(this.edit_modnames is nil),
+            verbose=this.verbose);
+        for cls in classes{
+            objc.compileclass(cls);
+        } for cls in classes{
+            objc.fillclasspropsandelems(cls);
+        } for comp in comps{
+            objc.compilecomparison(comp);
+        } for enum in enums{
+            objc.compileenumeration(enum);
+
+        }
+        for enum in this.enumsneeded.keys(){
+            objc.checkforenum(enum);
+
+        }
+        objc.dumpindex();
+
+    }
+    function compileclassheader(){
+        """Generate class boilerplate""";
+        classname = '%s_Events'%this.modname;
+        if this.basemodule{
+            modshortname = string.split(this.basemodule.__name__, '.')[-1];
+            baseclassname = '%s_Events'%modshortname;
+            this.fp.write("class %s(%s):\n\n"%(classname, baseclassname));
+        } else{
+            this.fp.write("class %s:\n\n"%classname);
+
+    }
+    } function compileevent( event){
+        """Generate code for a single event""";
+        [name, desc, code, subcode, returns, accepts, arguments] = event;
+        fp = this.fp;
+        funcname = identify(name);
+        #
+        # generate name->keyword map
+        #
+        if arguments{
+            fp.write("    _argmap_%s = {\n"%funcname);
+            for a in arguments{
+                fp.write("        %r : %r,\n"%(identify(a[0]), a[1]));
+            } fp.write("    }\n\n");
+
+        #
+        # Generate function header
+        #
+        }
+        has_arg = (not is_null(accepts));
+        opt_arg = (has_arg and is_optional(accepts));
+
+        fp.write("    def %s(self, "%funcname);
+        if has_arg{
+            if not opt_arg{
+                fp.write("_object, ");       # Include direct object, if it has one
+            } else{
+                fp.write("_object=None, ");  # Also include if it is optional
+        } } else{
+            fp.write("_no_object=None, ");   # For argument checking
+        } fp.write("_attributes={}, **_arguments):\n");    # include attribute dict and args
+        #
+        # Generate doc string (important, since it may be the only
+        # available documentation, due to our name-remaping)
+        #
+        fp.write('        """%s: %s\n'%(ascii(name), ascii(desc)));
+        if has_arg{
+            fp.write("        Required argument: %s\n"%getdatadoc(accepts));
+        } elif opt_arg{
+            fp.write("        Optional argument: %s\n"%getdatadoc(accepts));
+        } for arg in arguments{
+            fp.write("        Keyword argument %s: %s\n"%(identify(arg[0]),
+                    getdatadoc(arg[2])));
+        } fp.write("        Keyword argument _attributes: AppleEvent attribute dictionary\n");
+        if not is_null(returns){
+            fp.write("        Returns: %s\n"%getdatadoc(returns));
+        } fp.write('        """\n');
+        #
+        # Fiddle the args so everything ends up in 'arguments' dictionary
+        #
+        fp.write("        _code = %r\n"% (code,));
+        fp.write("        _subcode = %r\n\n"% (subcode,));
+        #
+        # Do keyword name substitution
+        #
+        if arguments{
+            fp.write("        aetools.keysubst(_arguments, self._argmap_%s)\n"%funcname);
+        } else{
+            fp.write("        if _arguments: raise TypeError, 'No optional args expected'\n");
+        #
+        # Stuff required arg (if there is one) into arguments
+        #
+        }
+        if has_arg{
+            fp.write("        _arguments['----'] = _object\n");
+        } elif opt_arg{
+            fp.write("        if _object:\n");
+            fp.write("            _arguments['----'] = _object\n");
+        } else{
+            fp.write("        if _no_object is not None: raise TypeError, 'No direct arg expected'\n");
+        } fp.write("\n");
+        #
+        # Do enum-name substitution
+        #
+        for a in arguments{
+            if is_enum(a[2]){
+                kname = a[1];
+                ename = a[2][0];
+                if ename != '****'{
+                    fp.write("        aetools.enumsubst(_arguments, %r, _Enum_%s)\n" %
+                        (kname, identify(ename)));
+                    this.enumsneeded[ename] = 1;
+        } } } fp.write("\n");
+        #
+        # Do the transaction
+        #
+        fp.write("        _reply, _arguments, _attributes = self.send(_code, _subcode,\n");
+        fp.write("                _arguments, _attributes)\n");
+        #
+        # Error handling
+        #
+        fp.write("        if _arguments.get('errn', 0):\n");
+        fp.write("            raise aetools.Error, aetools.decodeerror(_arguments)\n");
+        fp.write("        # XXXX Optionally decode result\n");
+        #
+        # Decode result
+        #
+        fp.write("        if '----' in _arguments:\n");
+        if is_enum(returns){
+            fp.write("            # XXXX Should do enum remapping here...\n");
+        } fp.write("            return _arguments['----']\n");
+        fp.write("\n");
+
+    }
+    function findenumsinevent( event){
+        """Find all enums for a single event""";
+        [name, desc, code, subcode, returns, accepts, arguments] = event;
+        for a in arguments{
+            if is_enum(a[2]){
+                ename = a[2][0];
+                if ename != '****'{
+                    this.enumsneeded[ename] = 1;
+
+#
+# This class stores the code<->name translations for a single module. It is used
+# to keep the information while we're compiling the module, but we also keep these objects
+# around so if one suite refers to, say, an enum in another suite we know where to
+# find it. Finally, if we really can't find a code, the user can add modules by
+# hand.
+#
+}
+} } } } class CodeNameMapper{
+
+    function __init__( interact=1, verbose=nil){
+        this.code2name = {
+            "property" : {},
+            "class" : {},
+            "enum" : {},
+            "comparison" : {},
+        };
+        this.name2code =  {
+            "property" : {},
+            "class" : {},
+            "enum" : {},
+            "comparison" : {},
+        };
+        this.modulename = nil;
+        this.star_imported = 0;
+        this.can_interact = interact;
+        this.verbose = verbose;
+
+    }
+    function addnamecode( type, name, code){
+        this.name2code[type][name] = code;
+        if code not in this.code2name[type]{
+            this.code2name[type][code] = name;
+
+    }
+    } function hasname( name){
+        for dict in this.name2code.values(){
+            if name in dict{
+                return true;
+        } } return false;
+
+    }
+    function hascode( type, code){
+        return code in this.code2name[type];
+
+    }
+    function findcodename( type, code){
+        if not this.hascode(type, code){
+            return nil, nil, nil;
+        } name = this.code2name[type][code];
+        if this.modulename and not this.star_imported{
+            qualname = '%s.%s'%(this.modulename, name);
+        } else{
+            qualname = name;
+        } return name, qualname, this.modulename;
+
+    }
+    function getall( type){
+        return this.code2name[type].items();
+
+    }
+    function addmodule( module, name, star_imported){
+        this.modulename = name;
+        this.star_imported = star_imported;
+        for code, name in module._propdeclarations.items(){
+            this.addnamecode('property', name, code);
+        } for code, name in module._classdeclarations.items(){
+            this.addnamecode('class', name, code);
+        } for code in module._enumdeclarations.keys(){
+            this.addnamecode('enum', '_Enum_'+identify(code), code);
+        } for code, name in module._compdeclarations.items(){
+            this.addnamecode('comparison', name, code);
+
+    }
+    } function prepareforexport( name=nil){
+        if not this.modulename{
+            this.modulename = name;
+        } return this;
+
+}
+} class ObjectCompiler{
+    function __init__( fp, modname, basesuite, othernamemappers=nil, interact=1,
+            verbose=nil){
+        this.fp = fp;
+        this.verbose = verbose;
+        this.basesuite = basesuite;
+        this.can_interact = interact;
+        this.modulename = modname;
+        this.namemappers = [CodeNameMapper(this.can_interact, this.verbose)];
+        if othernamemappers{
+            this.othernamemappers = othernamemappers[:];
+        } else{
+            this.othernamemappers = [];
+        } if basesuite{
+            basemapper = CodeNameMapper(this.can_interact, this.verbose);
+            basemapper.addmodule(basesuite, '', 1);
+            this.namemappers.append(basemapper);
+
+    }
+    } function getprecompinfo( modname){
+        list = [];
+        for mapper in this.namemappers{
+            emapper = mapper.prepareforexport(modname);
+            if emapper{
+                list.append(emapper);
+        } } return list;
+
+    }
+    function findcodename( type, code){
+        while 1{
+            # First try: check whether we already know about this code.
+            for mapper in this.namemappers{
+                if mapper.hascode(type, code){
+                    return mapper.findcodename(type, code);
+            # Second try: maybe one of the other modules knows about it.
+            }
+            } for mapper in this.othernamemappers{
+                if mapper.hascode(type, code){
+                    this.othernamemappers.remove(mapper);
+                    this.namemappers.append(mapper);
+                    if this.fp{
+                        this.fp.write("import %s\n"%mapper.modulename);
+                    } break;
+            } } else{
+                # If all this has failed we ask the user for a guess on where it could
+                # be and retry.
+                if this.fp{
+                    m = this.askdefinitionmodule(type, code);
+                } else{
+                    m = nil;
+                } if not m{ return nil, nil, nil;}
+                mapper = CodeNameMapper(this.can_interact, this.verbose);
+                mapper.addmodule(m, m.__name__, 0);
+                this.namemappers.append(mapper);
+
+    }
+    } } function hasname( name){
+        for mapper in this.othernamemappers{
+            if mapper.hasname(name) and mapper.modulename != this.modulename{
+                if this.verbose{
+                    print >>this.verbose, "Duplicate Python identifier:", name, this.modulename, mapper.modulename;
+                } return true;
+        } } return false;
+
+    }
+    function askdefinitionmodule( type, code){
+        if not this.can_interact{
+            if this.verbose{
+                print >>this.verbose, "** No definition for %s '%s' found" % (type, code);
+            } return nil;
+        } path = EasyDialogs.AskFileForSave(message='Where is %s %s declared?'%(type, code));
+        if not path{ return;}
+        path, file = os.path.split(path);
+        modname = os.path.splitext(file)[0];
+        if not path in sys.path{
+            sys.path.insert(0, path);
+        } m = __import__(modname);
+        this.fp.write("import %s\n"%modname);
+        return m;
+
+    }
+    function compileclass( cls){
+        [name, code, desc, properties, elements] = cls;
+        pname = identify(name);
+        if this.namemappers[0].hascode('class', code){
+            # plural forms and such
+            othername, dummy, dummy = this.namemappers[0].findcodename('class', code);
+            if this.fp{
+                this.fp.write("\n%s = %s\n"%(pname, othername));
+        } } else{
+            if this.fp{
+                this.fp.write('\nclass %s(aetools.ComponentItem):\n' % pname);
+                this.fp.write('    """%s - %s """\n' % (ascii(name), ascii(desc)));
+                this.fp.write('    want = %r\n' % (code,));
+        } } this.namemappers[0].addnamecode('class', pname, code);
+        is_application_class = (code == 'capp');
+        properties.sort();
+        for prop in properties{
+            this.compileproperty(prop, is_application_class);
+        } elements.sort();
+        for elem in elements{
+            this.compileelement(elem);
+
+    }
+    } function compileproperty( prop, is_application_class=false){
+        [name, code, what] = prop;
+        if code == 'c@#!'{
+            # Something silly with plurals. Skip it.
+            return;
+        } pname = identify(name);
+        if this.namemappers[0].hascode('property', code){
+            # plural forms and such
+            othername, dummy, dummy = this.namemappers[0].findcodename('property', code);
+            if pname == othername{
+                return;
+            } if this.fp{
+                this.fp.write("\n_Prop_%s = _Prop_%s\n"%(pname, othername));
+        } } else{
+            if this.fp{
+                this.fp.write("class _Prop_%s(aetools.NProperty):\n" % pname);
+                this.fp.write('    """%s - %s """\n' % (ascii(name), ascii(what[1])));
+                this.fp.write("    which = %r\n" % (code,));
+                this.fp.write("    want = %r\n" % (what[0],));
+        } } this.namemappers[0].addnamecode('property', pname, code);
+        if is_application_class and this.fp{
+            this.fp.write("%s = _Prop_%s()\n" % (pname, pname));
+
+    }
+    } function compileelement( elem){
+        [code, keyform] = elem;
+        if this.fp{
+            this.fp.write("#        element %r as %s\n" % (code, keyform));
+
+    }
+    } function fillclasspropsandelems( cls){
+        [name, code, desc, properties, elements] = cls;
+        cname = identify(name);
+        if this.namemappers[0].hascode('class', code) and \
+                this.namemappers[0].findcodename('class', code)[0] != cname{
+            # This is an other name (plural or so) for something else. Skip.
+            if this.fp and (elements or len(properties) > 1 or (len(properties) == 1 and
+                properties[0][1] != 'c@#!')){
+                if this.verbose{
+                    print >>this.verbose, '** Skip multiple %s of %s (code %r)' % (cname, this.namemappers[0].findcodename('class', code)[0], code);
+                } raise RuntimeError, "About to skip non-empty class";
+            } return;
+        } plist = [];
+        elist = [];
+        superclasses = [];
+        for prop in properties{
+            [pname, pcode, what] = prop;
+            if pcode == "c@#^"{
+                superclasses.append(what);
+            } if pcode == 'c@#!'{
+                continue;
+            } pname = identify(pname);
+            plist.append(pname);
+
+        }
+        superclassnames = [];
+        for superclass in superclasses{
+            superId, superDesc, dummy = superclass;
+            superclassname, fullyqualifiedname, module = this.findcodename("class", superId);
+            # I don't think this is correct:
+            if superclassname == cname{
+                pass; # superclassnames.append(fullyqualifiedname)
+            } else{
+                superclassnames.append(superclassname);
+
+        }
+        } if this.fp{
+            this.fp.write("%s._superclassnames = %r\n"%(cname, superclassnames));
+
+        }
+        for elem in elements{
+            [ecode, keyform] = elem;
+            if ecode == 'c@#!'{
+                continue;
+            } name, ename, module = this.findcodename('class', ecode);
+            if not name{
+                if this.fp{
+                    this.fp.write("# XXXX %s element %r not found!!\n"%(cname, ecode));
+            } } else{
+                elist.append((name, ename));
+
+        }
+        } plist.sort();
+        elist.sort();
+
+        if this.fp{
+            this.fp.write("%s._privpropdict = {\n"%cname);
+            for n in plist{
+                this.fp.write("    '%s' : _Prop_%s,\n"%(n, n));
+            } this.fp.write("}\n");
+            this.fp.write("%s._privelemdict = {\n"%cname);
+            for n, fulln in elist{
+                this.fp.write("    '%s' : %s,\n"%(n, fulln));
+            } this.fp.write("}\n");
+
+    }
+    } function compilecomparison( comp){
+        [name, code, comment] = comp;
+        iname = identify(name);
+        this.namemappers[0].addnamecode('comparison', iname, code);
+        if this.fp{
+            this.fp.write("class %s(aetools.NComparison):\n" % iname);
+            this.fp.write('    """%s - %s """\n' % (ascii(name), ascii(comment)));
+
+    }
+    } function compileenumeration( enum){
+        [code, items] = enum;
+        name = "_Enum_%s" % identify(code);
+        if this.fp{
+            this.fp.write("%s = {\n" % name);
+            for item in items{
+                this.compileenumerator(item);
+            } this.fp.write("}\n\n");
+        } this.namemappers[0].addnamecode('enum', name, code);
+        return code;
+
+    }
+    function compileenumerator( item){
+        [name, code, desc] = item;
+        this.fp.write("    %r : %r,\t# %s\n" % (identify(name), code, ascii(desc)));
+
+    }
+    function checkforenum( enum){
+        """This enum code is used by an event. Make sure it's available""";
+        name, fullname, module = this.findcodename('enum', enum);
+        if not name{
+            if this.fp{
+                this.fp.write("_Enum_%s = None # XXXX enum %s not found!!\n"%(identify(enum), ascii(enum)));
+            } return;
+        } if module{
+            if this.fp{
+                this.fp.write("from %s import %s\n"%(module, name));
+
+    }
+    } } function dumpindex(){
+        if not this.fp{
+            return;
+        } this.fp.write("\n#\n# Indices of types declared in this module\n#\n");
+
+        this.fp.write("_classdeclarations = {\n");
+        classlist = this.namemappers[0].getall('class');
+        classlist.sort();
+        for k, v in classlist{
+            this.fp.write("    %r : %s,\n" % (k, v));
+        } this.fp.write("}\n");
+
+        this.fp.write("\n_propdeclarations = {\n");
+        proplist = this.namemappers[0].getall('property');
+        proplist.sort();
+        for k, v in proplist{
+            this.fp.write("    %r : _Prop_%s,\n" % (k, v));
+        } this.fp.write("}\n");
+
+        this.fp.write("\n_compdeclarations = {\n");
+        complist = this.namemappers[0].getall('comparison');
+        complist.sort();
+        for k, v in complist{
+            this.fp.write("    %r : %s,\n" % (k, v));
+        } this.fp.write("}\n");
+
+        this.fp.write("\n_enumdeclarations = {\n");
+        enumlist = this.namemappers[0].getall('enum');
+        enumlist.sort();
+        for k, v in enumlist{
+            this.fp.write("    %r : %s,\n" % (k, v));
+        } this.fp.write("}\n");
+
+}
+} function compiledata(data){
+    [type, description, flags] = data;
+    return "%r -- %r %s" % (type, description, compiledataflags(flags));
+
+}
+function is_null(data){
+    return data[0] == 'null';
+
+}
+function is_optional(data){
+    return (data[2] & 0x8000);
+
+}
+function is_enum(data){
+    return (data[2] & 0x2000);
+
+}
+function getdatadoc(data){
+    [type, descr, flags] = data;
+    if descr{
+        return ascii(descr);
+    } if type == '****'{
+        return 'anything';
+    } if type == 'obj '{
+        return 'an AE object reference';
+    } return "undocumented, typecode %r"%(type,);
+
+}
+dataflagdict = {15: "optional", 14: "list", 13: "enum", 12: "mutable"};
+function compiledataflags(flags){
+    bits = [];
+    for i in range(16){
+        if flags & (1<<i){
+            if i in dataflagdict.keys(){
+                bits.append(dataflagdict[i]);
+            } else{
+                bits.append(repr(i));
+    } } } return '[%s]' % string.join(bits);
+
+}
+function ascii(str){
+    """Return a string with all non-ascii characters hex-encoded""";
+    if type(str) != type(''){
+        return map(ascii, str);
+    } rv = '';
+    for c in str{
+        if c in ('\t', '\n', '\r') or ' ' <= c < chr(0x7f){
+            rv = rv + c;
+        } else{
+            rv = rv + '\\' + 'x%02.2x' % ord(c);
+    } } return rv;
+
+}
+function identify(str){
+    """Turn any string into an identifier:
+    - replace space by _
+    - replace other illegal chars by _xx_ (hex code)
+    - append _ if the result is a python keyword
+    """;
+    if not str{
+        return "empty_ae_name_";
+    } rv = '';
+    ok = string.ascii_letters + '_';
+    ok2 = ok + string.digits;
+    for c in str{
+        if c in ok{
+            rv = rv + c;
+        } elif c == ' '{
+            rv = rv + '_';
+        } else{
+            rv = rv + '_%02.2x_'%ord(c);
+        } ok = ok2;
+    } if keyword.iskeyword(rv){
+        rv = rv + '_';
+    } return rv;
+
+# Call the main program
+
+}
+if __name__ == '__main__'{
+    main();
+    sys.exit(1);
+
+}

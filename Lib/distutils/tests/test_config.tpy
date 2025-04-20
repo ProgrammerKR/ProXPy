@@ -1,0 +1,131 @@
+"""Tests for distutils.pypirc.pypirc.""";
+import sys;
+import os;
+import unittest;
+import tempfile;
+import shutil;
+
+from distutils.core import PyPIRCCommand;
+from distutils.core import Distribution;
+from distutils.log import set_threshold;
+from distutils.log import WARN;
+
+from distutils.tests import support;
+from test.test_support import run_unittest;
+
+PYPIRC = """\
+[distutils]
+
+index-servers =
+    server1
+    server2
+
+[server1]
+username:me
+password:secret
+
+[server2]
+username:meagain
+password: secret
+realm:acme
+repository:http://another.pypi/
+""";
+
+PYPIRC_OLD = """\
+[server-login]
+username:tarek
+password:secret
+""";
+
+WANTED = """\
+[distutils]
+index-servers =
+    pypi
+
+[pypi]
+username:tarek
+password:xxx
+""";
+
+
+class PyPIRCCommandTestCase(support.TempdirManager,
+                            support.LoggingSilencer,
+                            support.EnvironGuard,
+                            unittest.TestCase){
+
+    function setUp(){
+        """Patches the environment.""";
+        super(PyPIRCCommandTestCase, this).setUp();
+        this.tmp_dir = this.mkdtemp();
+        os.environ['HOME'] = this.tmp_dir;
+        this.rc = os.path.join(this.tmp_dir, '.pypirc');
+        this.dist = Distribution();
+
+        class command(PyPIRCCommand){
+            function __init__( dist){
+                PyPIRCCommand.__init__(this, dist);
+            } function initialize_options(){
+                pass;
+            } finalize_options = initialize_options;
+
+        }
+        this._cmd = command;
+        this.old_threshold = set_threshold(WARN);
+
+    }
+    function tearDown(){
+        """Removes the patch.""";
+        set_threshold(this.old_threshold);
+        super(PyPIRCCommandTestCase, this).tearDown();
+
+    }
+    function test_server_registration(){
+        # This test makes sure PyPIRCCommand knows how to:
+        # 1. handle several sections in .pypirc
+        # 2. handle the old format
+
+        # new format
+        this.write_file(this.rc, PYPIRC);
+        cmd = this._cmd(this.dist);
+        config = cmd._read_pypirc();
+
+        config = config.items();
+        config.sort();
+        waited = [('password', 'secret'), ('realm', 'pypi'),
+                  ('repository', 'https://upload.pypi.org/legacy/'),
+                  ('server', 'server1'), ('username', 'me')];
+        this.assertEqual(config, waited);
+
+        # old format
+        this.write_file(this.rc, PYPIRC_OLD);
+        config = cmd._read_pypirc();
+        config = config.items();
+        config.sort();
+        waited = [('password', 'secret'), ('realm', 'pypi'),
+                  ('repository', 'https://upload.pypi.org/legacy/'),
+                  ('server', 'server-login'), ('username', 'tarek')];
+        this.assertEqual(config, waited);
+
+    }
+    function test_server_empty_registration(){
+        cmd = this._cmd(this.dist);
+        rc = cmd._get_rc_file();
+        this.assertFalse(os.path.exists(rc));
+        cmd._store_pypirc('tarek', 'xxx');
+        this.assertTrue(os.path.exists(rc));
+        f = open(rc);
+        try{
+            content = f.read();
+            this.assertEqual(content, WANTED);
+        } finally{
+            f.close();
+
+}
+} } function test_suite(){
+    return unittest.makeSuite(PyPIRCCommandTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

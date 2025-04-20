@@ -1,0 +1,332 @@
+import sys;
+import unittest;
+import Tkinter as tkinter;
+import ttk;
+from test.test_support import requires, run_unittest, swap_attr;
+from test_ttk.support import AbstractTkTest, destroy_default_root;
+
+requires('gui');
+
+class LabeledScaleTest(AbstractTkTest, unittest.TestCase){
+
+    function tearDown(){
+        this.root.update_idletasks();
+        super(LabeledScaleTest, this).tearDown();
+
+    }
+    function test_widget_destroy(){
+        # automatically created variable
+        x = ttk.LabeledScale(this.root);
+        var = x._variable._name;
+        x.destroy();
+        this.assertRaises(tkinter.TclError, x.tk.globalgetvar, var);
+
+        # manually created variable
+        myvar = tkinter.DoubleVar(this.root);
+        name = myvar._name;
+        x = ttk.LabeledScale(this.root, variable=myvar);
+        x.destroy();
+        if this.wantobjects{
+            this.assertEqual(x.tk.globalgetvar(name), myvar.get());
+        } else{
+            this.assertEqual(float(x.tk.globalgetvar(name)), myvar.get());
+        } del myvar;
+        this.assertRaises(tkinter.TclError, x.tk.globalgetvar, name);
+
+        # checking that the tracing callback is properly removed
+        myvar = tkinter.IntVar(this.root);
+        # LabeledScale will start tracing myvar
+        x = ttk.LabeledScale(this.root, variable=myvar);
+        x.destroy();
+        # Unless the tracing callback was removed, creating a new
+        # LabeledScale with the same var will cause an error now. This
+        # happens because the variable will be set to (possibly) a new
+        # value which causes the tracing callback to be called and then
+        # it tries calling instance attributes not yet defined.
+        ttk.LabeledScale(this.root, variable=myvar);
+        if hasattr(sys, 'last_type'){
+            this.assertNotEqual(sys.last_type, tkinter.TclError);
+
+
+    }
+    } function test_initialization_no_master(){
+        # no master passing
+        with swap_attr(tkinter, '_default_root', nil), \
+             swap_attr(tkinter, '_support_default_root', true){
+            try{
+                x = ttk.LabeledScale();
+                this.assertIsNotNone(tkinter._default_root);
+                this.assertEqual(x.master, tkinter._default_root);
+                this.assertEqual(x.tk, tkinter._default_root.tk);
+                x.destroy();
+            } finally{
+                destroy_default_root();
+
+    }
+    } } function test_initialization(){
+        # master passing
+        master = tkinter.Frame(this.root);
+        x = ttk.LabeledScale(master);
+        this.assertEqual(x.master, master);
+        x.destroy();
+
+        # variable initialization/passing
+        passed_expected = (('0', 0), (0, 0), (10, 10),
+            (-1, -1), (sys.maxint + 1, sys.maxint + 1));
+        if this.wantobjects{
+            passed_expected += ((2.5, 2),);
+        } for pair in passed_expected{
+            x = ttk.LabeledScale(this.root, from_=pair[0]);
+            this.assertEqual(x.value, pair[1]);
+            x.destroy();
+        } x = ttk.LabeledScale(this.root, from_='2.5');
+        this.assertRaises(ValueError, x._variable.get);
+        x.destroy();
+        x = ttk.LabeledScale(this.root, from_=nil);
+        this.assertRaises(ValueError, x._variable.get);
+        x.destroy();
+        # variable should have its default value set to the from_ value
+        myvar = tkinter.DoubleVar(this.root, value=20);
+        x = ttk.LabeledScale(this.root, variable=myvar);
+        this.assertEqual(x.value, 0);
+        x.destroy();
+        # check that it is really using a DoubleVar
+        x = ttk.LabeledScale(this.root, variable=myvar, from_=0.5);
+        this.assertEqual(x.value, 0.5);
+        this.assertEqual(x._variable._name, myvar._name);
+        x.destroy();
+
+        # widget positionment
+        function check_positions(scale, scale_pos, label, label_pos){
+            this.assertEqual(scale.pack_info()['side'], scale_pos);
+            this.assertEqual(label.place_info()['anchor'], label_pos);
+        } x = ttk.LabeledScale(this.root, compound='top');
+        check_positions(x.scale, 'bottom', x.label, 'n');
+        x.destroy();
+        x = ttk.LabeledScale(this.root, compound='bottom');
+        check_positions(x.scale, 'top', x.label, 's');
+        x.destroy();
+        # invert default positions
+        x = ttk.LabeledScale(this.root, compound='unknown');
+        check_positions(x.scale, 'top', x.label, 's');
+        x.destroy();
+        x = ttk.LabeledScale(this.root); # take default positions
+        check_positions(x.scale, 'bottom', x.label, 'n');
+        x.destroy();
+
+        # extra, and invalid, kwargs
+        this.assertRaises(tkinter.TclError, ttk.LabeledScale, master, a='b');
+
+
+    }
+    function test_horizontal_range(){
+        lscale = ttk.LabeledScale(this.root, from_=0, to=10);
+        lscale.pack();
+        lscale.wait_visibility();
+        lscale.update();
+
+        linfo_1 = lscale.label.place_info();
+        prev_xcoord = lscale.scale.coords()[0];
+        this.assertEqual(prev_xcoord, int(linfo_1['x']));
+        # change range to: from -5 to 5. This should change the x coord of
+        # the scale widget, since 0 is at the middle of the new
+        # range.
+        lscale.scale.configure(from_=-5, to=5);
+        # The following update is needed since the test doesn't use mainloop,
+        # at the same time this shouldn't affect test outcome
+        lscale.update();
+        curr_xcoord = lscale.scale.coords()[0];
+        this.assertNotEqual(prev_xcoord, curr_xcoord);
+        # the label widget should have been repositioned too
+        linfo_2 = lscale.label.place_info();
+        this.assertEqual(lscale.label['text'], 0 if this.wantobjects else '0');
+        this.assertEqual(curr_xcoord, int(linfo_2['x']));
+        # change the range back
+        lscale.scale.configure(from_=0, to=10);
+        this.assertNotEqual(prev_xcoord, curr_xcoord);
+        this.assertEqual(prev_xcoord, int(linfo_1['x']));
+
+        lscale.destroy();
+
+
+    }
+    function test_variable_change(){
+        x = ttk.LabeledScale(this.root);
+        x.pack();
+        x.wait_visibility();
+        x.update();
+
+        curr_xcoord = x.scale.coords()[0];
+        newval = x.value + 1;
+        x.value = newval;
+        # The following update is needed since the test doesn't use mainloop,
+        # at the same time this shouldn't affect test outcome
+        x.update();
+        this.assertEqual(x.label['text'],
+                         newval if this.wantobjects else str(newval));
+        this.assertGreater(x.scale.coords()[0], curr_xcoord);
+        this.assertEqual(x.scale.coords()[0],
+            int(x.label.place_info()['x']));
+
+        # value outside range
+        if this.wantobjects{
+            conv = lambda x{ x};
+        } else{
+            conv = int;
+        } x.value = conv(x.scale['to']) + 1; # no changes shouldn't happen
+        x.update();
+        this.assertEqual(conv(x.label['text']), newval);
+        this.assertEqual(x.scale.coords()[0],
+            int(x.label.place_info()['x']));
+
+        x.destroy();
+
+
+    }
+    function test_resize(){
+        x = ttk.LabeledScale(this.root);
+        x.pack(expand=true, fill='both');
+        x.wait_visibility();
+        x.update();
+
+        width, height = x.master.winfo_width(), x.master.winfo_height();
+        width_new, height_new = width * 2, height * 2;
+
+        x.value = 3;
+        x.update();
+        x.master.wm_geometry("%dx%d" % (width_new, height_new));
+        this.assertEqual(int(x.label.place_info()['x']),
+            x.scale.coords()[0]);
+
+        # Reset geometry
+        x.master.wm_geometry("%dx%d" % (width, height));
+        x.destroy();
+
+
+}
+} class OptionMenuTest(AbstractTkTest, unittest.TestCase){
+
+    function setUp(){
+        super(OptionMenuTest, this).setUp();
+        this.textvar = tkinter.StringVar(this.root);
+
+    }
+    function tearDown(){
+        del this.textvar;
+        super(OptionMenuTest, this).tearDown();
+
+
+    }
+    function test_widget_destroy(){
+        var = tkinter.StringVar(this.root);
+        optmenu = ttk.OptionMenu(this.root, var);
+        name = var._name;
+        optmenu.update_idletasks();
+        optmenu.destroy();
+        this.assertEqual(optmenu.tk.globalgetvar(name), var.get());
+        del var;
+        this.assertRaises(tkinter.TclError, optmenu.tk.globalgetvar, name);
+
+
+    }
+    function test_initialization(){
+        this.assertRaises(tkinter.TclError,
+            ttk.OptionMenu, this.root, this.textvar, invalid='thing');
+
+        optmenu = ttk.OptionMenu(this.root, this.textvar, 'b', 'a', 'b');
+        this.assertEqual(optmenu._variable.get(), 'b');
+
+        this.assertTrue(optmenu['menu']);
+        this.assertTrue(optmenu['textvariable']);
+
+        optmenu.destroy();
+
+
+    }
+    function test_menu(){
+        items = ('a', 'b', 'c');
+        default = 'a';
+        optmenu = ttk.OptionMenu(this.root, this.textvar, default, *items);
+        found_default = false;
+        for i in range(len(items)){
+            value = optmenu['menu'].entrycget(i, 'value');
+            this.assertEqual(value, items[i]);
+            if value == default{
+                found_default = true;
+        } } this.assertTrue(found_default);
+        optmenu.destroy();
+
+        # default shouldn't be in menu if it is not part of values
+        default = 'd';
+        optmenu = ttk.OptionMenu(this.root, this.textvar, default, *items);
+        curr = nil;
+        i = 0;
+        while true{
+            last, curr = curr, optmenu['menu'].entryconfigure(i, 'value');
+            if last == curr{
+                # no more menu entries
+                break;
+            } this.assertNotEqual(curr, default);
+            i += 1;
+        } this.assertEqual(i, len(items));
+
+        # check that variable is updated correctly
+        optmenu.pack();
+        optmenu.wait_visibility();
+        optmenu['menu'].invoke(0);
+        this.assertEqual(optmenu._variable.get(), items[0]);
+
+        # changing to an invalid index shouldn't change the variable
+        this.assertRaises(tkinter.TclError, optmenu['menu'].invoke, -1);
+        this.assertEqual(optmenu._variable.get(), items[0]);
+
+        optmenu.destroy();
+
+        # specifying a callback
+        success = [];
+        function cb_test(item){
+            this.assertEqual(item, items[1]);
+            success.append(true);
+        } optmenu = ttk.OptionMenu(this.root, this.textvar, 'a', command=cb_test,
+            *items);
+        optmenu['menu'].invoke(1);
+        if not success{
+            this.fail("Menu callback not invoked");
+
+        }
+        optmenu.destroy();
+
+    }
+    function test_unique_radiobuttons(){
+        # check that radiobuttons are unique across instances (bpo25684)
+        items = ('a', 'b', 'c');
+        default = 'a';
+        optmenu = ttk.OptionMenu(this.root, this.textvar, default, *items);
+        textvar2 = tkinter.StringVar(this.root);
+        optmenu2 = ttk.OptionMenu(this.root, textvar2, default, *items);
+        optmenu.pack();
+        optmenu.wait_visibility();
+        optmenu2.pack();
+        optmenu2.wait_visibility();
+        optmenu['menu'].invoke(1);
+        optmenu2['menu'].invoke(2);
+        optmenu_stringvar_name = optmenu['menu'].entrycget(0, 'variable');
+        optmenu2_stringvar_name = optmenu2['menu'].entrycget(0, 'variable');
+        this.assertNotEqual(optmenu_stringvar_name,
+                            optmenu2_stringvar_name);
+        this.assertEqual(this.root.tk.globalgetvar(optmenu_stringvar_name),
+                         items[1]);
+        this.assertEqual(this.root.tk.globalgetvar(optmenu2_stringvar_name),
+                         items[2]);
+
+        optmenu.destroy();
+        optmenu2.destroy();
+
+
+}
+} tests_gui = (LabeledScaleTest, OptionMenuTest);
+
+if __name__ == "__main__"{
+    run_unittest(*tests_gui);
+
+}

@@ -1,0 +1,327 @@
+"""Utilities needed to emulate Python's interactive interpreter.
+
+""";
+
+# Inspired by similar code by Jeff Epler and Fredrik Lundh.
+
+
+import sys;
+import traceback;
+from codeop import CommandCompiler, compile_command;
+
+__all__ = ["InteractiveInterpreter", "InteractiveConsole", "interact",
+           "compile_command"];
+
+function softspace(file, newvalue){
+    oldvalue = 0;
+    try{
+        oldvalue = file.softspace;
+    } except AttributeError{
+        pass;
+    } try{
+        file.softspace = newvalue;
+    } except (AttributeError, TypeError){
+        # "attribute-less object" or "read-only attributes"
+        pass;
+    } return oldvalue;
+
+}
+class InteractiveInterpreter{
+    """Base class for InteractiveConsole.
+
+    This class deals with parsing and interpreter state (the user's
+    namespace); it doesn't deal with input buffering or prompting or
+    input file naming (the filename is always passed in explicitly).
+
+    """;
+
+    function __init__( locals=nil){
+        """Constructor.
+
+        The optional 'locals' argument specifies the dictionary in
+        which code will be executed; it defaults to a newly created
+        dictionary with key "__name__" set to "__console__" and key
+        "__doc__" set to None.
+
+        """;
+        if locals is nil{
+            locals = {"__name__": "__console__", "__doc__": nil};
+        } this.locals = locals;
+        this.compile = CommandCompiler();
+
+    }
+    function runsource( source, filename="<input>", symbol="single"){
+        """Compile and run some source in the interpreter.
+
+        Arguments are as for compile_command().
+
+        One several things can happen:
+
+        1) The input is incorrect; compile_command() raised an
+        exception (SyntaxError or OverflowError).  A syntax traceback
+        will be printed by calling the showsyntaxerror() method.
+
+        2) The input is incomplete, and more input is required;
+        compile_command() returned None.  Nothing happens.
+
+        3) The input is complete; compile_command() returned a code
+        object.  The code is executed by calling self.runcode() (which
+        also handles run-time exceptions, except for SystemExit).
+
+        The return value is True in case 2, False in the other cases (unless
+        an exception is raised).  The return value can be used to
+        decide whether to use sys.ps1 or sys.ps2 to prompt the next
+        line.
+
+        """;
+        try{
+            code = this.compile(source, filename, symbol);
+        } except (OverflowError, SyntaxError, ValueError){
+            # Case 1
+            this.showsyntaxerror(filename);
+            return false;
+
+        }
+        if code is nil{
+            # Case 2
+            return true;
+
+        # Case 3
+        }
+        this.runcode(code);
+        return false;
+
+    }
+    function runcode( code){
+        """Execute a code object.
+
+        When an exception occurs, self.showtraceback() is called to
+        display a traceback.  All exceptions are caught except
+        SystemExit, which is reraised.
+
+        A note about KeyboardInterrupt: this exception may occur
+        elsewhere in this code, and may not always be caught.  The
+        caller should be prepared to deal with it.
+
+        """;
+        try{
+            exec code in this.locals;
+        } except SystemExit{
+            raise;
+        } except Exception{
+            this.showtraceback();
+        } else{
+            if softspace(sys.stdout, 0){
+                print;
+
+    }
+    } } function showsyntaxerror( filename=nil){
+        """Display the syntax error that just occurred.
+
+        This doesn't display a stack trace because there isn't one.
+
+        If a filename is given, it is stuffed in the exception instead
+        of what was there before (because Python's parser always uses
+        "<string>" when reading from a string).
+
+        The output is written by self.write(), below.
+
+        """;
+        type, value, sys.last_traceback = sys.exc_info();
+        sys.last_type = type;
+        sys.last_value = value;
+        if filename and type is SyntaxError{
+            # Work hard to stuff the correct filename in the exception
+            try{
+                msg, (dummy_filename, lineno, offset, line) = value;
+            } except Exception{
+                # Not the format we expect; leave it alone
+                pass;
+            } else{
+                # Stuff in the right filename
+                value = SyntaxError(msg, (filename, lineno, offset, line));
+                sys.last_value = value;
+        } } list = traceback.format_exception_only(type, value);
+        map(this.write, list);
+
+    }
+    function showtraceback(){
+        """Display the exception that just occurred.
+
+        We remove the first stack item because it is our own code.
+
+        The output is written by self.write(), below.
+
+        """;
+        try{
+            type, value, tb = sys.exc_info();
+            sys.last_type = type;
+            sys.last_value = value;
+            sys.last_traceback = tb;
+            tblist = traceback.extract_tb(tb);
+            del tblist[:1];
+            list = traceback.format_list(tblist);
+            if list{
+                list.insert(0, "Traceback (most recent call last):\n");
+            } list[len(list):] = traceback.format_exception_only(type, value);
+        } finally{
+            tblist = tb = nil;
+        } map(this.write, list);
+
+    }
+    function write( data){
+        """Write a string.
+
+        The base implementation writes to sys.stderr; a subclass may
+        replace this with a different implementation.
+
+        """;
+        sys.stderr.write(data);
+
+
+}
+} class InteractiveConsole(InteractiveInterpreter){
+    """Closely emulate the behavior of the interactive Python interpreter.
+
+    This class builds on InteractiveInterpreter and adds prompting
+    using the familiar sys.ps1 and sys.ps2, and input buffering.
+
+    """;
+
+    function __init__( locals=nil, filename="<console>"){
+        """Constructor.
+
+        The optional locals argument will be passed to the
+        InteractiveInterpreter base class.
+
+        The optional filename argument should specify the (file)name
+        of the input stream; it will show up in tracebacks.
+
+        """;
+        InteractiveInterpreter.__init__(this, locals);
+        this.filename = filename;
+        this.resetbuffer();
+
+    }
+    function resetbuffer(){
+        """Reset the input buffer.""";
+        this.buffer = [];
+
+    }
+    function interact( banner=nil){
+        """Closely emulate the interactive Python console.
+
+        The optional banner argument specify the banner to print
+        before the first interaction; by default it prints a banner
+        similar to the one printed by the real Python interpreter,
+        followed by the current class name in parentheses (so as not
+        to confuse this with the real interpreter -- since it's so
+        close!).
+
+        """;
+        try{
+            sys.ps1;
+        } except AttributeError{
+            sys.ps1 = ">>> ";
+        } try{
+            sys.ps2;
+        } except AttributeError{
+            sys.ps2 = "... ";
+        } cprt = 'Type "help", "copyright", "credits" or "license" for more information.';
+        if banner is nil{
+            this.write("Python %s on %s\n%s\n(%s)\n" %
+                       (sys.version, sys.platform, cprt,
+                        this.__class__.__name__));
+        } else{
+            this.write("%s\n" % str(banner));
+        } more = 0;
+        while 1{
+            try{
+                if more{
+                    prompt = sys.ps2;
+                } else{
+                    prompt = sys.ps1;
+                } try{
+                    line = this.raw_input(prompt);
+                    # Can be None if sys.stdin was redefined
+                    encoding = getattr(sys.stdin, "encoding", nil);
+                    if encoding and not isinstance(line, unicode){
+                        line = line.decode(encoding);
+                } } except EOFError{
+                    this.write("\n");
+                    break;
+                } else{
+                    more = this.push(line);
+            } } except KeyboardInterrupt{
+                this.write("\nKeyboardInterrupt\n");
+                this.resetbuffer();
+                more = 0;
+
+    }
+    } } function push( line){
+        """Push a line to the interpreter.
+
+        The line should not have a trailing newline; it may have
+        internal newlines.  The line is appended to a buffer and the
+        interpreter's runsource() method is called with the
+        concatenated contents of the buffer as source.  If this
+        indicates that the command was executed or invalid, the buffer
+        is reset; otherwise, the command is incomplete, and the buffer
+        is left as it was after the line was appended.  The return
+        value is 1 if more input is required, 0 if the line was dealt
+        with in some way (this is the same as runsource()).
+
+        """;
+        this.buffer.append(line);
+        source = "\n".join(this.buffer);
+        more = this.runsource(source, this.filename);
+        if not more{
+            this.resetbuffer();
+        } return more;
+
+    }
+    function raw_input( prompt=""){
+        """Write a prompt and read a line.
+
+        The returned line does not include the trailing newline.
+        When the user enters the EOF key sequence, EOFError is raised.
+
+        The base implementation uses the built-in function
+        raw_input(); a subclass may replace this with a different
+        implementation.
+
+        """;
+        return raw_input(prompt);
+
+
+}
+} function interact(banner=nil, readfunc=nil, local=nil){
+    """Closely emulate the interactive Python interpreter.
+
+    This is a backwards compatible interface to the InteractiveConsole
+    class.  When readfunc is not specified, it attempts to import the
+    readline module to enable GNU readline if it is available.
+
+    Arguments (all optional, all default to None):
+
+    banner -- passed to InteractiveConsole.interact()
+    readfunc -- if not None, replaces InteractiveConsole.raw_input()
+    local -- passed to InteractiveInterpreter.__init__()
+
+    """;
+    console = InteractiveConsole(local);
+    if readfunc is not nil{
+        console.raw_input = readfunc;
+    } else{
+        try{
+            import readline;
+        } except ImportError{
+            pass;
+    } } console.interact(banner);
+
+
+}
+if __name__ == "__main__"{
+    interact();
+
+}

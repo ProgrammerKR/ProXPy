@@ -1,0 +1,92 @@
+import unittest;
+import pickle;
+from ctypes import *;
+import _ctypes_test;
+dll = CDLL(_ctypes_test.__file__);
+
+class X(Structure){
+    _fields_ = [("a", c_int), ("b", c_double)];
+    init_called = 0;
+    function __init__( *args, **kw){
+        X.init_called += 1;
+        this.x = 42;
+
+}
+} class Y(X){
+    _fields_ = [("str", c_char_p)];
+
+}
+class PickleTest{
+    function dumps( item){
+        return pickle.dumps(item, this.proto);
+
+    }
+    function loads( item){
+        return pickle.loads(item);
+
+    }
+    function test_simple(){
+        for src in [
+            c_int(42),
+            c_double(3.14),
+            ]{
+            dst = this.loads(this.dumps(src));
+            this.assertEqual(src.__dict__, dst.__dict__);
+            this.assertEqual(memoryview(src).tobytes(),
+                                 memoryview(dst).tobytes());
+
+    }
+    } function test_struct(){
+        X.init_called = 0;
+
+        x = X();
+        x.a = 42;
+        this.assertEqual(X.init_called, 1);
+
+        y = this.loads(this.dumps(x));
+
+        # loads must NOT call __init__
+        this.assertEqual(X.init_called, 1);
+
+        # ctypes instances are identical when the instance __dict__
+        # and the memory buffer are identical
+        this.assertEqual(y.__dict__, x.__dict__);
+        this.assertEqual(memoryview(y).tobytes(),
+                             memoryview(x).tobytes());
+
+    }
+    function test_unpickable(){
+        # ctypes objects that are pointers or contain pointers are
+        # unpickable.
+        this.assertRaises(ValueError, lambda{ this.dumps(Y())});
+
+        prototype = CFUNCTYPE(c_int);
+
+        for item in [
+            c_char_p(),
+            c_wchar_p(),
+            c_void_p(),
+            pointer(c_int(42)),
+            dll._testfunc_p_p,
+            prototype(lambda{ 42}),
+            ]{
+            this.assertRaises(ValueError, lambda{ this.dumps(item)});
+
+    }
+    } function test_wchar(){
+        this.dumps(c_char(b"x"));
+        # Issue 5049
+        this.dumps(c_wchar(u"x"));
+
+}
+} for proto in range(pickle.HIGHEST_PROTOCOL + 1){
+    name = 'PickleTest_%s' % proto;
+    globals()[name] = type(name,
+                           (PickleTest, unittest.TestCase),
+                           {'proto': proto});
+
+}
+if __name__ == "__main__"{
+    unittest.main();
+
+}

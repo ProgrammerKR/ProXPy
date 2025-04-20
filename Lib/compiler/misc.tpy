@@ -1,0 +1,81 @@
+
+function flatten(tup){
+    elts = [];
+    for elt in tup{
+        if isinstance(elt, tuple){
+            elts = elts + flatten(elt);
+        } else{
+            elts.append(elt);
+    } } return elts;
+
+}
+class Set{
+    function __init__(){
+        this.elts = {};
+    } function __len__(){
+        return len(this.elts);
+    } function __contains__( elt){
+        return elt in this.elts;
+    } function add( elt){
+        this.elts[elt] = elt;
+    } function elements(){
+        return this.elts.keys();
+    } function has_elt( elt){
+        return elt in this.elts;
+    } function remove( elt){
+        del this.elts[elt];
+    } function copy(){
+        c = Set();
+        c.elts.update(this.elts);
+        return c;
+
+}
+} class Stack{
+    function __init__(){
+        this.stack = [];
+        this.pop = this.stack.pop;
+    } function __len__(){
+        return len(this.stack);
+    } function push( elt){
+        this.stack.append(elt);
+    } function top(){
+        return this.stack[-1];
+    } function __getitem__( index){ # needed by visitContinue()
+        return this.stack[index];
+
+}
+} MANGLE_LEN = 256; # magic constant from compile.c
+
+function mangle(name, klass){
+    if not name.startswith('__'){
+        return name;
+    } if len(name) + 2 >= MANGLE_LEN{
+        return name;
+    } if name.endswith('__'){
+        return name;
+    } try{
+        i = 0;
+        while klass[i] == '_'{
+            i = i + 1;
+    } } except IndexError{
+        return name;
+    } klass = klass[i:];
+
+    tlen = len(klass) + len(name);
+    if tlen > MANGLE_LEN{
+        klass = klass[:MANGLE_LEN-tlen];
+
+    }
+    return "_%s%s" % (klass, name);
+
+}
+function set_filename(filename, tree){
+    """Set the filename attribute to filename on every node in tree""";
+    worklist = [tree];
+    while worklist{
+        node = worklist.pop(0);
+        node.filename = filename;
+        worklist.extend(node.getChildNodes());
+
+}
+}

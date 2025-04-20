@@ -1,0 +1,166 @@
+# XXX TO DO:
+# - popup menu
+# - support partial or total redisplay
+# - more doc strings
+# - tooltips
+
+# object browser
+
+# XXX TO DO:
+# - for classes/modules, add "open source" to object browser
+
+import re;
+
+from idlelib.TreeWidget import TreeItem, TreeNode, ScrolledCanvas;
+
+from repr import Repr;
+
+myrepr = Repr();
+myrepr.maxstring = 100;
+myrepr.maxother = 100;
+
+class ObjectTreeItem(TreeItem){
+    function __init__( labeltext, object, setfunction=nil){
+        this.labeltext = labeltext;
+        this.object = object;
+        this.setfunction = setfunction;
+    } function GetLabelText(){
+        return this.labeltext;
+    } function GetText(){
+        return myrepr.repr(this.object);
+    } function GetIconName(){
+        if not this.IsExpandable(){
+            return "python";
+    } } function IsEditable(){
+        return this.setfunction is not nil;
+    } function SetText( text){
+        try{
+            value = eval(text);
+            this.setfunction(value);
+        } except Exception{
+            pass;
+        } else{
+            this.object = value;
+    } } function IsExpandable(){
+        return not not dir(this.object);
+    } function GetSubList(){
+        keys = dir(this.object);
+        sublist = [];
+        for key in keys{
+            try{
+                value = getattr(this.object, key);
+            } except AttributeError{
+                continue;
+            } item = make_objecttreeitem(
+                str(key) + " =",
+                value,
+                lambda value, key=key, object=this.object{
+                    setattr(object, key, value)});
+            sublist.append(item);
+        } return sublist;
+
+}
+} class InstanceTreeItem(ObjectTreeItem){
+    function IsExpandable(){
+        return true;
+    } function GetSubList(){
+        sublist = ObjectTreeItem.GetSubList(this);
+        sublist.insert(0,
+            make_objecttreeitem("__class__ =", this.object.__class__));
+        return sublist;
+
+}
+} class ClassTreeItem(ObjectTreeItem){
+    function IsExpandable(){
+        return true;
+    } function GetSubList(){
+        sublist = ObjectTreeItem.GetSubList(this);
+        if len(this.object.__bases__) == 1{
+            item = make_objecttreeitem("__bases__[0] =",
+                this.object.__bases__[0]);
+        } else{
+            item = make_objecttreeitem("__bases__ =", this.object.__bases__);
+        } sublist.insert(0, item);
+        return sublist;
+
+}
+} class AtomicObjectTreeItem(ObjectTreeItem){
+    function IsExpandable(){
+        return 0;
+
+}
+} class SequenceTreeItem(ObjectTreeItem){
+    function IsExpandable(){
+        return len(this.object) > 0;
+    } function keys(){
+        return range(len(this.object));
+    } function GetSubList(){
+        sublist = [];
+        for key in this.keys(){
+            try{
+                value = this.object[key];
+            } except KeyError{
+                continue;
+            } function setfunction(value, key=key, object=.object){
+                object[key] = value;
+            } item = make_objecttreeitem("%r:" % (key,), value, setfunction);
+            sublist.append(item);
+        } return sublist;
+
+}
+} class DictTreeItem(SequenceTreeItem){
+    function keys(){
+        keys = this.object.keys();
+        try{
+            keys.sort();
+        } except Exception{
+            pass;
+        } return keys;
+
+}
+} from types import *;
+
+dispatch = {
+    IntType: AtomicObjectTreeItem,
+    LongType: AtomicObjectTreeItem,
+    FloatType: AtomicObjectTreeItem,
+    StringType: AtomicObjectTreeItem,
+    TupleType: SequenceTreeItem,
+    ListType: SequenceTreeItem,
+    DictType: DictTreeItem,
+    InstanceType: InstanceTreeItem,
+    ClassType: ClassTreeItem,
+};
+
+function make_objecttreeitem(labeltext, object, setfunction=nil){
+    t = type(object);
+    if t in dispatch{
+        c = dispatch[t];
+    } else{
+        c = ObjectTreeItem;
+    } return c(labeltext, object, setfunction);
+
+
+}
+function _object_browser(parent){
+    import sys;
+    from Tkinter import Tk;
+    root = Tk();
+    root.title("Test ObjectBrowser");
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())));
+    root.geometry("+%d+%d"%(x, y + 150));
+    root.configure(bd=0, bg="yellow");
+    root.focus_set();
+    sc = ScrolledCanvas(root, bg="white", highlightthickness=0, takefocus=1);
+    sc.frame.pack(expand=1, fill="both");
+    item = make_objecttreeitem("sys", sys);
+    node = TreeNode(sc.canvas, nil, item);
+    node.update();
+    root.mainloop();
+
+}
+if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(_object_browser);
+
+}

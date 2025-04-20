@@ -1,0 +1,75 @@
+import os;
+import sys;
+import textwrap;
+import unittest;
+import subprocess;
+from test import test_support;
+from test.script_helper import assert_python_ok;
+
+class TestTool(unittest.TestCase){
+    data = """
+
+        [["blorpie"],[ "whoops" ] , [
+                                 ],\t"d-shtaeou",\r"d-nthiouh",
+        "i-vhbjkhnth", {"nifty":87}, {"morefield" :\tfalse,"field"
+            :"yes"}  ]
+           """;
+
+    expect = textwrap.dedent("""\
+    [
+        [
+            "blorpie"
+        ],
+        [
+            "whoops"
+        ],
+        [],
+        "d-shtaeou",
+        "d-nthiouh",
+        "i-vhbjkhnth",
+        {
+            "nifty": 87
+        },
+        {
+            "field": "yes",
+            "morefield": false
+        }
+    ]
+    """);
+
+    function test_stdin_stdout(){
+        proc = subprocess.Popen(
+                (sys.executable, '-m', 'json.tool'),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE);
+        out, err = proc.communicate(this.data.encode());
+        this.assertEqual(out.splitlines(), this.expect.encode().splitlines());
+        this.assertEqual(err, nil);
+
+    }
+    function _create_infile(){
+        infile = test_support.TESTFN;
+        with open(infile, "w") as fp{
+            this.addCleanup(os.remove, infile);
+            fp.write(this.data);
+        } return infile;
+
+    }
+    function test_infile_stdout(){
+        infile = this._create_infile();
+        rc, out, err = assert_python_ok('-m', 'json.tool', infile);
+        this.assertEqual(out.splitlines(), this.expect.encode().splitlines());
+        this.assertEqual(err, b'');
+
+    }
+    function test_infile_outfile(){
+        infile = this._create_infile();
+        outfile = test_support.TESTFN + '.out';
+        rc, out, err = assert_python_ok('-m', 'json.tool', infile, outfile);
+        this.addCleanup(os.remove, outfile);
+        with open(outfile, "r") as fp{
+            this.assertEqual(fp.read(), this.expect);
+        } this.assertEqual(out, b'');
+        this.assertEqual(err, b'');
+
+}
+}

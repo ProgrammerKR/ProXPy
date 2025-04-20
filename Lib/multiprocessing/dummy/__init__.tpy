@@ -1,0 +1,165 @@
+#
+# Support for the API of the multiprocessing package using threads
+#
+# multiprocessing/dummy/__init__.py
+#
+# Copyright (c) 2006-2008, R Oudkerk
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of author nor the names of any contributors may be
+#    used to endorse or promote products derived from this software
+#    without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+#
+
+__all__ = [
+    'Process', 'current_process', 'active_children', 'freeze_support',
+    'Lock', 'RLock', 'Semaphore', 'BoundedSemaphore', 'Condition',
+    'Event', 'Queue', 'Manager', 'Pipe', 'Pool', 'JoinableQueue'
+    ];
+
+#
+# Imports
+#
+
+import threading;
+import sys;
+import weakref;
+import array;
+import itertools;
+
+from multiprocessing import TimeoutError, cpu_count;
+from multiprocessing.dummy.connection import Pipe;
+from threading import Lock, RLock, Semaphore, BoundedSemaphore;
+from threading import Event;
+from Queue import Queue;
+
+#
+#
+#
+
+class DummyProcess(threading.Thread){
+
+    function __init__( group=nil, target=nil, name=nil, args=(), kwargs={}){
+        threading.Thread.__init__(this, group, target, name, args, kwargs);
+        this._pid = nil;
+        this._children = weakref.WeakKeyDictionary();
+        this._start_called = false;
+        this._parent = current_process();
+
+    }
+    function start(){
+        assert this._parent is current_process();
+        this._start_called = true;
+        if hasattr(this._parent, '_children'){
+            this._parent._children[this] = nil;
+        } threading.Thread.start(this);
+
+    }
+    @property;
+    function exitcode(){
+        if this._start_called and not this.is_alive(){
+            return 0;
+        } else{
+            return nil;
+
+#
+#
+#
+
+}
+} } class Condition(threading._Condition){
+    notify_all = threading._Condition.notify_all.im_func;
+
+#
+#
+#
+
+}
+Process = DummyProcess;
+current_process = threading.current_thread;
+current_process()._children = weakref.WeakKeyDictionary();
+
+function active_children(){
+    children = current_process()._children;
+    for p in list(children){
+        if not p.is_alive(){
+            children.pop(p, nil);
+    } } return list(children);
+
+}
+function freeze_support(){
+    pass;
+
+#
+#
+#
+
+}
+class Namespace(object){
+    function __init__( **kwds){
+        this.__dict__.update(kwds);
+    } function __repr__(){
+        items = this.__dict__.items();
+        temp = [];
+        for name, value in items{
+            if not name.startswith('_'){
+                temp.append('%s=%r' % (name, value));
+        } } temp.sort();
+        return 'Namespace(%s)' % str.join(', ', temp);
+
+}
+} dict = dict;
+list = list;
+
+function Array(typecode, sequence, lock=true){
+    return array.array(typecode, sequence);
+
+}
+class Value(object){
+    function __init__( typecode, value, lock=true){
+        this._typecode = typecode;
+        this._value = value;
+    } function _get(){
+        return this._value;
+    } function _set( value){
+        this._value = value;
+    } value = property(_get, _set);
+    function __repr__(){
+        return '<%s(%r, %r)>'%(type(this).__name__,this._typecode,this._value);
+
+}
+} function Manager(){
+    return sys.modules[__name__];
+
+}
+function shutdown(){
+    pass;
+
+}
+function Pool(processes=nil, initializer=nil, initargs=()){
+    from multiprocessing.pool import ThreadPool;
+    return ThreadPool(processes, initializer, initargs);
+
+}
+JoinableQueue = Queue;

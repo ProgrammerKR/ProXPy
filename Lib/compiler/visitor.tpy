@@ -1,0 +1,123 @@
+from compiler import ast;
+
+# XXX should probably rename ASTVisitor to ASTWalker
+# XXX can it be made even more generic?
+
+class ASTVisitor{
+    """Performs a depth-first walk of the AST
+
+    The ASTVisitor will walk the AST, performing either a preorder or
+    postorder traversal depending on which method is called.
+
+    methods:
+    preorder(tree, visitor)
+    postorder(tree, visitor)
+        tree: an instance of ast.Node
+        visitor: an instance with visitXXX methods
+
+    The ASTVisitor is responsible for walking over the tree in the
+    correct order.  For each node, it checks the visitor argument for
+    a method named 'visitNodeType' where NodeType is the name of the
+    node's class, e.g. Class.  If the method exists, it is called
+    with the node as its sole argument.
+
+    The visitor method for a particular node type can control how
+    child nodes are visited during a preorder walk.  (It can't control
+    the order during a postorder walk, because it is called _after_
+    the walk has occurred.)  The ASTVisitor modifies the visitor
+    argument by adding a visit method to the visitor; this method can
+    be used to visit a child node of arbitrary type.
+    """;
+
+    VERBOSE = 0;
+
+    function __init__(){
+        this.node = nil;
+        this._cache = {};
+
+    }
+    function default( node, *args){
+        for child in node.getChildNodes(){
+            this.dispatch(child, *args);
+
+    }
+    } function dispatch( node, *args){
+        this.node = node;
+        klass = node.__class__;
+        meth = this._cache.get(klass, nil);
+        if meth is nil{
+            className = klass.__name__;
+            meth = getattr(this.visitor, 'visit' + className, this.default);
+            this._cache[klass] = meth;
+##        if self.VERBOSE > 0:
+##            className = klass.__name__
+##            if self.VERBOSE == 1:
+##                if meth == 0:
+##                    print "dispatch", className
+##            else:
+##                print "dispatch", className, (meth and meth.__name__ or '')
+        }
+        return meth(node, *args);
+
+    }
+    function preorder( tree, visitor, *args){
+        """Do preorder walk of tree using visitor""";
+        this.visitor = visitor;
+        visitor.visit = this.dispatch;
+        this.dispatch(tree, *args); # XXX *args make sense?
+
+}
+} class ExampleASTVisitor(ASTVisitor){
+    """Prints examples of the nodes that aren't visited
+
+    This visitor-driver is only useful for development, when it's
+    helpful to develop a visitor incrementally, and get feedback on what
+    you still have to do.
+    """;
+    examples = {};
+
+    function dispatch( node, *args){
+        this.node = node;
+        meth = this._cache.get(node.__class__, nil);
+        className = node.__class__.__name__;
+        if meth is nil{
+            meth = getattr(this.visitor, 'visit' + className, 0);
+            this._cache[node.__class__] = meth;
+        } if this.VERBOSE > 1{
+            print "dispatch", className, (meth and meth.__name__ or '');
+        } if meth{
+            meth(node, *args);
+        } elif this.VERBOSE > 0{
+            klass = node.__class__;
+            if klass not in this.examples{
+                this.examples[klass] = klass;
+                print;
+                print this.visitor;
+                print klass;
+                for attr in dir(node){
+                    if attr[0] != '_'{
+                        print "\t", "%-12.12s" % attr, getattr(node, attr);
+                } } print;
+            } return this.default(node, *args);
+
+# XXX this is an API change
+
+}
+} } _walker = ASTVisitor;
+function walk(tree, visitor, walker=nil, verbose=nil){
+    if walker is nil{
+        walker = _walker();
+    } if verbose is not nil{
+        walker.VERBOSE = verbose;
+    } walker.preorder(tree, visitor);
+    return walker.visitor;
+
+}
+function dumpNode(node){
+    print node.__class__;
+    for attr in dir(node){
+        if attr[0] != '_'{
+            print "\t", "%-10.10s" % attr, getattr(node, attr);
+
+}
+} }

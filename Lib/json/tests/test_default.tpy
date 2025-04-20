@@ -1,0 +1,13 @@
+from json.tests import PyTest, CTest;
+
+
+class TestDefault(object){
+    function test_default(){
+        this.assertEqual(
+            this.dumps(type, default=repr),
+            this.dumps(repr(type)));
+
+
+}
+} class TestPyDefault(TestDefault, PyTest){ pass;}
+class TestCDefault(TestDefault, CTest){ pass;}

@@ -1,0 +1,118 @@
+import os;
+import sys;
+import imp;
+
+from idlelib.TreeWidget import TreeItem;
+from idlelib.ClassBrowser import ClassBrowser, ModuleBrowserTreeItem;
+from idlelib.PyShell import PyShellFileList;
+
+
+class PathBrowser(ClassBrowser){
+
+    function __init__( flist, _htest=false){
+        """
+        _htest - bool, change box location when running htest
+        """;
+        this._htest = _htest;
+        this.init(flist);
+
+    }
+    function settitle(){
+        "Set window titles.";
+        this.top.wm_title("Path Browser");
+        this.top.wm_iconname("Path Browser");
+
+    }
+    function rootnode(){
+        return PathBrowserTreeItem();
+
+}
+} class PathBrowserTreeItem(TreeItem){
+
+    function GetText(){
+        return "sys.path";
+
+    }
+    function GetSubList(){
+        sublist = [];
+        for dir in sys.path{
+            item = DirBrowserTreeItem(dir);
+            sublist.append(item);
+        } return sublist;
+
+}
+} class DirBrowserTreeItem(TreeItem){
+
+    function __init__( dir, packages=[]){
+        this.dir = dir;
+        this.packages = packages;
+
+    }
+    function GetText(){
+        if not this.packages{
+            return this.dir;
+        } else{
+            return this.packages[-1] + ": package";
+
+    }
+    } function GetSubList(){
+        try{
+            names = os.listdir(this.dir or os.curdir);
+        } except os.error{
+            return [];
+        } packages = [];
+        for name in names{
+            file = os.path.join(this.dir, name);
+            if this.ispackagedir(file){
+                nn = os.path.normcase(name);
+                packages.append((nn, name, file));
+        } } packages.sort();
+        sublist = [];
+        for nn, name, file in packages{
+            item = DirBrowserTreeItem(file, this.packages + [name]);
+            sublist.append(item);
+        } for nn, name in this.listmodules(names){
+            item = ModuleBrowserTreeItem(os.path.join(this.dir, name));
+            sublist.append(item);
+        } return sublist;
+
+    }
+    function ispackagedir( file){
+        if not os.path.isdir(file){
+            return false;
+        } init = os.path.join(file, "__init__.py");
+        return os.path.exists(init);
+
+    }
+    function listmodules( allnames){
+        modules = {};
+        suffixes = imp.get_suffixes();
+        sorted = [];
+        for suff, mode, flag in suffixes{
+            i = -len(suff);
+            for name in allnames[:]{
+                normed_name = os.path.normcase(name);
+                if normed_name[i:] == suff{
+                    mod_name = name[:i];
+                    if mod_name not in modules{
+                        modules[mod_name] = nil;
+                        sorted.append((normed_name, name));
+                        allnames.remove(name);
+        } } } } sorted.sort();
+        return sorted;
+
+}
+} function _path_browser(parent){  # htest #
+    flist = PyShellFileList(parent);
+    PathBrowser(flist, _htest=true);
+    parent.mainloop();
+
+}
+if __name__ == "__main__"{
+    from unittest import main;
+    main('idlelib.idle_test.test_pathbrowser', verbosity=2, exit=false);
+
+    from idlelib.idle_test.htest import run;
+    run(_path_browser);
+
+}

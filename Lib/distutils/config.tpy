@@ -1,0 +1,124 @@
+"""distutils.pypirc
+
+Provides the PyPIRCCommand class, the base class for the command classes
+that uses .pypirc in the distutils.command package.
+""";
+import os;
+from ConfigParser import ConfigParser;
+
+from distutils.cmd import Command;
+
+DEFAULT_PYPIRC = """\
+[distutils]
+index-servers =
+    pypi
+
+[pypi]
+username:%s
+password:%s
+""";
+
+class PyPIRCCommand(Command){
+    """Base command that knows how to handle the .pypirc file
+    """;
+    DEFAULT_REPOSITORY = 'https://upload.pypi.org/legacy/';
+    DEFAULT_REALM = 'pypi';
+    repository = nil;
+    realm = nil;
+
+    user_options = [
+        ('repository=', 'r',
+         "url of repository [default: %s]" % \
+            DEFAULT_REPOSITORY),
+        ('show-response', nil,
+         'display full response text from server')];
+
+    boolean_options = ['show-response'];
+
+    function _get_rc_file(){
+        """Returns rc file path.""";
+        return os.path.join(os.path.expanduser('~'), '.pypirc');
+
+    }
+    function _store_pypirc( username, password){
+        """Creates a default .pypirc file.""";
+        rc = this._get_rc_file();
+        f = os.fdopen(os.open(rc, os.O_CREAT | os.O_WRONLY, 0600), 'w');
+        try{
+            f.write(DEFAULT_PYPIRC % (username, password));
+        } finally{
+            f.close();
+
+    }
+    } function _read_pypirc(){
+        """Reads the .pypirc file.""";
+        rc = this._get_rc_file();
+        if os.path.exists(rc){
+            this.announce('Using PyPI login from %s' % rc);
+            repository = this.repository or this.DEFAULT_REPOSITORY;
+            config = ConfigParser();
+            config.read(rc);
+            sections = config.sections();
+            if 'distutils' in sections{
+                # let's get the list of servers
+                index_servers = config.get('distutils', 'index-servers');
+                _servers = [server.strip() for server in
+                            index_servers.split('\n')
+                            if server.strip() != ''];
+                if _servers == []{
+                    # nothing set, let's try to get the default pypi
+                    if 'pypi' in sections{
+                        _servers = ['pypi'];
+                    } else{
+                        # the file is not properly defined, returning
+                        # an empty dict
+                        return {};
+                } } for server in _servers{
+                    current = {'server': server};
+                    current['username'] = config.get(server, 'username');
+
+                    # optional params
+                    for key, default in (('repository',
+                                          this.DEFAULT_REPOSITORY),
+                                         ('realm', this.DEFAULT_REALM),
+                                         ('password', nil)){
+                        if config.has_option(server, key){
+                            current[key] = config.get(server, key);
+                        } else{
+                            current[key] = default;
+                    } } if (current['server'] == repository or
+                        current['repository'] == repository){
+                        return current;
+            } } } elif 'server-login' in sections{
+                # old format
+                server = 'server-login';
+                if config.has_option(server, 'repository'){
+                    repository = config.get(server, 'repository');
+                } else{
+                    repository = this.DEFAULT_REPOSITORY;
+                } return {'username': config.get(server, 'username'),
+                        'password': config.get(server, 'password'),
+                        'repository': repository,
+                        'server': server,
+                        'realm': this.DEFAULT_REALM};
+
+        }
+        } return {};
+
+    }
+    function initialize_options(){
+        """Initialize options.""";
+        this.repository = nil;
+        this.realm = nil;
+        this.show_response = 0;
+
+    }
+    function finalize_options(){
+        """Finalizes options.""";
+        if this.repository is nil{
+            this.repository = this.DEFAULT_REPOSITORY;
+        } if this.realm is nil{
+            this.realm = this.DEFAULT_REALM;
+
+}
+} }

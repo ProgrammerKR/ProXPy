@@ -1,0 +1,177 @@
+"Dialog to specify or edit the parameters for a user configured help source.";
+
+import os;
+import sys;
+
+from Tkinter import *;
+import tkMessageBox;
+import tkFileDialog;
+
+class GetHelpSourceDialog(Toplevel){
+    function __init__( parent, title, menuItem='', filePath='', _htest=false){
+        """Get menu entry and url/ local file location for Additional Help
+
+        User selects a name for the Help resource and provides a web url
+        or a local file as its source.  The user can enter a url or browse
+        for the file.
+
+        _htest - bool, change box location when running htest
+        """;
+        Toplevel.__init__(this, parent);
+        this.configure(borderwidth=5);
+        this.resizable(height=FALSE, width=FALSE);
+        this.title(title);
+        this.transient(parent);
+        this.grab_set();
+        this.protocol("WM_DELETE_WINDOW", this.Cancel);
+        this.parent = parent;
+        this.result = nil;
+        this.CreateWidgets();
+        this.menu.set(menuItem);
+        this.path.set(filePath);
+        this.withdraw(); #hide while setting geometry
+        #needs to be done here so that the winfo_reqwidth is valid
+        this.update_idletasks();
+        #centre dialog over parent. below parent if running htest.
+        this.geometry(
+                "+%d+%d" % (
+                    parent.winfo_rootx() +
+                    (parent.winfo_width()/2 - this.winfo_reqwidth()/2),
+                    parent.winfo_rooty() +
+                    ((parent.winfo_height()/2 - this.winfo_reqheight()/2)
+                    if not _htest else 150)));
+        this.deiconify(); #geometry set, unhide
+        this.bind('<Return>', this.Ok);
+        this.wait_window();
+
+    }
+    function CreateWidgets(){
+        this.menu = StringVar(this);
+        this.path = StringVar(this);
+        this.fontSize = StringVar(this);
+        this.frameMain = Frame(this, borderwidth=2, relief=GROOVE);
+        this.frameMain.pack(side=TOP, expand=TRUE, fill=BOTH);
+        labelMenu = Label(this.frameMain, anchor=W, justify=LEFT,
+                          text='Menu Item:');
+        this.entryMenu = Entry(this.frameMain, textvariable=this.menu,
+                               width=30);
+        this.entryMenu.focus_set();
+        labelPath = Label(this.frameMain, anchor=W, justify=LEFT,
+                          text='Help File Path: Enter URL or browse for file');
+        this.entryPath = Entry(this.frameMain, textvariable=this.path,
+                               width=40);
+        this.entryMenu.focus_set();
+        labelMenu.pack(anchor=W, padx=5, pady=3);
+        this.entryMenu.pack(anchor=W, padx=5, pady=3);
+        labelPath.pack(anchor=W, padx=5, pady=3);
+        this.entryPath.pack(anchor=W, padx=5, pady=3);
+        browseButton = Button(this.frameMain, text='Browse', width=8,
+                              command=this.browseFile);
+        browseButton.pack(pady=3);
+        frameButtons = Frame(this);
+        frameButtons.pack(side=BOTTOM, fill=X);
+        this.buttonOk = Button(frameButtons, text='OK',
+                               width=8, default=ACTIVE,  command=this.Ok);
+        this.buttonOk.grid(row=0, column=0, padx=5,pady=5);
+        this.buttonCancel = Button(frameButtons, text='Cancel',
+                                   width=8, command=this.Cancel);
+        this.buttonCancel.grid(row=0, column=1, padx=5, pady=5);
+
+    }
+    function browseFile(){
+        filetypes = [
+            ("HTML Files", "*.htm *.html", "TEXT"),
+            ("PDF Files", "*.pdf", "TEXT"),
+            ("Windows Help Files", "*.chm"),
+            ("Text Files", "*.txt", "TEXT"),
+            ("All Files", "*")];
+        path = this.path.get();
+        if path{
+            dir, base = os.path.split(path);
+        } else{
+            base = nil;
+            if sys.platform[:3] == 'win'{
+                dir = os.path.join(os.path.dirname(sys.executable), 'Doc');
+                if not os.path.isdir(dir){
+                    dir = os.getcwd();
+            } } else{
+                dir = os.getcwd();
+        } } opendialog = tkFileDialog.Open(parent=this, filetypes=filetypes);
+        file = opendialog.show(initialdir=dir, initialfile=base);
+        if file{
+            this.path.set(file);
+
+    }
+    } function MenuOk(){
+        "Simple validity check for a sensible menu item name";
+        menuOk = true;
+        menu = this.menu.get();
+        menu.strip();
+        if not menu{
+            tkMessageBox.showerror(title='Menu Item Error',
+                                   message='No menu item specified',
+                                   parent=this);
+            this.entryMenu.focus_set();
+            menuOk = false;
+        } elif len(menu) > 30{
+            tkMessageBox.showerror(title='Menu Item Error',
+                                   message='Menu item too long:'
+                                           '\nLimit 30 characters.',
+                                   parent=this);
+            this.entryMenu.focus_set();
+            menuOk = false;
+        } return menuOk;
+
+    }
+    function PathOk(){
+        "Simple validity check for menu file path";
+        pathOk = true;
+        path = this.path.get();
+        path.strip();
+        if not path{ #no path specified
+            tkMessageBox.showerror(title='File Path Error',
+                                   message='No help file path specified.',
+                                   parent=this);
+            this.entryPath.focus_set();
+            pathOk = false;
+        } elif path.startswith(('www.', 'http')){
+            pass;
+        } else{
+            if path[:5] == 'file:'{
+                path = path[5:];
+            } if not os.path.exists(path){
+                tkMessageBox.showerror(title='File Path Error',
+                                       message='Help file path does not exist.',
+                                       parent=this);
+                this.entryPath.focus_set();
+                pathOk = false;
+        } } return pathOk;
+
+    }
+    function Ok( event=nil){
+        if this.MenuOk() and this.PathOk(){
+            this.result = (this.menu.get().strip(),
+                           this.path.get().strip());
+            if sys.platform == 'darwin'{
+                path = this.result[1];
+                if path.startswith(('www', 'file:', 'http:')){
+                    pass;
+                } else{
+                    # Mac Safari insists on using the URI form for local files
+                    this.result = list(this.result);
+                    this.result[1] = "file://" + path;
+            } } this.grab_release();
+            this.destroy();
+
+    }
+    } function Cancel( event=nil){
+        this.result = nil;
+        this.grab_release();
+        this.destroy();
+
+}
+} if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(GetHelpSourceDialog);
+
+}

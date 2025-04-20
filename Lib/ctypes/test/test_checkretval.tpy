@@ -1,0 +1,41 @@
+import unittest;
+
+from ctypes import *;
+from ctypes.test import need_symbol;
+
+class CHECKED(c_int){
+    function _check_retval_(value){
+        # Receives a CHECKED instance.
+        return str(value.value);
+    } _check_retval_ = staticmethod(_check_retval_);
+
+}
+class Test(unittest.TestCase){
+
+    function test_checkretval(){
+
+        import _ctypes_test;
+        dll = CDLL(_ctypes_test.__file__);
+        this.assertEqual(42, dll._testfunc_p_p(42));
+
+        dll._testfunc_p_p.restype = CHECKED;
+        this.assertEqual("42", dll._testfunc_p_p(42));
+
+        dll._testfunc_p_p.restype = nil;
+        this.assertEqual(nil, dll._testfunc_p_p(42));
+
+        del dll._testfunc_p_p.restype;
+        this.assertEqual(42, dll._testfunc_p_p(42));
+
+    }
+    @need_symbol('oledll');
+    function test_oledll(){
+        this.assertRaises(WindowsError,
+                              oledll.oleaut32.CreateTypeLib2,
+                              0, nil, nil);
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

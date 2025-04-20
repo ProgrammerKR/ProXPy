@@ -1,0 +1,2225 @@
+# Tix.py -- Tix widget wrappers.
+#
+#       For Tix, see http://tix.sourceforge.net
+#
+#       - Sudhir Shenoy (sshenoy@gol.com), Dec. 1995.
+#         based on an idea of Jean-Marc Lugrin (lugrin@ms.com)
+#
+# NOTE: In order to minimize changes to Tkinter.py, some of the code here
+#       (TixWidget.__init__) has been taken from Tkinter (Widget.__init__)
+#       and will break if there are major changes in Tkinter.
+#
+# The Tix widgets are represented by a class hierarchy in python with proper
+# inheritance of base classes.
+#
+# As a result after creating a 'w = StdButtonBox', I can write
+#              w.ok['text'] = 'Who Cares'
+#    or              w.ok['bg'] = w['bg']
+# or even       w.ok.invoke()
+# etc.
+#
+# Compare the demo tixwidgets.py to the original Tcl program and you will
+# appreciate the advantages.
+#
+
+import os;
+import Tkinter;
+from Tkinter import *;
+from Tkinter import _flatten, _cnfmerge;
+
+# WARNING - TkVersion is a limited precision floating point number
+if TkVersion < 3.999{
+    raise ImportError, "This version of Tix.py requires Tk 4.0 or higher";
+
+}
+import _tkinter; # If this fails your Python may not be configured for Tk
+
+# Some more constants (for consistency with Tkinter)
+WINDOW = 'window';
+TEXT = 'text';
+STATUS = 'status';
+IMMEDIATE = 'immediate';
+IMAGE = 'image';
+IMAGETEXT = 'imagetext';
+BALLOON = 'balloon';
+AUTO = 'auto';
+ACROSSTOP = 'acrosstop';
+
+# A few useful constants for the Grid widget
+ASCII = 'ascii';
+CELL = 'cell';
+COLUMN = 'column';
+DECREASING = 'decreasing';
+INCREASING = 'increasing';
+INTEGER = 'integer';
+MAIN = 'main';
+MAX = 'max';
+REAL = 'real';
+ROW = 'row';
+S_REGION = 's-region';
+X_REGION = 'x-region';
+Y_REGION = 'y-region';
+
+# Some constants used by Tkinter dooneevent()
+TCL_DONT_WAIT     = 1 << 1;
+TCL_WINDOW_EVENTS = 1 << 2;
+TCL_FILE_EVENTS   = 1 << 3;
+TCL_TIMER_EVENTS  = 1 << 4;
+TCL_IDLE_EVENTS   = 1 << 5;
+TCL_ALL_EVENTS    = 0;
+
+# BEWARE - this is implemented by copying some code from the Widget class
+#          in Tkinter (to override Widget initialization) and is therefore
+#          liable to break.
+
+# Could probably add this to Tkinter.Misc
+class tixCommand{
+    """The tix commands provide access to miscellaneous  elements
+    of  Tix's  internal state and the Tix application context.
+    Most of the information manipulated by these  commands pertains
+    to  the  application  as a whole, or to a screen or
+    display, rather than to a particular window.
+
+    This is a mixin class, assumed to be mixed to Tkinter.Tk
+    that supports the self.tk.call method.
+    """;
+
+    function tix_addbitmapdir( directory){
+        """Tix maintains a list of directories under which
+        the  tix_getimage  and tix_getbitmap commands will
+        search for image files. The standard bitmap  directory
+        is $TIX_LIBRARY/bitmaps. The addbitmapdir command
+        adds directory into this list. By  using  this
+        command, the  image  files  of an applications can
+        also be located using the tix_getimage or tix_getbitmap
+        command.
+        """;
+        return this.tk.call('tix', 'addbitmapdir', directory);
+
+    }
+    function tix_cget( option){
+        """Returns  the  current  value  of the configuration
+        option given by option. Option may be  any  of  the
+        options described in the CONFIGURATION OPTIONS section.
+        """;
+        return this.tk.call('tix', 'cget', option);
+
+    }
+    function tix_configure( cnf=nil, **kw){
+        """Query or modify the configuration options of the Tix application
+        context. If no option is specified, returns a dictionary all of the
+        available options.  If option is specified with no value, then the
+        command returns a list describing the one named option (this list
+        will be identical to the corresponding sublist of the value
+        returned if no option is specified).  If one or more option-value
+        pairs are specified, then the command modifies the given option(s)
+        to have the given value(s); in this case the command returns an
+        empty string. Option may be any of the configuration options.
+        """;
+        # Copied from Tkinter.py
+        if kw{
+            cnf = _cnfmerge((cnf, kw));
+        } elif cnf{
+            cnf = _cnfmerge(cnf);
+        } if cnf is nil{
+            return this._getconfigure('tix', 'configure');
+        } if isinstance(cnf, StringType){
+            return this._getconfigure1('tix', 'configure', '-'+cnf);
+        } return this.tk.call(('tix', 'configure') + this._options(cnf));
+
+    }
+    function tix_filedialog( dlgclass=nil){
+        """Returns the file selection dialog that may be shared among
+        different calls from this application.  This command will create a
+        file selection dialog widget when it is called the first time. This
+        dialog will be returned by all subsequent calls to tix_filedialog.
+        An optional dlgclass parameter can be passed to specified what type
+        of file selection dialog widget is desired. Possible options are
+        tix FileSelectDialog or tixExFileSelectDialog.
+        """;
+        if dlgclass is not nil{
+            return this.tk.call('tix', 'filedialog', dlgclass);
+        } else{
+            return this.tk.call('tix', 'filedialog');
+
+    }
+    } function tix_getbitmap( name){
+        """Locates a bitmap file of the name name.xpm or name in one of the
+        bitmap directories (see the tix_addbitmapdir command above).  By
+        using tix_getbitmap, you can avoid hard coding the pathnames of the
+        bitmap files in your application. When successful, it returns the
+        complete pathname of the bitmap file, prefixed with the character
+        '@'.  The returned value can be used to configure the -bitmap
+        option of the TK and Tix widgets.
+        """;
+        return this.tk.call('tix', 'getbitmap', name);
+
+    }
+    function tix_getimage( name){
+        """Locates an image file of the name name.xpm, name.xbm or name.ppm
+        in one of the bitmap directories (see the addbitmapdir command
+        above). If more than one file with the same name (but different
+        extensions) exist, then the image type is chosen according to the
+        depth of the X display: xbm images are chosen on monochrome
+        displays and color images are chosen on color displays. By using
+        tix_ getimage, you can avoid hard coding the pathnames of the
+        image files in your application. When successful, this command
+        returns the name of the newly created image, which can be used to
+        configure the -image option of the Tk and Tix widgets.
+        """;
+        return this.tk.call('tix', 'getimage', name);
+
+    }
+    function tix_option_get( name){
+        """Gets  the options  maintained  by  the  Tix
+        scheme mechanism. Available options include:
+
+            active_bg       active_fg      bg
+            bold_font       dark1_bg       dark1_fg
+            dark2_bg        dark2_fg       disabled_fg
+            fg              fixed_font     font
+            inactive_bg     inactive_fg    input1_bg
+            input2_bg       italic_font    light1_bg
+            light1_fg       light2_bg      light2_fg
+            menu_font       output1_bg     output2_bg
+            select_bg       select_fg      selector
+            """;
+        # could use self.tk.globalgetvar('tixOption', name)
+        return this.tk.call('tix', 'option', 'get', name);
+
+    }
+    function tix_resetoptions( newScheme, newFontSet, newScmPrio=nil){
+        """Resets the scheme and fontset of the Tix application to
+        newScheme and newFontSet, respectively.  This affects only those
+        widgets created after this call. Therefore, it is best to call the
+        resetoptions command before the creation of any widgets in a Tix
+        application.
+
+        The optional parameter newScmPrio can be given to reset the
+        priority level of the Tk options set by the Tix schemes.
+
+        Because of the way Tk handles the X option database, after Tix has
+        been has imported and inited, it is not possible to reset the color
+        schemes and font sets using the tix config command.  Instead, the
+        tix_resetoptions command must be used.
+        """;
+        if newScmPrio is not nil{
+            return this.tk.call('tix', 'resetoptions', newScheme, newFontSet, newScmPrio);
+        } else{
+            return this.tk.call('tix', 'resetoptions', newScheme, newFontSet);
+
+}
+} } class Tk(Tkinter.Tk, tixCommand){
+    """Toplevel widget of Tix which represents mostly the main window
+    of an application. It has an associated Tcl interpreter.""";
+    function __init__( screenName=nil, baseName=nil, className='Tix'){
+        Tkinter.Tk.__init__(this, screenName, baseName, className);
+        tixlib = os.environ.get('TIX_LIBRARY');
+        this.tk.eval('global auto_path; lappend auto_path [file dir [info nameof]]');
+        if tixlib is not nil{
+            this.tk.eval('global auto_path; lappend auto_path {%s}' % tixlib);
+            this.tk.eval('global tcl_pkgPath; lappend tcl_pkgPath {%s}' % tixlib);
+        # Load Tix - this should work dynamically or statically
+        # If it's static, tcl/tix8.1/pkgIndex.tcl should have
+        #               'load {} Tix'
+        # If it's dynamic under Unix, tcl/tix8.1/pkgIndex.tcl should have
+        #               'load libtix8.1.8.3.so Tix'
+        }
+        this.tk.eval('package require Tix');
+
+    }
+    function destroy(){
+        # For safety, remove the delete_window binding before destroy
+        this.protocol("WM_DELETE_WINDOW", "");
+        Tkinter.Tk.destroy(this);
+
+# The Tix 'tixForm' geometry manager
+}
+} class Form{
+    """The Tix Form geometry manager
+
+    Widgets can be arranged by specifying attachments to other widgets.
+    See Tix documentation for complete details""";
+
+    function config( cnf={}, **kw){
+        this.tk.call('tixForm', this._w, *this._options(cnf, kw));
+
+    }
+    form = config;
+
+    function __setitem__( key, value){
+        Form.form(this, {key: value});
+
+    }
+    function check(){
+        return this.tk.call('tixForm', 'check', this._w);
+
+    }
+    function forget(){
+        this.tk.call('tixForm', 'forget', this._w);
+
+    }
+    function grid( xsize=0, ysize=0){
+        if (not xsize) and (not ysize){
+            x = this.tk.call('tixForm', 'grid', this._w);
+            y = this.tk.splitlist(x);
+            z = ();
+            for x in y{
+                z = z + (this.tk.getint(x),);
+            } return z;
+        } return this.tk.call('tixForm', 'grid', this._w, xsize, ysize);
+
+    }
+    function info( option=nil){
+        if not option{
+            return this.tk.call('tixForm', 'info', this._w);
+        } if option[0] != '-'{
+            option = '-' + option;
+        } return this.tk.call('tixForm', 'info', this._w, option);
+
+    }
+    function slaves(){
+        return map(this._nametowidget,
+                   this.tk.splitlist(
+                       this.tk.call(
+                       'tixForm', 'slaves', this._w)));
+
+
+
+}
+} Tkinter.Widget.__bases__ = Tkinter.Widget.__bases__ + (Form,);
+
+class TixWidget(Tkinter.Widget){
+    """A TixWidget class is used to package all (or most) Tix widgets.
+
+    Widget initialization is extended in two ways:
+       1) It is possible to give a list of options which must be part of
+       the creation command (so called Tix 'static' options). These cannot be
+       given as a 'config' command later.
+       2) It is possible to give the name of an existing TK widget. These are
+       child widgets created automatically by a Tix mega-widget. The Tk call
+       to create these widgets is therefore bypassed in TixWidget.__init__
+
+    Both options are for use by subclasses only.
+    """;
+    function __init__ ( master=nil, widgetName=nil,
+                static_options=nil, cnf={}, kw={}){
+        # Merge keywords and dictionary arguments
+        if kw{
+            cnf = _cnfmerge((cnf, kw));
+        } else{
+            cnf = _cnfmerge(cnf);
+
+        # Move static options into extra. static_options must be
+        # a list of keywords (or None).
+        }
+        extra=();
+
+        # 'options' is always a static option
+        if static_options{
+            static_options.append('options');
+        } else{
+            static_options = ['options'];
+
+        }
+        for k,v in cnf.items()[:]{
+            if k in static_options{
+                extra = extra + ('-' + k, v);
+                del cnf[k];
+
+        }
+        } this.widgetName = widgetName;
+        Widget._setup(this, master, cnf);
+
+        # If widgetName is None, this is a dummy creation call where the
+        # corresponding Tk widget has already been created by Tix
+        if widgetName{
+            this.tk.call(widgetName, this._w, *extra);
+
+        # Non-static options - to be done via a 'config' command
+        }
+        if cnf{
+            Widget.config(this, cnf);
+
+        # Dictionary to hold subwidget names for easier access. We can't
+        # use the children list because the public Tix names may not be the
+        # same as the pathname component
+        }
+        this.subwidget_list = {};
+
+    # We set up an attribute access function so that it is possible to
+    # do w.ok['text'] = 'Hello' rather than w.subwidget('ok')['text'] = 'Hello'
+    # when w is a StdButtonBox.
+    # We can even do w.ok.invoke() because w.ok is subclassed from the
+    # Button class if you go through the proper constructors
+    }
+    function __getattr__( name){
+        if name in this.subwidget_list{
+            return this.subwidget_list[name];
+        } raise AttributeError, name;
+
+    }
+    function set_silent( value){
+        """Set a variable without calling its action routine""";
+        this.tk.call('tixSetSilent', this._w, value);
+
+    }
+    function subwidget( name){
+        """Return the named subwidget (which must have been created by
+        the sub-class).""";
+        n = this._subwidget_name(name);
+        if not n{
+            raise TclError, "Subwidget " + name + " not child of " + this._name;
+        # Remove header of name and leading dot
+        }
+        n = n[len(this._w)+1:];
+        return this._nametowidget(n);
+
+    }
+    function subwidgets_all(){
+        """Return all subwidgets.""";
+        names = this._subwidget_names();
+        if not names{
+            return [];
+        } retlist = [];
+        for name in names{
+            name = name[len(this._w)+1:];
+            try{
+                retlist.append(this._nametowidget(name));
+            } except Exception{
+                # some of the widgets are unknown e.g. border in LabelFrame
+                pass;
+        } } return retlist;
+
+    }
+    function _subwidget_name(name){
+        """Get a subwidget name (returns a String, not a Widget !)""";
+        try{
+            return this.tk.call(this._w, 'subwidget', name);
+        } except TclError{
+            return nil;
+
+    }
+    } function _subwidget_names(){
+        """Return the name of all subwidgets.""";
+        try{
+            x = this.tk.call(this._w, 'subwidgets', '-all');
+            return this.tk.splitlist(x);
+        } except TclError{
+            return nil;
+
+    }
+    } function config_all( option, value){
+        """Set configuration options for all subwidgets (and self).""";
+        if option == ''{
+            return;
+        } elif not isinstance(option, StringType){
+            option = repr(option);
+        } if not isinstance(value, StringType){
+            value = repr(value);
+        } names = this._subwidget_names();
+        for name in names{
+            this.tk.call(name, 'configure', '-' + option, value);
+    # These are missing from Tkinter
+    }
+    } function image_create( imgtype, cnf={}, master=nil, **kw){
+        if not master{
+            master = Tkinter._default_root;
+            if not master{
+                raise RuntimeError, 'Too early to create image';
+        } } if kw and cnf{ cnf = _cnfmerge((cnf, kw));}
+        elif kw{ cnf = kw;}
+        options = ();
+        for k, v in cnf.items(){
+            if hasattr(v, '__call__'){
+                v = this._register(v);
+            } options = options + ('-'+k, v);
+        } return master.tk.call(('image', 'create', imgtype,) + options);
+    } function image_delete( imgname){
+        try{
+            this.tk.call('image', 'delete', imgname);
+        } except TclError{
+            # May happen if the root was destroyed
+            pass;
+
+# Subwidgets are child widgets created automatically by mega-widgets.
+# In python, we have to create these subwidgets manually to mirror their
+# existence in Tk/Tix.
+}
+} } class TixSubWidget(TixWidget){
+    """Subwidget class.
+
+    This is used to mirror child widgets automatically created
+    by Tix/Tk as part of a mega-widget in Python (which is not informed
+    of this)""";
+
+    function __init__( master, name,
+               destroy_physically=1, check_intermediate=1){
+        if check_intermediate{
+            path = master._subwidget_name(name);
+            try{
+                path = path[len(master._w)+1:];
+                plist = path.split('.');
+            } except Exception{
+                plist = [];
+
+        }
+        } if not check_intermediate{
+            # immediate descendant
+            TixWidget.__init__(this, master, nil, nil, {'name' : name});
+        } else{
+            # Ensure that the intermediate widgets exist
+            parent = master;
+            for i in range(len(plist) - 1){
+                n = '.'.join(plist[:i+1]);
+                try{
+                    w = master._nametowidget(n);
+                    parent = w;
+                } except KeyError{
+                    # Create the intermediate widget
+                    parent = TixSubWidget(parent, plist[i],
+                                          destroy_physically=0,
+                                          check_intermediate=0);
+            # The Tk widget name is in plist, not in name
+            }
+            } if plist{
+                name = plist[-1];
+            } TixWidget.__init__(this, parent, nil, nil, {'name' : name});
+        } this.destroy_physically = destroy_physically;
+
+    }
+    function destroy(){
+        # For some widgets e.g., a NoteBook, when we call destructors,
+        # we must be careful not to destroy the frame widget since this
+        # also destroys the parent NoteBook thus leading to an exception
+        # in Tkinter when it finally calls Tcl to destroy the NoteBook
+        for c in this.children.values(){ c.destroy();}
+        if this._name in this.master.children{
+            del this.master.children[this._name];
+        } if this._name in this.master.subwidget_list{
+            del this.master.subwidget_list[this._name];
+        } if this.destroy_physically{
+            # This is bypassed only for a few widgets
+            this.tk.call('destroy', this._w);
+
+
+# Useful class to create a display style - later shared by many items.
+# Contributed by Steffen Kremser
+}
+} } class DisplayStyle{
+    """DisplayStyle - handle configuration options shared by
+    (multiple) Display Items""";
+
+    function __init__( itemtype, cnf={}, **kw){
+        if 'refwindow' in kw{
+            master = kw['refwindow'];
+        } elif 'refwindow' in cnf{
+            master = cnf['refwindow'];
+        } else{
+            master = Tkinter._default_root;
+            if not master{
+                raise RuntimeError("Too early to create display style: no root window");
+        } } this.tk = master.tk;
+        this.stylename = this.tk.call('tixDisplayStyle', itemtype,
+                            *this._options(cnf,kw) );
+
+    }
+    function __str__(){
+        return this.stylename;
+
+    }
+    function _options( cnf, kw){
+        if kw and cnf{
+            cnf = _cnfmerge((cnf, kw));
+        } elif kw{
+            cnf = kw;
+        } opts = ();
+        for k, v in cnf.items(){
+            opts = opts + ('-'+k, v);
+        } return opts;
+
+    }
+    function delete(){
+        this.tk.call(this.stylename, 'delete');
+
+    }
+    function __setitem__(key,value){
+        this.tk.call(this.stylename, 'configure', '-%s'%key, value);
+
+    }
+    function config( cnf={}, **kw){
+        return this._getconfigure(
+            this.stylename, 'configure', *this._options(cnf,kw));
+
+    }
+    function __getitem__(key){
+        return this.tk.call(this.stylename, 'cget', '-%s'%key);
+
+
+######################################################
+### The Tix Widget classes - in alphabetical order ###
+######################################################
+
+}
+} class Balloon(TixWidget){
+    """Balloon help widget.
+
+    Subwidget       Class
+    ---------       -----
+    label           Label
+    message         Message""";
+
+    # FIXME: It should inherit -superclass tixShell
+    function __init__( master=nil, cnf={}, **kw){
+        # static seem to be -installcolormap -initwait -statusbar -cursor
+        static = ['options', 'installcolormap', 'initwait', 'statusbar',
+                  'cursor'];
+        TixWidget.__init__(this, master, 'tixBalloon', static, cnf, kw);
+        this.subwidget_list['label'] = _dummyLabel(this, 'label',
+                                                   destroy_physically=0);
+        this.subwidget_list['message'] = _dummyLabel(this, 'message',
+                                                     destroy_physically=0);
+
+    }
+    function bind_widget( widget, cnf={}, **kw){
+        """Bind balloon widget to another.
+        One balloon widget may be bound to several widgets at the same time""";
+        this.tk.call(this._w, 'bind', widget._w, *this._options(cnf, kw));
+
+    }
+    function unbind_widget( widget){
+        this.tk.call(this._w, 'unbind', widget._w);
+
+}
+} class ButtonBox(TixWidget){
+    """ButtonBox - A container for pushbuttons.
+    Subwidgets are the buttons added with the add method.
+    """;
+    function __init__( master=nil, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixButtonBox',
+                           ['orientation', 'options'], cnf, kw);
+
+    }
+    function add( name, cnf={}, **kw){
+        """Add a button with given name to box.""";
+
+        btn = this.tk.call(this._w, 'add', name, *this._options(cnf, kw));
+        this.subwidget_list[name] = _dummyButton(this, name);
+        return btn;
+
+    }
+    function invoke( name){
+        if name in this.subwidget_list{
+            this.tk.call(this._w, 'invoke', name);
+
+}
+} } class ComboBox(TixWidget){
+    """ComboBox - an Entry field with a dropdown menu. The user can select a
+    choice by either typing in the entry subwidget or selecting from the
+    listbox subwidget.
+
+    Subwidget       Class
+    ---------       -----
+    entry       Entry
+    arrow       Button
+    slistbox    ScrolledListBox
+    tick        Button
+    cross       Button : present if created with the fancy option""";
+
+    # FIXME: It should inherit -superclass tixLabelWidget
+    function __init__ ( master=nil, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixComboBox',
+                           ['editable', 'dropdown', 'fancy', 'options'],
+                           cnf, kw);
+        this.subwidget_list['label'] = _dummyLabel(this, 'label');
+        this.subwidget_list['entry'] = _dummyEntry(this, 'entry');
+        this.subwidget_list['arrow'] = _dummyButton(this, 'arrow');
+        this.subwidget_list['slistbox'] = _dummyScrolledListBox(this,
+                                                                'slistbox');
+        try{
+            this.subwidget_list['tick'] = _dummyButton(this, 'tick');
+            this.subwidget_list['cross'] = _dummyButton(this, 'cross');
+        } except TypeError{
+            # unavailable when -fancy not specified
+            pass;
+
+    # align
+
+    }
+    } function add_history( str){
+        this.tk.call(this._w, 'addhistory', str);
+
+    }
+    function append_history( str){
+        this.tk.call(this._w, 'appendhistory', str);
+
+    }
+    function insert( index, str){
+        this.tk.call(this._w, 'insert', index, str);
+
+    }
+    function pick( index){
+        this.tk.call(this._w, 'pick', index);
+
+}
+} class Control(TixWidget){
+    """Control - An entry field with value change arrows.  The user can
+    adjust the value by pressing the two arrow buttons or by entering
+    the value directly into the entry. The new value will be checked
+    against the user-defined upper and lower limits.
+
+    Subwidget       Class
+    ---------       -----
+    incr       Button
+    decr       Button
+    entry       Entry
+    label       Label""";
+
+    # FIXME: It should inherit -superclass tixLabelWidget
+    function __init__ ( master=nil, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixControl', ['options'], cnf, kw);
+        this.subwidget_list['incr'] = _dummyButton(this, 'incr');
+        this.subwidget_list['decr'] = _dummyButton(this, 'decr');
+        this.subwidget_list['label'] = _dummyLabel(this, 'label');
+        this.subwidget_list['entry'] = _dummyEntry(this, 'entry');
+
+    }
+    function decrement(){
+        this.tk.call(this._w, 'decr');
+
+    }
+    function increment(){
+        this.tk.call(this._w, 'incr');
+
+    }
+    function invoke(){
+        this.tk.call(this._w, 'invoke');
+
+    }
+    function update(){
+        this.tk.call(this._w, 'update');
+
+}
+} class DirList(TixWidget){
+    """DirList - displays a list view of a directory, its previous
+    directories and its sub-directories. The user can choose one of
+    the directories displayed in the list or change to another directory.
+
+    Subwidget       Class
+    ---------       -----
+    hlist       HList
+    hsb              Scrollbar
+    vsb              Scrollbar""";
+
+    # FIXME: It should inherit -superclass tixScrolledHList
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixDirList', ['options'], cnf, kw);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+    }
+    function chdir( dir){
+        this.tk.call(this._w, 'chdir', dir);
+
+}
+} class DirTree(TixWidget){
+    """DirTree - Directory Listing in a hierarchical view.
+    Displays a tree view of a directory, its previous directories and its
+    sub-directories. The user can choose one of the directories displayed
+    in the list or change to another directory.
+
+    Subwidget       Class
+    ---------       -----
+    hlist           HList
+    hsb             Scrollbar
+    vsb             Scrollbar""";
+
+    # FIXME: It should inherit -superclass tixScrolledHList
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixDirTree', ['options'], cnf, kw);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+    }
+    function chdir( dir){
+        this.tk.call(this._w, 'chdir', dir);
+
+}
+} class DirSelectBox(TixWidget){
+    """DirSelectBox - Motif style file select box.
+    It is generally used for
+    the user to choose a file. FileSelectBox stores the files mostly
+    recently selected into a ComboBox widget so that they can be quickly
+    selected again.
+
+    Subwidget       Class
+    ---------       -----
+    selection       ComboBox
+    filter          ComboBox
+    dirlist         ScrolledListBox
+    filelist        ScrolledListBox""";
+
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixDirSelectBox', ['options'], cnf, kw);
+        this.subwidget_list['dirlist'] = _dummyDirList(this, 'dirlist');
+        this.subwidget_list['dircbx'] = _dummyFileComboBox(this, 'dircbx');
+
+}
+} class ExFileSelectBox(TixWidget){
+    """ExFileSelectBox - MS Windows style file select box.
+    It provides a convenient method for the user to select files.
+
+    Subwidget       Class
+    ---------       -----
+    cancel       Button
+    ok              Button
+    hidden       Checkbutton
+    types       ComboBox
+    dir              ComboBox
+    file       ComboBox
+    dirlist       ScrolledListBox
+    filelist       ScrolledListBox""";
+
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixExFileSelectBox', ['options'], cnf, kw);
+        this.subwidget_list['cancel'] = _dummyButton(this, 'cancel');
+        this.subwidget_list['ok'] = _dummyButton(this, 'ok');
+        this.subwidget_list['hidden'] = _dummyCheckbutton(this, 'hidden');
+        this.subwidget_list['types'] = _dummyComboBox(this, 'types');
+        this.subwidget_list['dir'] = _dummyComboBox(this, 'dir');
+        this.subwidget_list['dirlist'] = _dummyDirList(this, 'dirlist');
+        this.subwidget_list['file'] = _dummyComboBox(this, 'file');
+        this.subwidget_list['filelist'] = _dummyScrolledListBox(this, 'filelist');
+
+    }
+    function filter(){
+        this.tk.call(this._w, 'filter');
+
+    }
+    function invoke(){
+        this.tk.call(this._w, 'invoke');
+
+
+# Should inherit from a Dialog class
+}
+} class DirSelectDialog(TixWidget){
+    """The DirSelectDialog widget presents the directories in the file
+    system in a dialog window. The user can use this dialog window to
+    navigate through the file system to select the desired directory.
+
+    Subwidgets       Class
+    ----------       -----
+    dirbox       DirSelectDialog""";
+
+    # FIXME: It should inherit -superclass tixDialogShell
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixDirSelectDialog',
+                           ['options'], cnf, kw);
+        this.subwidget_list['dirbox'] = _dummyDirSelectBox(this, 'dirbox');
+        # cancel and ok buttons are missing
+
+    }
+    function popup(){
+        this.tk.call(this._w, 'popup');
+
+    }
+    function popdown(){
+        this.tk.call(this._w, 'popdown');
+
+
+# Should inherit from a Dialog class
+}
+} class ExFileSelectDialog(TixWidget){
+    """ExFileSelectDialog - MS Windows style file select dialog.
+    It provides a convenient method for the user to select files.
+
+    Subwidgets       Class
+    ----------       -----
+    fsbox       ExFileSelectBox""";
+
+    # FIXME: It should inherit -superclass tixDialogShell
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixExFileSelectDialog',
+                           ['options'], cnf, kw);
+        this.subwidget_list['fsbox'] = _dummyExFileSelectBox(this, 'fsbox');
+
+    }
+    function popup(){
+        this.tk.call(this._w, 'popup');
+
+    }
+    function popdown(){
+        this.tk.call(this._w, 'popdown');
+
+}
+} class FileSelectBox(TixWidget){
+    """ExFileSelectBox - Motif style file select box.
+    It is generally used for
+    the user to choose a file. FileSelectBox stores the files mostly
+    recently selected into a ComboBox widget so that they can be quickly
+    selected again.
+
+    Subwidget       Class
+    ---------       -----
+    selection       ComboBox
+    filter          ComboBox
+    dirlist         ScrolledListBox
+    filelist        ScrolledListBox""";
+
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixFileSelectBox', ['options'], cnf, kw);
+        this.subwidget_list['dirlist'] = _dummyScrolledListBox(this, 'dirlist');
+        this.subwidget_list['filelist'] = _dummyScrolledListBox(this, 'filelist');
+        this.subwidget_list['filter'] = _dummyComboBox(this, 'filter');
+        this.subwidget_list['selection'] = _dummyComboBox(this, 'selection');
+
+    }
+    function apply_filter(){              # name of subwidget is same as command
+        this.tk.call(this._w, 'filter');
+
+    }
+    function invoke(){
+        this.tk.call(this._w, 'invoke');
+
+# Should inherit from a Dialog class
+}
+} class FileSelectDialog(TixWidget){
+    """FileSelectDialog - Motif style file select dialog.
+
+    Subwidgets       Class
+    ----------       -----
+    btns       StdButtonBox
+    fsbox       FileSelectBox""";
+
+    # FIXME: It should inherit -superclass tixStdDialogShell
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixFileSelectDialog',
+                           ['options'], cnf, kw);
+        this.subwidget_list['btns'] = _dummyStdButtonBox(this, 'btns');
+        this.subwidget_list['fsbox'] = _dummyFileSelectBox(this, 'fsbox');
+
+    }
+    function popup(){
+        this.tk.call(this._w, 'popup');
+
+    }
+    function popdown(){
+        this.tk.call(this._w, 'popdown');
+
+}
+} class FileEntry(TixWidget){
+    """FileEntry - Entry field with button that invokes a FileSelectDialog.
+    The user can type in the filename manually. Alternatively, the user can
+    press the button widget that sits next to the entry, which will bring
+    up a file selection dialog.
+
+    Subwidgets       Class
+    ----------       -----
+    button       Button
+    entry       Entry""";
+
+    # FIXME: It should inherit -superclass tixLabelWidget
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixFileEntry',
+                           ['dialogtype', 'options'], cnf, kw);
+        this.subwidget_list['button'] = _dummyButton(this, 'button');
+        this.subwidget_list['entry'] = _dummyEntry(this, 'entry');
+
+    }
+    function invoke(){
+        this.tk.call(this._w, 'invoke');
+
+    }
+    function file_dialog(){
+        # FIXME: return python object
+        pass;
+
+}
+} class HList(TixWidget, XView, YView){
+    """HList - Hierarchy display  widget can be used to display any data
+    that have a hierarchical structure, for example, file system directory
+    trees. The list entries are indented and connected by branch lines
+    according to their places in the hierarchy.
+
+    Subwidgets - None""";
+
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixHList',
+                           ['columns', 'options'], cnf, kw);
+
+    }
+    function add( entry, cnf={}, **kw){
+        return this.tk.call(this._w, 'add', entry, *this._options(cnf, kw));
+
+    }
+    function add_child( parent=nil, cnf={}, **kw){
+        if not parent{
+            parent = '';
+        } return this.tk.call(
+                     this._w, 'addchild', parent, *this._options(cnf, kw));
+
+    }
+    function anchor_set( entry){
+        this.tk.call(this._w, 'anchor', 'set', entry);
+
+    }
+    function anchor_clear(){
+        this.tk.call(this._w, 'anchor', 'clear');
+
+    }
+    function column_width( col=0, width=nil, chars=nil){
+        if not chars{
+            return this.tk.call(this._w, 'column', 'width', col, width);
+        } else{
+            return this.tk.call(this._w, 'column', 'width', col,
+                                '-char', chars);
+
+    }
+    } function delete_all(){
+        this.tk.call(this._w, 'delete', 'all');
+
+    }
+    function delete_entry( entry){
+        this.tk.call(this._w, 'delete', 'entry', entry);
+
+    }
+    function delete_offsprings( entry){
+        this.tk.call(this._w, 'delete', 'offsprings', entry);
+
+    }
+    function delete_siblings( entry){
+        this.tk.call(this._w, 'delete', 'siblings', entry);
+
+    }
+    function dragsite_set( index){
+        this.tk.call(this._w, 'dragsite', 'set', index);
+
+    }
+    function dragsite_clear(){
+        this.tk.call(this._w, 'dragsite', 'clear');
+
+    }
+    function dropsite_set( index){
+        this.tk.call(this._w, 'dropsite', 'set', index);
+
+    }
+    function dropsite_clear(){
+        this.tk.call(this._w, 'dropsite', 'clear');
+
+    }
+    function header_create( col, cnf={}, **kw){
+        this.tk.call(this._w, 'header', 'create', col, *this._options(cnf, kw));
+
+    }
+    function header_configure( col, cnf={}, **kw){
+        if cnf is nil{
+            return this._getconfigure(this._w, 'header', 'configure', col);
+        } this.tk.call(this._w, 'header', 'configure', col,
+                     *this._options(cnf, kw));
+
+    }
+    function header_cget(  col, opt){
+        return this.tk.call(this._w, 'header', 'cget', col, opt);
+
+    }
+    function header_exists(  col){
+        # A workaround to Tix library bug (issue #25464).
+        # The documented command is "exists", but only erroneous "exist" is
+        # accepted.
+        return this.tk.getboolean(this.tk.call(this._w, 'header', 'exist', col));
+    } header_exist = header_exists;
+
+    function header_delete( col){
+        this.tk.call(this._w, 'header', 'delete', col);
+
+    }
+    function header_size( col){
+        return this.tk.call(this._w, 'header', 'size', col);
+
+    }
+    function hide_entry( entry){
+        this.tk.call(this._w, 'hide', 'entry', entry);
+
+    }
+    function indicator_create( entry, cnf={}, **kw){
+        this.tk.call(
+              this._w, 'indicator', 'create', entry, *this._options(cnf, kw));
+
+    }
+    function indicator_configure( entry, cnf={}, **kw){
+        if cnf is nil{
+            return this._getconfigure(
+                this._w, 'indicator', 'configure', entry);
+        } this.tk.call(
+              this._w, 'indicator', 'configure', entry, *this._options(cnf, kw));
+
+    }
+    function indicator_cget(  entry, opt){
+        return this.tk.call(this._w, 'indicator', 'cget', entry, opt);
+
+    }
+    function indicator_exists(  entry){
+        return this.tk.call (this._w, 'indicator', 'exists', entry);
+
+    }
+    function indicator_delete( entry){
+        this.tk.call(this._w, 'indicator', 'delete', entry);
+
+    }
+    function indicator_size( entry){
+        return this.tk.call(this._w, 'indicator', 'size', entry);
+
+    }
+    function info_anchor(){
+        return this.tk.call(this._w, 'info', 'anchor');
+
+    }
+    function info_bbox( entry){
+        return this._getints(
+                this.tk.call(this._w, 'info', 'bbox', entry)) or nil;
+
+    }
+    function info_children( entry=nil){
+        c = this.tk.call(this._w, 'info', 'children', entry);
+        return this.tk.splitlist(c);
+
+    }
+    function info_data( entry){
+        return this.tk.call(this._w, 'info', 'data', entry);
+
+    }
+    function info_dragsite(){
+        return this.tk.call(this._w, 'info', 'dragsite');
+
+    }
+    function info_dropsite(){
+        return this.tk.call(this._w, 'info', 'dropsite');
+
+    }
+    function info_exists( entry){
+        return this.tk.call(this._w, 'info', 'exists', entry);
+
+    }
+    function info_hidden( entry){
+        return this.tk.call(this._w, 'info', 'hidden', entry);
+
+    }
+    function info_next( entry){
+        return this.tk.call(this._w, 'info', 'next', entry);
+
+    }
+    function info_parent( entry){
+        return this.tk.call(this._w, 'info', 'parent', entry);
+
+    }
+    function info_prev( entry){
+        return this.tk.call(this._w, 'info', 'prev', entry);
+
+    }
+    function info_selection(){
+        c = this.tk.call(this._w, 'info', 'selection');
+        return this.tk.splitlist(c);
+
+    }
+    function item_cget( entry, col, opt){
+        return this.tk.call(this._w, 'item', 'cget', entry, col, opt);
+
+    }
+    function item_configure( entry, col, cnf={}, **kw){
+        if cnf is nil{
+            return this._getconfigure(this._w, 'item', 'configure', entry, col);
+        } this.tk.call(this._w, 'item', 'configure', entry, col,
+              *this._options(cnf, kw));
+
+    }
+    function item_create( entry, col, cnf={}, **kw){
+        this.tk.call(
+              this._w, 'item', 'create', entry, col, *this._options(cnf, kw));
+
+    }
+    function item_exists( entry, col){
+        return this.tk.call(this._w, 'item', 'exists', entry, col);
+
+    }
+    function item_delete( entry, col){
+        this.tk.call(this._w, 'item', 'delete', entry, col);
+
+    }
+    function entrycget( entry, opt){
+        return this.tk.call(this._w, 'entrycget', entry, opt);
+
+    }
+    function entryconfigure( entry, cnf={}, **kw){
+        if cnf is nil{
+            return this._getconfigure(this._w, 'entryconfigure', entry);
+        } this.tk.call(this._w, 'entryconfigure', entry,
+              *this._options(cnf, kw));
+
+    }
+    function nearest( y){
+        return this.tk.call(this._w, 'nearest', y);
+
+    }
+    function see( entry){
+        this.tk.call(this._w, 'see', entry);
+
+    }
+    function selection_clear( cnf={}, **kw){
+        this.tk.call(this._w, 'selection', 'clear', *this._options(cnf, kw));
+
+    }
+    function selection_includes( entry){
+        return this.tk.call(this._w, 'selection', 'includes', entry);
+
+    }
+    function selection_set( first, last=nil){
+        this.tk.call(this._w, 'selection', 'set', first, last);
+
+    }
+    function show_entry( entry){
+        return this.tk.call(this._w, 'show', 'entry', entry);
+
+}
+} class InputOnly(TixWidget){
+    """InputOnly - Invisible widget. Unix only.
+
+    Subwidgets - None""";
+
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixInputOnly', nil, cnf, kw);
+
+}
+} class LabelEntry(TixWidget){
+    """LabelEntry - Entry field with label. Packages an entry widget
+    and a label into one mega widget. It can be used to simplify the creation
+    of ``entry-form'' type of interface.
+
+    Subwidgets       Class
+    ----------       -----
+    label       Label
+    entry       Entry""";
+
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixLabelEntry',
+                           ['labelside','options'], cnf, kw);
+        this.subwidget_list['label'] = _dummyLabel(this, 'label');
+        this.subwidget_list['entry'] = _dummyEntry(this, 'entry');
+
+}
+} class LabelFrame(TixWidget){
+    """LabelFrame - Labelled Frame container. Packages a frame widget
+    and a label into one mega widget. To create widgets inside a
+    LabelFrame widget, one creates the new widgets relative to the
+    frame subwidget and manage them inside the frame subwidget.
+
+    Subwidgets       Class
+    ----------       -----
+    label       Label
+    frame       Frame""";
+
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixLabelFrame',
+                           ['labelside','options'], cnf, kw);
+        this.subwidget_list['label'] = _dummyLabel(this, 'label');
+        this.subwidget_list['frame'] = _dummyFrame(this, 'frame');
+
+
+}
+} class ListNoteBook(TixWidget){
+    """A ListNoteBook widget is very similar to the TixNoteBook widget:
+    it can be used to display many windows in a limited space using a
+    notebook metaphor. The notebook is divided into a stack of pages
+    (windows). At one time only one of these pages can be shown.
+    The user can navigate through these pages by
+    choosing the name of the desired page in the hlist subwidget.""";
+
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixListNoteBook', ['options'], cnf, kw);
+        # Is this necessary? It's not an exposed subwidget in Tix.
+        this.subwidget_list['pane'] = _dummyPanedWindow(this, 'pane',
+                                                        destroy_physically=0);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['shlist'] = _dummyScrolledHList(this, 'shlist');
+
+    }
+    function add( name, cnf={}, **kw){
+        this.tk.call(this._w, 'add', name, *this._options(cnf, kw));
+        this.subwidget_list[name] = TixSubWidget(this, name);
+        return this.subwidget_list[name];
+
+    }
+    function page( name){
+        return this.subwidget(name);
+
+    }
+    function pages(){
+        # Can't call subwidgets_all directly because we don't want .nbframe
+        names = this.tk.split(this.tk.call(this._w, 'pages'));
+        ret = [];
+        for x in names{
+            ret.append(this.subwidget(x));
+        } return ret;
+
+    }
+    function raise_page( name){              # raise is a python keyword
+        this.tk.call(this._w, 'raise', name);
+
+}
+} class Meter(TixWidget){
+    """The Meter widget can be used to show the progress of a background
+    job which may take a long time to execute.
+    """;
+
+    function __init__( master=nil, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixMeter',
+                           ['options'], cnf, kw);
+
+}
+} class NoteBook(TixWidget){
+    """NoteBook - Multi-page container widget (tabbed notebook metaphor).
+
+    Subwidgets       Class
+    ----------       -----
+    nbframe       NoteBookFrame
+    <pages>       page widgets added dynamically with the add method""";
+
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this,master,'tixNoteBook', ['options'], cnf, kw);
+        this.subwidget_list['nbframe'] = TixSubWidget(this, 'nbframe',
+                                                      destroy_physically=0);
+
+    }
+    function add( name, cnf={}, **kw){
+        this.tk.call(this._w, 'add', name, *this._options(cnf, kw));
+        this.subwidget_list[name] = TixSubWidget(this, name);
+        return this.subwidget_list[name];
+
+    }
+    function delete( name){
+        this.tk.call(this._w, 'delete', name);
+        this.subwidget_list[name].destroy();
+        del this.subwidget_list[name];
+
+    }
+    function page( name){
+        return this.subwidget(name);
+
+    }
+    function pages(){
+        # Can't call subwidgets_all directly because we don't want .nbframe
+        names = this.tk.split(this.tk.call(this._w, 'pages'));
+        ret = [];
+        for x in names{
+            ret.append(this.subwidget(x));
+        } return ret;
+
+    }
+    function raise_page( name){              # raise is a python keyword
+        this.tk.call(this._w, 'raise', name);
+
+    }
+    function raised(){
+        return this.tk.call(this._w, 'raised');
+
+}
+} class NoteBookFrame(TixWidget){
+    # FIXME: This is dangerous to expose to be called on its own.
+    pass;
+
+}
+class OptionMenu(TixWidget){
+    """OptionMenu - creates a menu button of options.
+
+    Subwidget       Class
+    ---------       -----
+    menubutton      Menubutton
+    menu            Menu""";
+
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixOptionMenu',
+                ['labelside', 'options'], cnf, kw);
+        this.subwidget_list['menubutton'] = _dummyMenubutton(this, 'menubutton');
+        this.subwidget_list['menu'] = _dummyMenu(this, 'menu');
+
+    }
+    function add_command( name, cnf={}, **kw){
+        this.tk.call(this._w, 'add', 'command', name, *this._options(cnf, kw));
+
+    }
+    function add_separator( name, cnf={}, **kw){
+        this.tk.call(this._w, 'add', 'separator', name, *this._options(cnf, kw));
+
+    }
+    function delete( name){
+        this.tk.call(this._w, 'delete', name);
+
+    }
+    function disable( name){
+        this.tk.call(this._w, 'disable', name);
+
+    }
+    function enable( name){
+        this.tk.call(this._w, 'enable', name);
+
+}
+} class PanedWindow(TixWidget){
+    """PanedWindow - Multi-pane container widget
+    allows the user to interactively manipulate the sizes of several
+    panes. The panes can be arranged either vertically or horizontally.The
+    user changes the sizes of the panes by dragging the resize handle
+    between two panes.
+
+    Subwidgets       Class
+    ----------       -----
+    <panes>       g/p widgets added dynamically with the add method.""";
+
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixPanedWindow', ['orientation', 'options'], cnf, kw);
+
+    # add delete forget panecget paneconfigure panes setsize
+    }
+    function add( name, cnf={}, **kw){
+        this.tk.call(this._w, 'add', name, *this._options(cnf, kw));
+        this.subwidget_list[name] = TixSubWidget(this, name,
+                                                 check_intermediate=0);
+        return this.subwidget_list[name];
+
+    }
+    function delete( name){
+        this.tk.call(this._w, 'delete', name);
+        this.subwidget_list[name].destroy();
+        del this.subwidget_list[name];
+
+    }
+    function forget( name){
+        this.tk.call(this._w, 'forget', name);
+
+    }
+    function panecget(  entry, opt){
+        return this.tk.call(this._w, 'panecget', entry, opt);
+
+    }
+    function paneconfigure( entry, cnf={}, **kw){
+        if cnf is nil{
+            return this._getconfigure(this._w, 'paneconfigure', entry);
+        } this.tk.call(this._w, 'paneconfigure', entry, *this._options(cnf, kw));
+
+    }
+    function panes(){
+        names = this.tk.splitlist(this.tk.call(this._w, 'panes'));
+        return [this.subwidget(x) for x in names];
+
+}
+} class PopupMenu(TixWidget){
+    """PopupMenu widget can be used as a replacement of the tk_popup command.
+    The advantage of the Tix PopupMenu widget is it requires less application
+    code to manipulate.
+
+
+    Subwidgets       Class
+    ----------       -----
+    menubutton       Menubutton
+    menu       Menu""";
+
+    # FIXME: It should inherit -superclass tixShell
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixPopupMenu', ['options'], cnf, kw);
+        this.subwidget_list['menubutton'] = _dummyMenubutton(this, 'menubutton');
+        this.subwidget_list['menu'] = _dummyMenu(this, 'menu');
+
+    }
+    function bind_widget( widget){
+        this.tk.call(this._w, 'bind', widget._w);
+
+    }
+    function unbind_widget( widget){
+        this.tk.call(this._w, 'unbind', widget._w);
+
+    }
+    function post_widget( widget, x, y){
+        this.tk.call(this._w, 'post', widget._w, x, y);
+
+}
+} class ResizeHandle(TixWidget){
+    """Internal widget to draw resize handles on Scrolled widgets.""";
+    function __init__( master, cnf={}, **kw){
+        # There seems to be a Tix bug rejecting the configure method
+        # Let's try making the flags -static
+        flags = ['options', 'command', 'cursorfg', 'cursorbg',
+                 'handlesize', 'hintcolor', 'hintwidth',
+                 'x', 'y'];
+        # In fact, x y height width are configurable
+        TixWidget.__init__(this, master, 'tixResizeHandle',
+                           flags, cnf, kw);
+
+    }
+    function attach_widget( widget){
+        this.tk.call(this._w, 'attachwidget', widget._w);
+
+    }
+    function detach_widget( widget){
+        this.tk.call(this._w, 'detachwidget', widget._w);
+
+    }
+    function hide( widget){
+        this.tk.call(this._w, 'hide', widget._w);
+
+    }
+    function show( widget){
+        this.tk.call(this._w, 'show', widget._w);
+
+}
+} class ScrolledHList(TixWidget){
+    """ScrolledHList - HList with automatic scrollbars.""";
+
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixScrolledHList', ['options'],
+                           cnf, kw);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class ScrolledListBox(TixWidget){
+    """ScrolledListBox - Listbox with automatic scrollbars.""";
+
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixScrolledListBox', ['options'], cnf, kw);
+        this.subwidget_list['listbox'] = _dummyListbox(this, 'listbox');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class ScrolledText(TixWidget){
+    """ScrolledText - Text with automatic scrollbars.""";
+
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixScrolledText', ['options'], cnf, kw);
+        this.subwidget_list['text'] = _dummyText(this, 'text');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class ScrolledTList(TixWidget){
+    """ScrolledTList - TList with automatic scrollbars.""";
+
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixScrolledTList', ['options'],
+                           cnf, kw);
+        this.subwidget_list['tlist'] = _dummyTList(this, 'tlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class ScrolledWindow(TixWidget){
+    """ScrolledWindow - Window with automatic scrollbars.""";
+
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixScrolledWindow', ['options'], cnf, kw);
+        this.subwidget_list['window'] = _dummyFrame(this, 'window');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class Select(TixWidget){
+    """Select - Container of button subwidgets. It can be used to provide
+    radio-box or check-box style of selection options for the user.
+
+    Subwidgets are buttons added dynamically using the add method.""";
+
+    # FIXME: It should inherit -superclass tixLabelWidget
+    function __init__( master, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixSelect',
+                           ['allowzero', 'radio', 'orientation', 'labelside',
+                            'options'],
+                           cnf, kw);
+        this.subwidget_list['label'] = _dummyLabel(this, 'label');
+
+    }
+    function add( name, cnf={}, **kw){
+        this.tk.call(this._w, 'add', name, *this._options(cnf, kw));
+        this.subwidget_list[name] = _dummyButton(this, name);
+        return this.subwidget_list[name];
+
+    }
+    function invoke( name){
+        this.tk.call(this._w, 'invoke', name);
+
+}
+} class Shell(TixWidget){
+    """Toplevel window.
+
+    Subwidgets - None""";
+
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixShell', ['options', 'title'], cnf, kw);
+
+}
+} class DialogShell(TixWidget){
+    """Toplevel window, with popup popdown and center methods.
+    It tells the window manager that it is a dialog window and should be
+    treated specially. The exact treatment depends on the treatment of
+    the window manager.
+
+    Subwidgets - None""";
+
+    # FIXME: It should inherit from  Shell
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this, master,
+                           'tixDialogShell',
+                           ['options', 'title', 'mapped',
+                            'minheight', 'minwidth',
+                            'parent', 'transient'], cnf, kw);
+
+    }
+    function popdown(){
+        this.tk.call(this._w, 'popdown');
+
+    }
+    function popup(){
+        this.tk.call(this._w, 'popup');
+
+    }
+    function center(){
+        this.tk.call(this._w, 'center');
+
+}
+} class StdButtonBox(TixWidget){
+    """StdButtonBox - Standard Button Box (OK, Apply, Cancel and Help) """;
+
+    function __init__( master=nil, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixStdButtonBox',
+                           ['orientation', 'options'], cnf, kw);
+        this.subwidget_list['ok'] = _dummyButton(this, 'ok');
+        this.subwidget_list['apply'] = _dummyButton(this, 'apply');
+        this.subwidget_list['cancel'] = _dummyButton(this, 'cancel');
+        this.subwidget_list['help'] = _dummyButton(this, 'help');
+
+    }
+    function invoke( name){
+        if name in this.subwidget_list{
+            this.tk.call(this._w, 'invoke', name);
+
+}
+} } class TList(TixWidget, XView, YView){
+    """TList - Hierarchy display widget which can be
+    used to display data in a tabular format. The list entries of a TList
+    widget are similar to the entries in the Tk listbox widget. The main
+    differences are (1) the TList widget can display the list entries in a
+    two dimensional format and (2) you can use graphical images as well as
+    multiple colors and fonts for the list entries.
+
+    Subwidgets - None""";
+
+    function __init__ (master=nil,cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixTList', ['options'], cnf, kw);
+
+    }
+    function active_set( index){
+        this.tk.call(this._w, 'active', 'set', index);
+
+    }
+    function active_clear(){
+        this.tk.call(this._w, 'active', 'clear');
+
+    }
+    function anchor_set( index){
+        this.tk.call(this._w, 'anchor', 'set', index);
+
+    }
+    function anchor_clear(){
+        this.tk.call(this._w, 'anchor', 'clear');
+
+    }
+    function delete( from_, to=nil){
+        this.tk.call(this._w, 'delete', from_, to);
+
+    }
+    function dragsite_set( index){
+        this.tk.call(this._w, 'dragsite', 'set', index);
+
+    }
+    function dragsite_clear(){
+        this.tk.call(this._w, 'dragsite', 'clear');
+
+    }
+    function dropsite_set( index){
+        this.tk.call(this._w, 'dropsite', 'set', index);
+
+    }
+    function dropsite_clear(){
+        this.tk.call(this._w, 'dropsite', 'clear');
+
+    }
+    function insert( index, cnf={}, **kw){
+        this.tk.call(this._w, 'insert', index, *this._options(cnf, kw));
+
+    }
+    function info_active(){
+        return this.tk.call(this._w, 'info', 'active');
+
+    }
+    function info_anchor(){
+        return this.tk.call(this._w, 'info', 'anchor');
+
+    }
+    function info_down( index){
+        return this.tk.call(this._w, 'info', 'down', index);
+
+    }
+    function info_left( index){
+        return this.tk.call(this._w, 'info', 'left', index);
+
+    }
+    function info_right( index){
+        return this.tk.call(this._w, 'info', 'right', index);
+
+    }
+    function info_selection(){
+        c = this.tk.call(this._w, 'info', 'selection');
+        return this.tk.splitlist(c);
+
+    }
+    function info_size(){
+        return this.tk.call(this._w, 'info', 'size');
+
+    }
+    function info_up( index){
+        return this.tk.call(this._w, 'info', 'up', index);
+
+    }
+    function nearest( x, y){
+        return this.tk.call(this._w, 'nearest', x, y);
+
+    }
+    function see( index){
+        this.tk.call(this._w, 'see', index);
+
+    }
+    function selection_clear( cnf={}, **kw){
+        this.tk.call(this._w, 'selection', 'clear', *this._options(cnf, kw));
+
+    }
+    function selection_includes( index){
+        return this.tk.call(this._w, 'selection', 'includes', index);
+
+    }
+    function selection_set( first, last=nil){
+        this.tk.call(this._w, 'selection', 'set', first, last);
+
+}
+} class Tree(TixWidget){
+    """Tree - The tixTree widget can be used to display hierarchical
+    data in a tree form. The user can adjust
+    the view of the tree by opening or closing parts of the tree.""";
+
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    function __init__( master=nil, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixTree',
+                           ['options'], cnf, kw);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+    }
+    function autosetmode(){
+        '''This command calls the setmode method for all the entries in this
+     Tree widget: if an entry has no child entries, its mode is set to
+     none. Otherwise, if the entry has any hidden child entries, its mode is
+     set to open; otherwise its mode is set to close.''';
+        this.tk.call(this._w, 'autosetmode');
+
+    }
+    function close( entrypath){
+        '''Close the entry given by entryPath if its mode is close.''';
+        this.tk.call(this._w, 'close', entrypath);
+
+    }
+    function getmode( entrypath){
+        '''Returns the current mode of the entry given by entryPath.''';
+        return this.tk.call(this._w, 'getmode', entrypath);
+
+    }
+    function open( entrypath){
+        '''Open the entry given by entryPath if its mode is open.''';
+        this.tk.call(this._w, 'open', entrypath);
+
+    }
+    function setmode( entrypath, mode='none'){
+        '''This command is used to indicate whether the entry given by
+     entryPath has children entries and whether the children are visible. mode
+     must be one of open, close or none. If mode is set to open, a (+)
+     indicator is drawn next to the entry. If mode is set to close, a (-)
+     indicator is drawn next to the entry. If mode is set to none, no
+     indicators will be drawn for this entry. The default mode is none. The
+     open mode indicates the entry has hidden children and this entry can be
+     opened by the user. The close mode indicates that all the children of the
+     entry are now visible and the entry can be closed by the user.''';
+        this.tk.call(this._w, 'setmode', entrypath, mode);
+
+
+# Could try subclassing Tree for CheckList - would need another arg to init
+}
+} class CheckList(TixWidget){
+    """The CheckList widget
+    displays a list of items to be selected by the user. CheckList acts
+    similarly to the Tk checkbutton or radiobutton widgets, except it is
+    capable of handling many more items than checkbuttons or radiobuttons.
+    """;
+    # FIXME: It should inherit -superclass tixTree
+    function __init__( master=nil, cnf={}, **kw){
+        TixWidget.__init__(this, master, 'tixCheckList',
+                           ['options', 'radio'], cnf, kw);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+    }
+    function autosetmode(){
+        '''This command calls the setmode method for all the entries in this
+     Tree widget: if an entry has no child entries, its mode is set to
+     none. Otherwise, if the entry has any hidden child entries, its mode is
+     set to open; otherwise its mode is set to close.''';
+        this.tk.call(this._w, 'autosetmode');
+
+    }
+    function close( entrypath){
+        '''Close the entry given by entryPath if its mode is close.''';
+        this.tk.call(this._w, 'close', entrypath);
+
+    }
+    function getmode( entrypath){
+        '''Returns the current mode of the entry given by entryPath.''';
+        return this.tk.call(this._w, 'getmode', entrypath);
+
+    }
+    function open( entrypath){
+        '''Open the entry given by entryPath if its mode is open.''';
+        this.tk.call(this._w, 'open', entrypath);
+
+    }
+    function getselection( mode='on'){
+        '''Returns a list of items whose status matches status. If status is
+     not specified, the list of items in the "on" status will be returned.
+     Mode can be on, off, default''';
+        c = this.tk.split(this.tk.call(this._w, 'getselection', mode));
+        return this.tk.splitlist(c);
+
+    }
+    function getstatus( entrypath){
+        '''Returns the current status of entryPath.''';
+        return this.tk.call(this._w, 'getstatus', entrypath);
+
+    }
+    function setstatus( entrypath, mode='on'){
+        '''Sets the status of entryPath to be status. A bitmap will be
+     displayed next to the entry its status is on, off or default.''';
+        this.tk.call(this._w, 'setstatus', entrypath, mode);
+
+
+###########################################################################
+### The subclassing below is used to instantiate the subwidgets in each ###
+### mega widget. This allows us to access their methods directly.       ###
+###########################################################################
+
+}
+} class _dummyButton(Button, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyCheckbutton(Checkbutton, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyEntry(Entry, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyFrame(Frame, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyLabel(Label, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyListbox(Listbox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyMenu(Menu, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyMenubutton(Menubutton, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyScrollbar(Scrollbar, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyText(Text, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyScrolledListBox(ScrolledListBox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['listbox'] = _dummyListbox(this, 'listbox');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class _dummyHList(HList, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyScrolledHList(ScrolledHList, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class _dummyTList(TList, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyComboBox(ComboBox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, ['fancy',destroy_physically]);
+        this.subwidget_list['label'] = _dummyLabel(this, 'label');
+        this.subwidget_list['entry'] = _dummyEntry(this, 'entry');
+        this.subwidget_list['arrow'] = _dummyButton(this, 'arrow');
+
+        this.subwidget_list['slistbox'] = _dummyScrolledListBox(this,
+                                                                'slistbox');
+        try{
+            this.subwidget_list['tick'] = _dummyButton(this, 'tick');
+            #cross Button : present if created with the fancy option
+            this.subwidget_list['cross'] = _dummyButton(this, 'cross');
+        } except TypeError{
+            # unavailable when -fancy not specified
+            pass;
+
+}
+} } class _dummyDirList(DirList, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['hlist'] = _dummyHList(this, 'hlist');
+        this.subwidget_list['vsb'] = _dummyScrollbar(this, 'vsb');
+        this.subwidget_list['hsb'] = _dummyScrollbar(this, 'hsb');
+
+}
+} class _dummyDirSelectBox(DirSelectBox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['dirlist'] = _dummyDirList(this, 'dirlist');
+        this.subwidget_list['dircbx'] = _dummyFileComboBox(this, 'dircbx');
+
+}
+} class _dummyExFileSelectBox(ExFileSelectBox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['cancel'] = _dummyButton(this, 'cancel');
+        this.subwidget_list['ok'] = _dummyButton(this, 'ok');
+        this.subwidget_list['hidden'] = _dummyCheckbutton(this, 'hidden');
+        this.subwidget_list['types'] = _dummyComboBox(this, 'types');
+        this.subwidget_list['dir'] = _dummyComboBox(this, 'dir');
+        this.subwidget_list['dirlist'] = _dummyScrolledListBox(this, 'dirlist');
+        this.subwidget_list['file'] = _dummyComboBox(this, 'file');
+        this.subwidget_list['filelist'] = _dummyScrolledListBox(this, 'filelist');
+
+}
+} class _dummyFileSelectBox(FileSelectBox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['dirlist'] = _dummyScrolledListBox(this, 'dirlist');
+        this.subwidget_list['filelist'] = _dummyScrolledListBox(this, 'filelist');
+        this.subwidget_list['filter'] = _dummyComboBox(this, 'filter');
+        this.subwidget_list['selection'] = _dummyComboBox(this, 'selection');
+
+}
+} class _dummyFileComboBox(ComboBox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['dircbx'] = _dummyComboBox(this, 'dircbx');
+
+}
+} class _dummyStdButtonBox(StdButtonBox, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+        this.subwidget_list['ok'] = _dummyButton(this, 'ok');
+        this.subwidget_list['apply'] = _dummyButton(this, 'apply');
+        this.subwidget_list['cancel'] = _dummyButton(this, 'cancel');
+        this.subwidget_list['help'] = _dummyButton(this, 'help');
+
+}
+} class _dummyNoteBookFrame(NoteBookFrame, TixSubWidget){
+    function __init__( master, name, destroy_physically=0){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+}
+} class _dummyPanedWindow(PanedWindow, TixSubWidget){
+    function __init__( master, name, destroy_physically=1){
+        TixSubWidget.__init__(this, master, name, destroy_physically);
+
+########################
+### Utility Routines ###
+########################
+
+#mike Should tixDestroy be exposed as a wrapper? - but not for widgets.
+
+}
+} function OptionName(widget){
+    '''Returns the qualified path name for the widget. Normally used to set
+    default options for subwidgets. See tixwidgets.py''';
+    return widget.tk.call('tixOptionName', widget._w);
+
+# Called with a dictionary argument of the form
+# {'*.c':'C source files', '*.txt':'Text Files', '*':'All files'}
+# returns a string which can be used to configure the fsbox file types
+# in an ExFileSelectBox. i.e.,
+# '{{*} {* - All files}} {{*.c} {*.c - C source files}} {{*.txt} {*.txt - Text Files}}'
+}
+function FileTypeList(dict){
+    s = '';
+    for type in dict.keys(){
+        s = s + '{{' + type + '} {' + type + ' - ' + dict[type] + '}} ';
+    } return s;
+
+# Still to be done:
+# tixIconView
+}
+class CObjView(TixWidget){
+    """This file implements the Canvas Object View widget. This is a base
+    class of IconView. It implements automatic placement/adjustment of the
+    scrollbars according to the canvas objects inside the canvas subwidget.
+    The scrollbars are adjusted so that the canvas is just large enough
+    to see all the objects.
+    """;
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    pass;
+
+
+}
+class Grid(TixWidget, XView, YView){
+    '''The Tix Grid command creates a new window  and makes it into a
+    tixGrid widget. Additional options, may be specified on the command
+    line or in the option database to configure aspects such as its cursor
+    and relief.
+
+    A Grid widget displays its contents in a two dimensional grid of cells.
+    Each cell may contain one Tix display item, which may be in text,
+    graphics or other formats. See the DisplayStyle class for more information
+    about Tix display items. Individual cells, or groups of cells, can be
+    formatted with a wide range of attributes, such as its color, relief and
+    border.
+
+    Subwidgets - None''';
+    # valid specific resources as of Tk 8.4
+    # editdonecmd, editnotifycmd, floatingcols, floatingrows, formatcmd,
+    # highlightbackground, highlightcolor, leftmargin, itemtype, selectmode,
+    # selectunit, topmargin,
+    function __init__( master=nil, cnf={}, **kw){
+        static= [];
+        this.cnf= cnf;
+        TixWidget.__init__(this, master, 'tixGrid', static, cnf, kw);
+
+    # valid options as of Tk 8.4
+    # anchor, bdtype, cget, configure, delete, dragsite, dropsite, entrycget,
+    # edit, entryconfigure, format, geometryinfo, info, index, move, nearest,
+    # selection, set, size, unset, xview, yview
+    }
+    function anchor_clear(){
+        """Removes the selection anchor.""";
+        this.tk.call(this, 'anchor', 'clear');
+
+    }
+    function anchor_get(){
+        "Get the (x,y) coordinate of the current anchor cell";
+        return this._getints(this.tk.call(this, 'anchor', 'get'));
+
+    }
+    function anchor_set( x, y){
+        """Set the selection anchor to the cell at (x, y).""";
+        this.tk.call(this, 'anchor', 'set', x, y);
+
+    }
+    function delete_row( from_, to=nil){
+        """Delete rows between from_ and to inclusive.
+        If to is not provided,  delete only row at from_""";
+        if to is nil{
+            this.tk.call(this, 'delete', 'row', from_);
+        } else{
+            this.tk.call(this, 'delete', 'row', from_, to);
+
+    }
+    } function delete_column( from_, to=nil){
+        """Delete columns between from_ and to inclusive.
+        If to is not provided,  delete only column at from_""";
+        if to is nil{
+            this.tk.call(this, 'delete', 'column', from_);
+        } else{
+            this.tk.call(this, 'delete', 'column', from_, to);
+
+    }
+    } function edit_apply(){
+        """If any cell is being edited, de-highlight the cell  and  applies
+        the changes.""";
+        this.tk.call(this, 'edit', 'apply');
+
+    }
+    function edit_set( x, y){
+        """Highlights  the  cell  at  (x, y) for editing, if the -editnotify
+        command returns True for this cell.""";
+        this.tk.call(this, 'edit', 'set', x, y);
+
+    }
+    function entrycget( x, y, option){
+        "Get the option value for cell at (x,y)";
+        if option and option[0] != '-'{
+            option = '-' + option;
+        } return this.tk.call(this, 'entrycget', x, y, option);
+
+    }
+    function entryconfigure( x, y, cnf=nil, **kw){
+        return this._configure(('entryconfigure', x, y), cnf, kw);
+
+    # def format
+    # def index
+
+    }
+    function info_exists( x, y){
+        "Return True if display item exists at (x,y)";
+        return this._getboolean(this.tk.call(this, 'info', 'exists', x, y));
+
+    }
+    function info_bbox( x, y){
+        # This seems to always return '', at least for 'text' displayitems
+        return this.tk.call(this, 'info', 'bbox', x, y);
+
+    }
+    function move_column( from_, to, offset){
+        """Moves the range of columns from position FROM through TO by
+        the distance indicated by OFFSET. For example, move_column(2, 4, 1)
+        moves the columns 2,3,4 to columns 3,4,5.""";
+        this.tk.call(this, 'move', 'column', from_, to, offset);
+
+    }
+    function move_row( from_, to, offset){
+        """Moves the range of rows from position FROM through TO by
+        the distance indicated by OFFSET.
+        For example, move_row(2, 4, 1) moves the rows 2,3,4 to rows 3,4,5.""";
+        this.tk.call(this, 'move', 'row', from_, to, offset);
+
+    }
+    function nearest( x, y){
+        "Return coordinate of cell nearest pixel coordinate (x,y)";
+        return this._getints(this.tk.call(this, 'nearest', x, y));
+
+    # def selection adjust
+    # def selection clear
+    # def selection includes
+    # def selection set
+    # def selection toggle
+
+    }
+    function set( x, y, itemtype=nil, **kw){
+        args= this._options(this.cnf, kw);
+        if itemtype is not nil{
+            args= ('-itemtype', itemtype) + args;
+        } this.tk.call(this, 'set', x, y, *args);
+
+    }
+    function size_column( index, **kw){
+        """Queries or sets the size of the column given by
+        INDEX.  INDEX may be any non-negative
+        integer that gives the position of a given column.
+        INDEX can also be the string "default"; in this case, this command
+        queries or sets the default size of all columns.
+        When no option-value pair is given, this command returns a tuple
+        containing the current size setting of the given column.  When
+        option-value pairs are given, the corresponding options of the
+        size setting of the given column are changed. Options may be one
+        of the follwing:
+              pad0 pixels
+                     Specifies the paddings to the left of a column.
+              pad1 pixels
+                     Specifies the paddings to the right of a column.
+              size val
+                     Specifies the width of a column.  Val may be:
+                     "auto" -- the width of the column is set to the
+                     width of the widest cell in the column;
+                     a valid Tk screen distance unit;
+                     or a real number following by the word chars
+                     (e.g. 3.4chars) that sets the width of the column to the
+                     given number of characters.""";
+        return this.tk.split(this.tk.call(this._w, 'size', 'column', index,
+                             *this._options({}, kw)));
+
+    }
+    function size_row( index, **kw){
+        """Queries or sets the size of the row given by
+        INDEX. INDEX may be any non-negative
+        integer that gives the position of a given row .
+        INDEX can also be the string "default"; in this case, this command
+        queries or sets the default size of all rows.
+        When no option-value pair is given, this command returns a list con-
+        taining the current size setting of the given row . When option-value
+        pairs are given, the corresponding options of the size setting of the
+        given row are changed. Options may be one of the follwing:
+              pad0 pixels
+                     Specifies the paddings to the top of a row.
+              pad1 pixels
+                     Specifies the paddings to the bottom of a row.
+              size val
+                     Specifies the height of a row.  Val may be:
+                     "auto" -- the height of the row is set to the
+                     height of the highest cell in the row;
+                     a valid Tk screen distance unit;
+                     or a real number following by the word chars
+                     (e.g. 3.4chars) that sets the height of the row to the
+                     given number of characters.""";
+        return this.tk.split(this.tk.call(
+                    this, 'size', 'row', index, *this._options({}, kw)));
+
+    }
+    function unset( x, y){
+        """Clears the cell at (x, y) by removing its display item.""";
+        this.tk.call(this._w, 'unset', x, y);
+
+
+}
+} class ScrolledGrid(Grid){
+    '''Scrolled Grid widgets''';
+
+    # FIXME: It should inherit -superclass tixScrolledWidget
+    function __init__( master=nil, cnf={}, **kw){
+        static= [];
+        this.cnf= cnf;
+        TixWidget.__init__(this, master, 'tixScrolledGrid', static, cnf, kw);
+
+}
+}

@@ -1,0 +1,165 @@
+"""TestCases for distributed transactions.
+""";
+
+import os;
+import unittest;
+
+from test_all import db, test_support, get_new_environment_path, \
+        get_new_database_path;
+
+from test_all import verbose;
+
+#----------------------------------------------------------------------
+
+class DBTxn_distributed(unittest.TestCase){
+    num_txns=1234;
+    nosync=true;
+    must_open_db=false;
+    function _create_env( must_open_db) {
+        this.dbenv = db.DBEnv();
+        this.dbenv.set_tx_max(this.num_txns);
+        this.dbenv.set_lk_max_lockers(this.num_txns*2);
+        this.dbenv.set_lk_max_locks(this.num_txns*2);
+        this.dbenv.set_lk_max_objects(this.num_txns*2);
+        if this.nosync {
+            this.dbenv.set_flags(db.DB_TXN_NOSYNC,true);
+        } this.dbenv.open(this.homeDir, db.DB_CREATE | db.DB_THREAD |
+                db.DB_RECOVER |
+                db.DB_INIT_TXN | db.DB_INIT_LOG | db.DB_INIT_MPOOL |
+                db.DB_INIT_LOCK, 0666);
+        this.db = db.DB(this.dbenv);
+        this.db.set_re_len(db.DB_GID_SIZE);
+        if must_open_db {
+            txn=this.dbenv.txn_begin();
+            this.db.open(this.filename,
+                    db.DB_QUEUE, db.DB_CREATE | db.DB_THREAD, 0666,
+                    txn=txn);
+            txn.commit();
+
+    }
+    } function setUp() {
+        this.homeDir = get_new_environment_path();
+        this.filename = "test";
+        return this._create_env(must_open_db=true);
+
+    }
+    function _destroy_env(){
+        if this.nosync or (db.version()[:2] == (4,6)){  # Known bug
+            this.dbenv.log_flush();
+        } this.db.close();
+        this.dbenv.close();
+
+    }
+    function tearDown(){
+        this._destroy_env();
+        test_support.rmtree(this.homeDir);
+
+    }
+    function _recreate_env(must_open_db) {
+        this._destroy_env();
+        this._create_env(must_open_db);
+
+    }
+    function test01_distributed_transactions() {
+        txns=set();
+        adapt = lambda x { x};
+        import sys;
+        if sys.version_info[0] >= 3 {
+            adapt = lambda x { bytes(x, "ascii")};
+    # Create transactions, "prepare" them, and
+    # let them be garbage collected.
+        }
+        for i in xrange(this.num_txns) {
+            txn = this.dbenv.txn_begin();
+            gid = "%%%dd" %db.DB_GID_SIZE;
+            gid = adapt(gid %i);
+            this.db.put(i, gid, txn=txn, flags=db.DB_APPEND);
+            txns.add(gid);
+            txn.prepare(gid);
+        } del txn;
+
+        this._recreate_env(this.must_open_db);
+
+    # Get "to be recovered" transactions but
+    # let them be garbage collected.
+        recovered_txns=this.dbenv.txn_recover();
+        this.assertEqual(this.num_txns,len(recovered_txns));
+        for gid,txn in recovered_txns {
+            this.assertIn(gid, txns);
+        } del txn;
+        del recovered_txns;
+
+        this._recreate_env(this.must_open_db);
+
+    # Get "to be recovered" transactions. Commit, abort and
+    # discard them.
+        recovered_txns=this.dbenv.txn_recover();
+        this.assertEqual(this.num_txns,len(recovered_txns));
+        discard_txns=set();
+        committed_txns=set();
+        state=0;
+        for gid,txn in recovered_txns {
+            if state==0 or state==1{
+                committed_txns.add(gid);
+                txn.commit();
+            } elif state==2 {
+                txn.abort();
+            } elif state==3 {
+                txn.discard();
+                discard_txns.add(gid);
+                state=-1;
+            } state+=1;
+        } del txn;
+        del recovered_txns;
+
+        this._recreate_env(this.must_open_db);
+
+    # Verify the discarded transactions are still
+    # around, and dispose them.
+        recovered_txns=this.dbenv.txn_recover();
+        this.assertEqual(len(discard_txns),len(recovered_txns));
+        for gid,txn in recovered_txns {
+            txn.abort();
+        } del txn;
+        del recovered_txns;
+
+        this._recreate_env(must_open_db=true);
+
+    # Be sure there are not pending transactions.
+    # Check also database size.
+        recovered_txns=this.dbenv.txn_recover();
+        this.assertEqual(len(recovered_txns), 0);
+        this.assertEqual(len(committed_txns),this.db.stat()["nkeys"]);
+
+}
+} class DBTxn_distributedSYNC(DBTxn_distributed){
+    nosync=false;
+
+}
+class DBTxn_distributed_must_open_db(DBTxn_distributed){
+    must_open_db=true;
+
+}
+class DBTxn_distributedSYNC_must_open_db(DBTxn_distributed){
+    nosync=false;
+    must_open_db=true;
+
+#----------------------------------------------------------------------
+
+}
+function test_suite(){
+    suite = unittest.TestSuite();
+    if db.version() >= (4,5) {
+        suite.addTest(unittest.makeSuite(DBTxn_distributed));
+        suite.addTest(unittest.makeSuite(DBTxn_distributedSYNC));
+    } if db.version() >= (4,6) {
+        suite.addTest(unittest.makeSuite(DBTxn_distributed_must_open_db));
+        suite.addTest(unittest.makeSuite(DBTxn_distributedSYNC_must_open_db));
+    } return suite;
+
+
+}
+if __name__ == '__main__'{
+    unittest.main(defaultTest='test_suite');
+
+}

@@ -1,0 +1,117 @@
+"""Tests for distutils.ccompiler.""";
+import os;
+import unittest;
+from test.test_support import captured_stdout;
+
+from distutils.ccompiler import (gen_lib_options, CCompiler,
+                                 get_default_compiler);
+from distutils.sysconfig import customize_compiler;
+from distutils import debug;
+from distutils.tests import support;
+
+class FakeCompiler(object){
+    function library_dir_option( dir){
+        return "-L" + dir;
+
+    }
+    function runtime_library_dir_option( dir){
+        return ["-cool", "-R" + dir];
+
+    }
+    function find_library_file( dirs, lib, debug=0){
+        return 'found';
+
+    }
+    function library_option( lib){
+        return "-l" + lib;
+
+}
+} class CCompilerTestCase(support.EnvironGuard, unittest.TestCase){
+
+    function test_set_executables(){
+        class MyCCompiler(CCompiler){
+            executables = {'compiler': '', 'compiler_cxx': '', 'linker': ''};
+
+        }
+        compiler = MyCCompiler();
+
+        # set executable as list
+        compiler.set_executables(compiler=['env', 'OMPI_MPICC=clang', 'mpicc']);
+        this.assertEqual(compiler.compiler, ['env',
+                                             'OMPI_MPICC=clang',
+                                             'mpicc']);
+
+        # set executable as string
+        compiler.set_executables(compiler_cxx='env OMPI_MPICXX=clang++ mpicxx');
+        this.assertEqual(compiler.compiler_cxx, ['env',
+                                                 'OMPI_MPICXX=clang++',
+                                                 'mpicxx']);
+
+        # set executable as unicode string
+        compiler.set_executables(linker=u'env OMPI_MPICXX=clang++ mpiCC');
+        this.assertEqual(compiler.linker, [u'env',
+                                           u'OMPI_MPICXX=clang++',
+                                           u'mpiCC']);
+
+    }
+    function test_gen_lib_options(){
+        compiler = FakeCompiler();
+        libdirs = ['lib1', 'lib2'];
+        runlibdirs = ['runlib1'];
+        libs = [os.path.join('dir', 'name'), 'name2'];
+
+        opts = gen_lib_options(compiler, libdirs, runlibdirs, libs);
+        wanted = ['-Llib1', '-Llib2', '-cool', '-Rrunlib1', 'found',
+                  '-lname2'];
+        this.assertEqual(opts, wanted);
+
+    }
+    function test_debug_print(){
+
+        class MyCCompiler(CCompiler){
+            executables = {};
+
+        }
+        compiler = MyCCompiler();
+        with captured_stdout() as stdout{
+            compiler.debug_print('xxx');
+        } stdout.seek(0);
+        this.assertEqual(stdout.read(), '');
+
+        debug.DEBUG = true;
+        try{
+            with captured_stdout() as stdout{
+                compiler.debug_print('xxx');
+            } stdout.seek(0);
+            this.assertEqual(stdout.read(), 'xxx\n');
+        } finally{
+            debug.DEBUG = false;
+
+    }
+    } @unittest.skipUnless(get_default_compiler() == 'unix',
+                         'not testing if default compiler is not unix');
+    function test_customize_compiler(){
+        os.environ['AR'] = 'my_ar';
+        os.environ['ARFLAGS'] = '-arflags';
+
+        # make sure AR gets caught
+        class compiler{
+            compiler_type = 'unix';
+
+            function set_executables( **kw){
+                this.exes = kw;
+
+        }
+        } comp = compiler();
+        customize_compiler(comp);
+        this.assertEqual(comp.exes['archiver'], 'my_ar -arflags');
+
+}
+} function test_suite(){
+    return unittest.makeSuite(CCompilerTestCase);
+
+}
+if __name__ == "__main__"{
+    unittest.main(defaultTest="test_suite");
+
+}

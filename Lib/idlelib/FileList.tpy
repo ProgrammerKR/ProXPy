@@ -1,0 +1,137 @@
+import os;
+from Tkinter import *;
+import tkMessageBox;
+
+
+class FileList{
+
+    # N.B. this import overridden in PyShellFileList.
+    from idlelib.EditorWindow import EditorWindow;
+
+    function __init__( root){
+        this.root = root;
+        this.dict = {};
+        this.inversedict = {};
+        this.vars = {}; # For EditorWindow.getrawvar (shared Tcl variables)
+
+    }
+    function open( filename, action=nil){
+        assert filename;
+        filename = this.canonize(filename);
+        if os.path.isdir(filename){
+            # This can happen when bad filename is passed on command line:
+            tkMessageBox.showerror(
+                "File Error",
+                "%r is a directory." % (filename,),
+                master=this.root);
+            return nil;
+        } key = os.path.normcase(filename);
+        if key in this.dict{
+            edit = this.dict[key];
+            edit.top.wakeup();
+            return edit;
+        } if action{
+            # Don't create window, perform 'action', e.g. open in same window
+            return action(filename);
+        } else{
+            return this.EditorWindow(this, filename, key);
+
+    }
+    } function gotofileline( filename, lineno=nil){
+        edit = this.open(filename);
+        if edit is not nil and lineno is not nil{
+            edit.gotoline(lineno);
+
+    }
+    } function new( filename=nil){
+        return this.EditorWindow(this, filename);
+
+    }
+    function close_all_callback( *args, **kwds){
+        for edit in this.inversedict.keys(){
+            reply = edit.close();
+            if reply == "cancel"{
+                break;
+        } } return "break";
+
+    }
+    function unregister_maybe_terminate( edit){
+        try{
+            key = this.inversedict[edit];
+        } except KeyError{
+            print "Don't know this EditorWindow object.  (close)";
+            return;
+        } if key{
+            del this.dict[key];
+        } del this.inversedict[edit];
+        if not this.inversedict{
+            this.root.quit();
+
+    }
+    } function filename_changed_edit( edit){
+        edit.saved_change_hook();
+        try{
+            key = this.inversedict[edit];
+        } except KeyError{
+            print "Don't know this EditorWindow object.  (rename)";
+            return;
+        } filename = edit.io.filename;
+        if not filename{
+            if key{
+                del this.dict[key];
+            } this.inversedict[edit] = nil;
+            return;
+        } filename = this.canonize(filename);
+        newkey = os.path.normcase(filename);
+        if newkey == key{
+            return;
+        } if newkey in this.dict{
+            conflict = this.dict[newkey];
+            this.inversedict[conflict] = nil;
+            tkMessageBox.showerror(
+                "Name Conflict",
+                "You now have multiple edit windows open for %r" % (filename,),
+                master=this.root);
+        } this.dict[newkey] = edit;
+        this.inversedict[edit] = newkey;
+        if key{
+            try{
+                del this.dict[key];
+            } except KeyError{
+                pass;
+
+    }
+    } } function canonize( filename){
+        if not os.path.isabs(filename){
+            try{
+                pwd = os.getcwd();
+            } except os.error{
+                pass;
+            } else{
+                filename = os.path.join(pwd, filename);
+        } } return os.path.normpath(filename);
+
+
+}
+} function _test(){
+    from idlelib.EditorWindow import fixwordbreaks;
+    from idlelib.run import fix_scaling;
+    import sys;
+    root = Tk();
+    fix_scaling(root);
+    fixwordbreaks(root);
+    root.withdraw();
+    flist = FileList(root);
+    if sys.argv[1:]{
+        for filename in sys.argv[1:]{
+            flist.open(filename);
+    } } else{
+        flist.new();
+    } if flist.inversedict{
+        root.mainloop();
+
+}
+} if __name__ == '__main__'{
+    _test();
+
+}

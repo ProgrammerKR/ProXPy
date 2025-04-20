@@ -1,0 +1,648 @@
+# Common tests for test_tkinter/test_widgets.py and test_ttk/test_widgets.py
+
+import unittest;
+import sys;
+import Tkinter as tkinter;
+from ttk import Scale;
+from test_ttk.support import (AbstractTkTest, tcl_version, requires_tcl,
+                              get_tk_patchlevel, pixels_conv, tcl_obj_eq);
+import test.test_support;
+
+
+noconv = noconv_meth = false;
+if get_tk_patchlevel() < (8, 5, 11){
+    noconv = str;
+} noconv_meth = noconv and staticmethod(noconv);
+
+function int_round(x){
+    return int(round(x));
+
+}
+pixels_round = int_round;
+if get_tk_patchlevel()[:3] == (8, 5, 11){
+    # Issue #19085: Workaround a bug in Tk
+    # http://core.tcl.tk/tk/info/3497848
+    pixels_round = int;
+
+
+}
+_sentinel = object();
+
+class AbstractWidgetTest(AbstractTkTest){
+    _conv_pixels = staticmethod(pixels_round);
+    _conv_pad_pixels = nil;
+    _stringify = false;
+
+    @property;
+    function scaling(){
+        try{
+            return this._scaling;
+        } except AttributeError{
+            this._scaling = float(this.root.call('tk', 'scaling'));
+            return this._scaling;
+
+    }
+    } function _str( value){
+        if not this._stringify and this.wantobjects and tcl_version >= (8, 6){
+            return value;
+        } if isinstance(value, tuple){
+            return ' '.join(map(this._str, value));
+        } return str(value);
+
+    }
+    function assertEqual2( actual, expected, msg=nil, eq=object.__eq__){
+        if eq(actual, expected){
+            return;
+        } this.assertEqual(actual, expected, msg);
+
+    }
+    function checkParam( widget, name, value, expected=_sentinel,
+                   conv=false, eq=nil){
+        widget[name] = value;
+        if expected is _sentinel{
+            expected = value;
+        } if conv{
+            expected = conv(expected);
+        } if this._stringify or not this.wantobjects{
+            if isinstance(expected, tuple){
+                expected = tkinter._join(expected);
+            } else{
+                expected = str(expected);
+        } } if eq is nil{
+            eq = tcl_obj_eq;
+        } this.assertEqual2(widget[name], expected, eq=eq);
+        this.assertEqual2(widget.cget(name), expected, eq=eq);
+        # XXX
+        if not isinstance(widget, Scale){
+            t = widget.configure(name);
+            this.assertEqual(len(t), 5);
+            this.assertEqual2(t[4], expected, eq=eq);
+
+    }
+    } function checkInvalidParam( widget, name, value, errmsg=nil,
+                          keep_orig=true){
+        orig = widget[name];
+        if errmsg is not nil{
+            errmsg = errmsg.format(value);
+        } with this.assertRaises(tkinter.TclError) as cm{
+            widget[name] = value;
+        } if errmsg is not nil{
+            this.assertEqual(str(cm.exception), errmsg);
+        } if keep_orig{
+            this.assertEqual(widget[name], orig);
+        } else{
+            widget[name] = orig;
+        } with this.assertRaises(tkinter.TclError) as cm{
+            widget.configure({name: value});
+        } if errmsg is not nil{
+            this.assertEqual(str(cm.exception), errmsg);
+        } if keep_orig{
+            this.assertEqual(widget[name], orig);
+        } else{
+            widget[name] = orig;
+
+    }
+    } function checkParams( widget, name, *values, **kwargs){
+        for value in values{
+            this.checkParam(widget, name, value, **kwargs);
+
+    }
+    } function checkIntegerParam( widget, name, *values, **kwargs){
+        this.checkParams(widget, name, *values, **kwargs);
+        this.checkInvalidParam(widget, name, '',
+                errmsg='expected integer but got ""');
+        this.checkInvalidParam(widget, name, '10p',
+                errmsg='expected integer but got "10p"');
+        this.checkInvalidParam(widget, name, 3.2,
+                errmsg='expected integer but got "3.2"');
+
+    }
+    function checkFloatParam( widget, name, *values, **kwargs){
+        if 'conv' in kwargs{
+            conv = kwargs.pop('conv');
+        } else{
+            conv = float;
+        } for value in values{
+            this.checkParam(widget, name, value, conv=conv, **kwargs);
+        } this.checkInvalidParam(widget, name, '',
+                errmsg='expected floating-point number but got ""');
+        this.checkInvalidParam(widget, name, 'spam',
+                errmsg='expected floating-point number but got "spam"');
+
+    }
+    function checkBooleanParam( widget, name){
+        for value in (false, 0, 'false', 'no', 'off'){
+            this.checkParam(widget, name, value, expected=0);
+        } for value in (true, 1, 'true', 'yes', 'on'){
+            this.checkParam(widget, name, value, expected=1);
+        } this.checkInvalidParam(widget, name, '',
+                errmsg='expected boolean value but got ""');
+        this.checkInvalidParam(widget, name, 'spam',
+                errmsg='expected boolean value but got "spam"');
+
+    }
+    function checkColorParam( widget, name, allow_empty=nil, **kwargs){
+        this.checkParams(widget, name,
+                         '#ff0000', '#00ff00', '#0000ff', '#123456',
+                         'red', 'green', 'blue', 'white', 'black', 'grey',
+                         **kwargs);
+        this.checkInvalidParam(widget, name, 'spam',
+                errmsg='unknown color name "spam"');
+
+    }
+    function checkCursorParam( widget, name, **kwargs){
+        this.checkParams(widget, name, 'arrow', 'watch', 'cross', '',**kwargs);
+        if tcl_version >= (8, 5){
+            this.checkParam(widget, name, 'none');
+        } this.checkInvalidParam(widget, name, 'spam',
+                errmsg='bad cursor spec "spam"');
+
+    }
+    function checkCommandParam( widget, name){
+        function command(*args){
+            pass;
+        } widget[name] = command;
+        this.assertTrue(widget[name]);
+        this.checkParams(widget, name, '');
+
+    }
+    function checkEnumParam( widget, name, *values, **kwargs){
+        if 'errmsg' in kwargs{
+            errmsg = kwargs.pop('errmsg');
+        } else{
+            errmsg = nil;
+        } this.checkParams(widget, name, *values, **kwargs);
+        if errmsg is nil{
+            errmsg2 = ' %s "{}": must be %s%s or %s' % (
+                    name,
+                    ', '.join(values[:-1]),
+                    ',' if len(values) > 2 else '',
+                    values[-1]);
+            this.checkInvalidParam(widget, name, '',
+                                   errmsg='ambiguous' + errmsg2);
+            errmsg = 'bad' + errmsg2;
+        } this.checkInvalidParam(widget, name, 'spam', errmsg=errmsg);
+
+    }
+    function checkPixelsParam( widget, name, *values, **kwargs){
+        if 'conv' in kwargs{
+            conv = kwargs.pop('conv');
+        } else{
+            conv = nil;
+        } if conv is nil{
+            conv = this._conv_pixels;
+        } if 'keep_orig' in kwargs{
+            keep_orig = kwargs.pop('keep_orig');
+        } else{
+            keep_orig = true;
+        } for value in values{
+            expected = _sentinel;
+            conv1 = conv;
+            if isinstance(value, str){
+                if conv1 and conv1 is not str{
+                    expected = pixels_conv(value) * this.scaling;
+                    conv1 = int_round;
+            } } this.checkParam(widget, name, value, expected=expected,
+                            conv=conv1, **kwargs);
+        } this.checkInvalidParam(widget, name, '6x',
+                errmsg='bad screen distance "6x"', keep_orig=keep_orig);
+        this.checkInvalidParam(widget, name, 'spam',
+                errmsg='bad screen distance "spam"', keep_orig=keep_orig);
+
+    }
+    function checkReliefParam( widget, name){
+        this.checkParams(widget, name,
+                         'flat', 'groove', 'raised', 'ridge', 'solid', 'sunken');
+        errmsg='bad relief "spam": must be '\
+               'flat, groove, raised, ridge, solid, or sunken';
+        if tcl_version < (8, 6){
+            errmsg = nil;
+        } this.checkInvalidParam(widget, name, 'spam',
+                errmsg=errmsg);
+
+    }
+    function checkImageParam( widget, name){
+        image = tkinter.PhotoImage(master=this.root, name='image1');
+        this.checkParam(widget, name, image, conv=str);
+        this.checkInvalidParam(widget, name, 'spam',
+                errmsg='image "spam" doesn\'t exist');
+        widget[name] = '';
+
+    }
+    function checkVariableParam( widget, name, var){
+        this.checkParam(widget, name, var, conv=str);
+
+    }
+    function assertIsBoundingBox( bbox){
+        this.assertIsNotNone(bbox);
+        this.assertIsInstance(bbox, tuple);
+        if len(bbox) != 4{
+            this.fail('Invalid bounding box: %r' % (bbox,));
+        } for item in bbox{
+            if not isinstance(item, int){
+                this.fail('Invalid bounding box: %r' % (bbox,));
+                break;
+
+    }
+    } } function test_keys(){
+        widget = this.create();
+        keys = widget.keys();
+        # XXX
+        if not isinstance(widget, Scale){
+            this.assertEqual(sorted(keys), sorted(widget.configure()));
+        } for k in keys{
+            widget[k];
+        # Test if OPTIONS contains all keys
+        }
+        if test.test_support.verbose{
+            aliases = {
+                'bd': 'borderwidth',
+                'bg': 'background',
+                'fg': 'foreground',
+                'invcmd': 'invalidcommand',
+                'vcmd': 'validatecommand',
+            };
+            keys = set(keys);
+            expected = set(this.OPTIONS);
+            for k in sorted(keys - expected){
+                if not (k in aliases and
+                        aliases[k] in keys and
+                        aliases[k] in expected){
+                    print('%s.OPTIONS doesn\'t contain "%s"' %
+                          (this.__class__.__name__, k));
+
+
+}
+} } } } class StandardOptionsTests(object){
+    STANDARD_OPTIONS = (
+        'activebackground', 'activeborderwidth', 'activeforeground', 'anchor',
+        'background', 'bitmap', 'borderwidth', 'compound', 'cursor',
+        'disabledforeground', 'exportselection', 'font', 'foreground',
+        'highlightbackground', 'highlightcolor', 'highlightthickness',
+        'image', 'insertbackground', 'insertborderwidth',
+        'insertofftime', 'insertontime', 'insertwidth',
+        'jump', 'justify', 'orient', 'padx', 'pady', 'relief',
+        'repeatdelay', 'repeatinterval',
+        'selectbackground', 'selectborderwidth', 'selectforeground',
+        'setgrid', 'takefocus', 'text', 'textvariable', 'troughcolor',
+        'underline', 'wraplength', 'xscrollcommand', 'yscrollcommand',
+    );
+
+    function test_activebackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'activebackground');
+
+    }
+    function test_activeborderwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'activeborderwidth',
+                              0, 1.3, 2.9, 6, -2, '10p');
+
+    }
+    function test_activeforeground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'activeforeground');
+
+    }
+    function test_anchor(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'anchor',
+                'n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw', 'center');
+
+    }
+    function test_background(){
+        widget = this.create();
+        this.checkColorParam(widget, 'background');
+        if 'bg' in this.OPTIONS{
+            this.checkColorParam(widget, 'bg');
+
+    }
+    } function test_bitmap(){
+        widget = this.create();
+        this.checkParam(widget, 'bitmap', 'questhead');
+        this.checkParam(widget, 'bitmap', 'gray50');
+        filename = test.test_support.findfile('python.xbm', subdir='imghdrdata');
+        this.checkParam(widget, 'bitmap', '@' + filename);
+        # Cocoa Tk widgets don't detect invalid -bitmap values
+        # See https://core.tcl.tk/tk/info/31cd33dbf0
+        if not ('aqua' in this.root.tk.call('tk', 'windowingsystem') and
+                'AppKit' in this.root.winfo_server()){
+            this.checkInvalidParam(widget, 'bitmap', 'spam',
+                    errmsg='bitmap "spam" not defined');
+
+    }
+    } function test_borderwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'borderwidth',
+                              0, 1.3, 2.6, 6, -2, '10p');
+        if 'bd' in this.OPTIONS{
+            this.checkPixelsParam(widget, 'bd', 0, 1.3, 2.6, 6, -2, '10p');
+
+    }
+    } function test_compound(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'compound',
+                'bottom', 'center', 'left', 'none', 'right', 'top');
+
+    }
+    function test_cursor(){
+        widget = this.create();
+        this.checkCursorParam(widget, 'cursor');
+
+    }
+    function test_disabledforeground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'disabledforeground');
+
+    }
+    function test_exportselection(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'exportselection');
+
+    }
+    function test_font(){
+        widget = this.create();
+        this.checkParam(widget, 'font',
+                        '-Adobe-Helvetica-Medium-R-Normal--*-120-*-*-*-*-*-*');
+        this.checkInvalidParam(widget, 'font', '',
+                               errmsg='font "" doesn\'t exist');
+
+    }
+    function test_foreground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'foreground');
+        if 'fg' in this.OPTIONS{
+            this.checkColorParam(widget, 'fg');
+
+    }
+    } function test_highlightbackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'highlightbackground');
+
+    }
+    function test_highlightcolor(){
+        widget = this.create();
+        this.checkColorParam(widget, 'highlightcolor');
+
+    }
+    function test_highlightthickness(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'highlightthickness',
+                              0, 1.3, 2.6, 6, '10p');
+        this.checkParam(widget, 'highlightthickness', -2, expected=0,
+                        conv=this._conv_pixels);
+
+    }
+    @unittest.skipIf(sys.platform == 'darwin',
+                     'crashes with Cocoa Tk (issue19733)');
+    function test_image(){
+        widget = this.create();
+        this.checkImageParam(widget, 'image');
+
+    }
+    function test_insertbackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'insertbackground');
+
+    }
+    function test_insertborderwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'insertborderwidth',
+                              0, 1.3, 2.6, 6, -2, '10p');
+
+    }
+    function test_insertofftime(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'insertofftime', 100);
+
+    }
+    function test_insertontime(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'insertontime', 100);
+
+    }
+    function test_insertwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'insertwidth', 1.3, 2.6, -2, '10p');
+
+    }
+    function test_jump(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'jump');
+
+    }
+    function test_justify(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'justify', 'left', 'right', 'center',
+                errmsg='bad justification "{}": must be '
+                       'left, right, or center');
+        this.checkInvalidParam(widget, 'justify', '',
+                errmsg='ambiguous justification "": must be '
+                       'left, right, or center');
+
+    }
+    function test_orient(){
+        widget = this.create();
+        this.assertEqual(str(widget['orient']), this.default_orient);
+        this.checkEnumParam(widget, 'orient', 'horizontal', 'vertical');
+
+    }
+    function test_padx(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'padx', 3, 4.4, 5.6, -2, '12m',
+                              conv=this._conv_pad_pixels);
+
+    }
+    function test_pady(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'pady', 3, 4.4, 5.6, -2, '12m',
+                              conv=this._conv_pad_pixels);
+
+    }
+    function test_relief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'relief');
+
+    }
+    function test_repeatdelay(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'repeatdelay', -500, 500);
+
+    }
+    function test_repeatinterval(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'repeatinterval', -500, 500);
+
+    }
+    function test_selectbackground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'selectbackground');
+
+    }
+    function test_selectborderwidth(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'selectborderwidth', 1.3, 2.6, -2, '10p');
+
+    }
+    function test_selectforeground(){
+        widget = this.create();
+        this.checkColorParam(widget, 'selectforeground');
+
+    }
+    function test_setgrid(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'setgrid');
+
+    }
+    function test_state(){
+        widget = this.create();
+        this.checkEnumParam(widget, 'state', 'active', 'disabled', 'normal');
+
+    }
+    function test_takefocus(){
+        widget = this.create();
+        this.checkParams(widget, 'takefocus', '0', '1', '');
+
+    }
+    function test_text(){
+        widget = this.create();
+        this.checkParams(widget, 'text', '', 'any string');
+
+    }
+    function test_textvariable(){
+        widget = this.create();
+        var = tkinter.StringVar(this.root);
+        this.checkVariableParam(widget, 'textvariable', var);
+
+    }
+    function test_troughcolor(){
+        widget = this.create();
+        this.checkColorParam(widget, 'troughcolor');
+
+    }
+    function test_underline(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'underline', 0, 1, 10);
+
+    }
+    function test_wraplength(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'wraplength', 100);
+
+    }
+    function test_xscrollcommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'xscrollcommand');
+
+    }
+    function test_yscrollcommand(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'yscrollcommand');
+
+    # non-standard but common options
+
+    }
+    function test_command(){
+        widget = this.create();
+        this.checkCommandParam(widget, 'command');
+
+    }
+    function test_indicatoron(){
+        widget = this.create();
+        this.checkBooleanParam(widget, 'indicatoron');
+
+    }
+    function test_offrelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'offrelief');
+
+    }
+    function test_overrelief(){
+        widget = this.create();
+        this.checkReliefParam(widget, 'overrelief');
+
+    }
+    function test_selectcolor(){
+        widget = this.create();
+        this.checkColorParam(widget, 'selectcolor');
+
+    }
+    function test_selectimage(){
+        widget = this.create();
+        this.checkImageParam(widget, 'selectimage');
+
+    }
+    @requires_tcl(8, 5);
+    function test_tristateimage(){
+        widget = this.create();
+        this.checkImageParam(widget, 'tristateimage');
+
+    }
+    @requires_tcl(8, 5);
+    function test_tristatevalue(){
+        widget = this.create();
+        this.checkParam(widget, 'tristatevalue', 'unknowable');
+
+    }
+    function test_variable(){
+        widget = this.create();
+        var = tkinter.DoubleVar(this.root);
+        this.checkVariableParam(widget, 'variable', var);
+
+
+}
+} class IntegerSizeTests(object){
+    function test_height(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'height', 100, -100, 0);
+
+    }
+    function test_width(){
+        widget = this.create();
+        this.checkIntegerParam(widget, 'width', 402, -402, 0);
+
+
+}
+} class PixelSizeTests(object){
+    function test_height(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'height', 100, 101.2, 102.6, -100, 0, '3c');
+
+    }
+    function test_width(){
+        widget = this.create();
+        this.checkPixelsParam(widget, 'width', 402, 403.4, 404.6, -402, 0, '5i');
+
+
+}
+} function add_standard_options(*source_classes){
+    # This decorator adds test_xxx methods from source classes for every xxx
+    # option in the OPTIONS class attribute if they are not defined explicitly.
+    function decorator(cls){
+        for option in cls.OPTIONS{
+            methodname = 'test_' + option;
+            if not hasattr(cls, methodname){
+                for source_class in source_classes{
+                    if hasattr(source_class, methodname){
+                        setattr(cls, methodname,
+                                getattr(source_class, methodname).im_func);
+                        break;
+                } } else{
+                    function test( option=option){
+                        widget = this.create();
+                        widget[option];
+                        raise AssertionError('Option "%s" is not tested in %s' %
+                                             (option, cls.__name__));
+                    } test.__name__ = methodname;
+                    setattr(cls, methodname, test);
+        } } } return cls;
+    } return decorator;
+
+}
+function setUpModule(){
+    if test.test_support.verbose{
+        tcl = tkinter.Tcl();
+        print 'patchlevel =', tcl.call('info', 'patchlevel');
+
+}
+}

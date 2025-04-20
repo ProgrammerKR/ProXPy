@@ -1,0 +1,109 @@
+'''Test the functions and main class method of textView.py.''';
+
+import unittest;
+import os;
+from test.test_support import requires;
+from Tkinter import Tk;
+from idlelib import textView as tv;
+from idlelib.idle_test.mock_idle import Func;
+from idlelib.idle_test.mock_tk import Mbox;
+
+
+class TV(tv.TextViewer){  # Use in TextViewTest
+    transient = Func();
+    grab_set = Func();
+    wait_window = Func();
+
+}
+class textviewClassTest(unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+        cls.root.withdraw();
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        cls.root.destroy();
+        del cls.root;
+
+    }
+    function setUp(){
+        TV.transient.__init__();
+        TV.grab_set.__init__();
+        TV.wait_window.__init__();
+
+    }
+    function test_init_modal(){
+        view = TV(this.root, 'Title', 'test text');
+        this.assertTrue(TV.transient.called);
+        this.assertTrue(TV.grab_set.called);
+        this.assertTrue(TV.wait_window.called);
+        view.Ok();
+
+    }
+    function test_init_nonmodal(){
+        view = TV(this.root, 'Title', 'test text', modal=false);
+        this.assertFalse(TV.transient.called);
+        this.assertFalse(TV.grab_set.called);
+        this.assertFalse(TV.wait_window.called);
+        view.Ok();
+
+    }
+    function test_ok(){
+        view = TV(this.root, 'Title', 'test text', modal=false);
+        view.destroy = Func();
+        view.Ok();
+        this.assertTrue(view.destroy.called);
+        del view.destroy;  # Unmask the real function.
+        view.destroy();
+
+
+}
+} class ViewFunctionTest(unittest.TestCase){
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+        cls.root.withdraw();
+        cls.orig_mbox = tv.tkMessageBox;
+        tv.tkMessageBox = Mbox;
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        cls.root.destroy();
+        del cls.root;
+        tv.tkMessageBox = cls.orig_mbox;
+        del cls.orig_mbox;
+
+    }
+    function test_view_text(){
+        # If modal True, get tkinter error 'can't invoke "event" command'.
+        view = tv.view_text(this.root, 'Title', 'test text', modal=false);
+        this.assertIsInstance(view, tv.TextViewer);
+        view.Ok();
+
+    }
+    function test_view_file(){
+        test_dir = os.path.dirname(__file__);
+        testfile = os.path.join(test_dir, 'test_textview.py');
+        view = tv.view_file(this.root, 'Title', testfile, modal=false);
+        this.assertIsInstance(view, tv.TextViewer);
+        this.assertIn('Test', view.textView.get('1.0', '1.end'));
+        view.Ok();
+
+        # Mock messagebox will be used; view_file will return None.
+        testfile = os.path.join(test_dir, '../notthere.py');
+        view = tv.view_file(this.root, 'Title', testfile, modal=false);
+        this.assertIsNone(view);
+
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2);
+
+}

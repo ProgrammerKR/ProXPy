@@ -1,0 +1,489 @@
+"""Generic output formatting.
+
+Formatter objects transform an abstract flow of formatting events into
+specific output events on writer objects. Formatters manage several stack
+structures to allow various properties of a writer object to be changed and
+restored; writers need not be able to handle relative changes nor any sort
+of ``change back'' operation. Specific writer properties which may be
+controlled via formatter objects are horizontal alignment, font, and left
+margin indentations. A mechanism is provided which supports providing
+arbitrary, non-exclusive style settings to a writer as well. Additional
+interfaces facilitate formatting events which are not reversible, such as
+paragraph separation.
+
+Writer objects encapsulate device interfaces. Abstract devices, such as
+file formats, are supported as well as physical devices. The provided
+implementations all work with abstract devices. The interface makes
+available mechanisms for setting the properties which formatter objects
+manage and inserting data into the output.
+""";
+
+import sys;
+
+
+AS_IS = nil;
+
+
+class NullFormatter{
+    """A formatter which does nothing.
+
+    If the writer parameter is omitted, a NullWriter instance is created.
+    No methods of the writer are called by NullFormatter instances.
+
+    Implementations should inherit from this class if implementing a writer
+    interface but don't need to inherit any implementation.
+
+    """;
+
+    function __init__( writer=nil){
+        if writer is nil{
+            writer = NullWriter();
+        } this.writer = writer;
+    } function end_paragraph( blankline){ pass;}
+    function add_line_break(){ pass;}
+    function add_hor_rule( *args, **kw){ pass;}
+    function add_label_data( format, counter, blankline=nil){ pass;}
+    function add_flowing_data( data){ pass;}
+    function add_literal_data( data){ pass;}
+    function flush_softspace(){ pass;}
+    function push_alignment( align){ pass;}
+    function pop_alignment(){ pass;}
+    function push_font( x){ pass;}
+    function pop_font(){ pass;}
+    function push_margin( margin){ pass;}
+    function pop_margin(){ pass;}
+    function set_spacing( spacing){ pass;}
+    function push_style( *styles){ pass;}
+    function pop_style( n=1){ pass;}
+    function assert_line_data( flag=1){ pass;}
+
+
+}
+class AbstractFormatter{
+    """The standard formatter.
+
+    This implementation has demonstrated wide applicability to many writers,
+    and may be used directly in most circumstances.  It has been used to
+    implement a full-featured World Wide Web browser.
+
+    """;
+
+    #  Space handling policy:  blank spaces at the boundary between elements
+    #  are handled by the outermost context.  "Literal" data is not checked
+    #  to determine context, so spaces in literal data are handled directly
+    #  in all circumstances.
+
+    function __init__( writer){
+        this.writer = writer;            # Output device
+        this.align = nil;               # Current alignment
+        this.align_stack = [];           # Alignment stack
+        this.font_stack = [];            # Font state
+        this.margin_stack = [];          # Margin state
+        this.spacing = nil;             # Vertical spacing state
+        this.style_stack = [];           # Other state, e.g. color
+        this.nospace = 1;                # Should leading space be suppressed
+        this.softspace = 0;              # Should a space be inserted
+        this.para_end = 1;               # Just ended a paragraph
+        this.parskip = 0;                # Skipped space between paragraphs?
+        this.hard_break = 1;             # Have a hard break
+        this.have_label = 0;
+
+    }
+    function end_paragraph( blankline){
+        if not this.hard_break{
+            this.writer.send_line_break();
+            this.have_label = 0;
+        } if this.parskip < blankline and not this.have_label{
+            this.writer.send_paragraph(blankline - this.parskip);
+            this.parskip = blankline;
+            this.have_label = 0;
+        } this.hard_break = this.nospace = this.para_end = 1;
+        this.softspace = 0;
+
+    }
+    function add_line_break(){
+        if not (this.hard_break or this.para_end){
+            this.writer.send_line_break();
+            this.have_label = this.parskip = 0;
+        } this.hard_break = this.nospace = 1;
+        this.softspace = 0;
+
+    }
+    function add_hor_rule( *args, **kw){
+        if not this.hard_break{
+            this.writer.send_line_break();
+        } this.writer.send_hor_rule(*args, **kw);
+        this.hard_break = this.nospace = 1;
+        this.have_label = this.para_end = this.softspace = this.parskip = 0;
+
+    }
+    function add_label_data( format, counter, blankline = nil){
+        if this.have_label or not this.hard_break{
+            this.writer.send_line_break();
+        } if not this.para_end{
+            this.writer.send_paragraph((blankline and 1) or 0);
+        } if isinstance(format, str){
+            this.writer.send_label_data(this.format_counter(format, counter));
+        } else{
+            this.writer.send_label_data(format);
+        } this.nospace = this.have_label = this.hard_break = this.para_end = 1;
+        this.softspace = this.parskip = 0;
+
+    }
+    function format_counter( format, counter){
+        label = '';
+        for c in format{
+            if c == '1'{
+                label = label + ('%d' % counter);
+            } elif c in 'aA'{
+                if counter > 0{
+                    label = label + this.format_letter(c, counter);
+            } } elif c in 'iI'{
+                if counter > 0{
+                    label = label + this.format_roman(c, counter);
+            } } else{
+                label = label + c;
+        } } return label;
+
+    }
+    function format_letter( case, counter){
+        label = '';
+        while counter > 0{
+            counter, x = divmod(counter-1, 26);
+            # This makes a strong assumption that lowercase letters
+            # and uppercase letters form two contiguous blocks, with
+            # letters in order!
+            s = chr(ord(case) + x);
+            label = s + label;
+        } return label;
+
+    }
+    function format_roman( case, counter){
+        ones = ['i', 'x', 'c', 'm'];
+        fives = ['v', 'l', 'd'];
+        label, index = '', 0;
+        # This will die of IndexError when counter is too big
+        while counter > 0{
+            counter, x = divmod(counter, 10);
+            if x == 9{
+                label = ones[index] + ones[index+1] + label;
+            } elif x == 4{
+                label = ones[index] + fives[index] + label;
+            } else{
+                if x >= 5{
+                    s = fives[index];
+                    x = x-5;
+                } else{
+                    s = '';
+                } s = s + ones[index]*x;
+                label = s + label;
+            } index = index + 1;
+        } if case == 'I'{
+            return label.upper();
+        } return label;
+
+    }
+    function add_flowing_data( data){
+        if not data{ return;}
+        prespace = data[:1].isspace();
+        postspace = data[-1:].isspace();
+        data = " ".join(data.split());
+        if this.nospace and not data{
+            return;
+        } elif prespace or this.softspace{
+            if not data{
+                if not this.nospace{
+                    this.softspace = 1;
+                    this.parskip = 0;
+                } return;
+            } if not this.nospace{
+                data = ' ' + data;
+        } } this.hard_break = this.nospace = this.para_end = \
+                          this.parskip = this.have_label = 0;
+        this.softspace = postspace;
+        this.writer.send_flowing_data(data);
+
+    }
+    function add_literal_data( data){
+        if not data{ return;}
+        if this.softspace{
+            this.writer.send_flowing_data(" ");
+        } this.hard_break = data[-1:] == '\n';
+        this.nospace = this.para_end = this.softspace = \
+                       this.parskip = this.have_label = 0;
+        this.writer.send_literal_data(data);
+
+    }
+    function flush_softspace(){
+        if this.softspace{
+            this.hard_break = this.para_end = this.parskip = \
+                              this.have_label = this.softspace = 0;
+            this.nospace = 1;
+            this.writer.send_flowing_data(' ');
+
+    }
+    } function push_alignment( align){
+        if align and align != this.align{
+            this.writer.new_alignment(align);
+            this.align = align;
+            this.align_stack.append(align);
+        } else{
+            this.align_stack.append(this.align);
+
+    }
+    } function pop_alignment(){
+        if this.align_stack{
+            del this.align_stack[-1];
+        } if this.align_stack{
+            this.align = align = this.align_stack[-1];
+            this.writer.new_alignment(align);
+        } else{
+            this.align = nil;
+            this.writer.new_alignment(nil);
+
+    }
+    } function push_font( font){
+        size, i, b, tt = font;
+        if this.softspace{
+            this.hard_break = this.para_end = this.softspace = 0;
+            this.nospace = 1;
+            this.writer.send_flowing_data(' ');
+        } if this.font_stack{
+            csize, ci, cb, ctt = this.font_stack[-1];
+            if size is AS_IS{ size = csize;}
+            if i is AS_IS{ i = ci;}
+            if b is AS_IS{ b = cb;}
+            if tt is AS_IS{ tt = ctt;}
+        } font = (size, i, b, tt);
+        this.font_stack.append(font);
+        this.writer.new_font(font);
+
+    }
+    function pop_font(){
+        if this.font_stack{
+            del this.font_stack[-1];
+        } if this.font_stack{
+            font = this.font_stack[-1];
+        } else{
+            font = nil;
+        } this.writer.new_font(font);
+
+    }
+    function push_margin( margin){
+        this.margin_stack.append(margin);
+        fstack = filter(nil, this.margin_stack);
+        if not margin and fstack{
+            margin = fstack[-1];
+        } this.writer.new_margin(margin, len(fstack));
+
+    }
+    function pop_margin(){
+        if this.margin_stack{
+            del this.margin_stack[-1];
+        } fstack = filter(nil, this.margin_stack);
+        if fstack{
+            margin = fstack[-1];
+        } else{
+            margin = nil;
+        } this.writer.new_margin(margin, len(fstack));
+
+    }
+    function set_spacing( spacing){
+        this.spacing = spacing;
+        this.writer.new_spacing(spacing);
+
+    }
+    function push_style( *styles){
+        if this.softspace{
+            this.hard_break = this.para_end = this.softspace = 0;
+            this.nospace = 1;
+            this.writer.send_flowing_data(' ');
+        } for style in styles{
+            this.style_stack.append(style);
+        } this.writer.new_styles(tuple(this.style_stack));
+
+    }
+    function pop_style( n=1){
+        del this.style_stack[-n:];
+        this.writer.new_styles(tuple(this.style_stack));
+
+    }
+    function assert_line_data( flag=1){
+        this.nospace = this.hard_break = not flag;
+        this.para_end = this.parskip = this.have_label = 0;
+
+
+}
+} class NullWriter{
+    """Minimal writer interface to use in testing & inheritance.
+
+    A writer which only provides the interface definition; no actions are
+    taken on any methods.  This should be the base class for all writers
+    which do not need to inherit any implementation methods.
+
+    """;
+    function __init__(){ pass;}
+    function flush(){ pass;}
+    function new_alignment( align){ pass;}
+    function new_font( font){ pass;}
+    function new_margin( margin, level){ pass;}
+    function new_spacing( spacing){ pass;}
+    function new_styles( styles){ pass;}
+    function send_paragraph( blankline){ pass;}
+    function send_line_break(){ pass;}
+    function send_hor_rule( *args, **kw){ pass;}
+    function send_label_data( data){ pass;}
+    function send_flowing_data( data){ pass;}
+    function send_literal_data( data){ pass;}
+
+
+}
+class AbstractWriter(NullWriter){
+    """A writer which can be used in debugging formatters, but not much else.
+
+    Each method simply announces itself by printing its name and
+    arguments on standard output.
+
+    """;
+
+    function new_alignment( align){
+        print "new_alignment(%r)" % (align,);
+
+    }
+    function new_font( font){
+        print "new_font(%r)" % (font,);
+
+    }
+    function new_margin( margin, level){
+        print "new_margin(%r, %d)" % (margin, level);
+
+    }
+    function new_spacing( spacing){
+        print "new_spacing(%r)" % (spacing,);
+
+    }
+    function new_styles( styles){
+        print "new_styles(%r)" % (styles,);
+
+    }
+    function send_paragraph( blankline){
+        print "send_paragraph(%r)" % (blankline,);
+
+    }
+    function send_line_break(){
+        print "send_line_break()";
+
+    }
+    function send_hor_rule( *args, **kw){
+        print "send_hor_rule()";
+
+    }
+    function send_label_data( data){
+        print "send_label_data(%r)" % (data,);
+
+    }
+    function send_flowing_data( data){
+        print "send_flowing_data(%r)" % (data,);
+
+    }
+    function send_literal_data( data){
+        print "send_literal_data(%r)" % (data,);
+
+
+}
+} class DumbWriter(NullWriter){
+    """Simple writer class which writes output on the file object passed in
+    as the file parameter or, if file is omitted, on standard output.  The
+    output is simply word-wrapped to the number of columns specified by
+    the maxcol parameter.  This class is suitable for reflowing a sequence
+    of paragraphs.
+
+    """;
+
+    function __init__( file=nil, maxcol=72){
+        this.file = file or sys.stdout;
+        this.maxcol = maxcol;
+        NullWriter.__init__(this);
+        this.reset();
+
+    }
+    function reset(){
+        this.col = 0;
+        this.atbreak = 0;
+
+    }
+    function send_paragraph( blankline){
+        this.file.write('\n'*blankline);
+        this.col = 0;
+        this.atbreak = 0;
+
+    }
+    function send_line_break(){
+        this.file.write('\n');
+        this.col = 0;
+        this.atbreak = 0;
+
+    }
+    function send_hor_rule( *args, **kw){
+        this.file.write('\n');
+        this.file.write('-'*this.maxcol);
+        this.file.write('\n');
+        this.col = 0;
+        this.atbreak = 0;
+
+    }
+    function send_literal_data( data){
+        this.file.write(data);
+        i = data.rfind('\n');
+        if i >= 0{
+            this.col = 0;
+            data = data[i+1:];
+        } data = data.expandtabs();
+        this.col = this.col + len(data);
+        this.atbreak = 0;
+
+    }
+    function send_flowing_data( data){
+        if not data{ return;}
+        atbreak = this.atbreak or data[0].isspace();
+        col = this.col;
+        maxcol = this.maxcol;
+        write = this.file.write;
+        for word in data.split(){
+            if atbreak{
+                if col + len(word) >= maxcol{
+                    write('\n');
+                    col = 0;
+                } else{
+                    write(' ');
+                    col = col + 1;
+            } } write(word);
+            col = col + len(word);
+            atbreak = 1;
+        } this.col = col;
+        this.atbreak = data[-1].isspace();
+
+
+}
+} function test(file = nil){
+    w = DumbWriter();
+    f = AbstractFormatter(w);
+    if file is not nil{
+        fp = open(file);
+    } elif sys.argv[1:]{
+        fp = open(sys.argv[1]);
+    } else{
+        fp = sys.stdin;
+    } for line in fp{
+        if line == '\n'{
+            f.end_paragraph(1);
+        } else{
+            f.add_flowing_data(line);
+    } } f.end_paragraph(0);
+
+
+}
+if __name__ == '__main__'{
+    test();
+
+}

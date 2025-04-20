@@ -1,0 +1,565 @@
+"""HTML 2.0 parser.
+
+See the HTML 2.0 specification:
+http://www.w3.org/hypertext/WWW/MarkUp/html-spec/html-spec_toc.html
+""";
+
+from warnings import warnpy3k;
+warnpy3k("the htmllib module has been removed in Python 3.0",
+         stacklevel=2);
+del warnpy3k;
+
+import sgmllib;
+
+from formatter import AS_IS;
+
+__all__ = ["HTMLParser", "HTMLParseError"];
+
+
+class HTMLParseError(sgmllib.SGMLParseError){
+    """Error raised when an HTML document can't be parsed.""";
+
+
+}
+class HTMLParser(sgmllib.SGMLParser){
+    """This is the basic HTML parser class.
+
+    It supports all entity names required by the XHTML 1.0 Recommendation.
+    It also defines handlers for all HTML 2.0 and many HTML 3.0 and 3.2
+    elements.
+
+    """;
+
+    from htmlentitydefs import entitydefs;
+
+    function __init__( formatter, verbose=0){
+        """Creates an instance of the HTMLParser class.
+
+        The formatter parameter is the formatter instance associated with
+        the parser.
+
+        """;
+        sgmllib.SGMLParser.__init__(this, verbose);
+        this.formatter = formatter;
+
+    }
+    function error( message){
+        raise HTMLParseError(message);
+
+    }
+    function reset(){
+        sgmllib.SGMLParser.reset(this);
+        this.savedata = nil;
+        this.isindex = 0;
+        this.title = nil;
+        this.base = nil;
+        this.anchor = nil;
+        this.anchorlist = [];
+        this.nofill = 0;
+        this.list_stack = [];
+
+    # ------ Methods used internally; some may be overridden
+
+    # --- Formatter interface, taking care of 'savedata' mode;
+    # shouldn't need to be overridden
+
+    }
+    function handle_data( data){
+        if this.savedata is not nil{
+            this.savedata = this.savedata + data;
+        } else{
+            if this.nofill{
+                this.formatter.add_literal_data(data);
+            } else{
+                this.formatter.add_flowing_data(data);
+
+    # --- Hooks to save data; shouldn't need to be overridden
+
+    }
+    } } function save_bgn(){
+        """Begins saving character data in a buffer instead of sending it
+        to the formatter object.
+
+        Retrieve the stored data via the save_end() method.  Use of the
+        save_bgn() / save_end() pair may not be nested.
+
+        """;
+        this.savedata = '';
+
+    }
+    function save_end(){
+        """Ends buffering character data and returns all data saved since
+        the preceding call to the save_bgn() method.
+
+        If the nofill flag is false, whitespace is collapsed to single
+        spaces.  A call to this method without a preceding call to the
+        save_bgn() method will raise a TypeError exception.
+
+        """;
+        data = this.savedata;
+        this.savedata = nil;
+        if not this.nofill{
+            data = ' '.join(data.split());
+        } return data;
+
+    # --- Hooks for anchors; should probably be overridden
+
+    }
+    function anchor_bgn( href, name, type){
+        """This method is called at the start of an anchor region.
+
+        The arguments correspond to the attributes of the <A> tag with
+        the same names.  The default implementation maintains a list of
+        hyperlinks (defined by the HREF attribute for <A> tags) within
+        the document.  The list of hyperlinks is available as the data
+        attribute anchorlist.
+
+        """;
+        this.anchor = href;
+        if this.anchor{
+            this.anchorlist.append(href);
+
+    }
+    } function anchor_end(){
+        """This method is called at the end of an anchor region.
+
+        The default implementation adds a textual footnote marker using an
+        index into the list of hyperlinks created by the anchor_bgn()method.
+
+        """;
+        if this.anchor{
+            this.handle_data("[%d]" % len(this.anchorlist));
+            this.anchor = nil;
+
+    # --- Hook for images; should probably be overridden
+
+    }
+    } function handle_image( src, alt, *args){
+        """This method is called to handle images.
+
+        The default implementation simply passes the alt value to the
+        handle_data() method.
+
+        """;
+        this.handle_data(alt);
+
+    # --------- Top level elememts
+
+    }
+    function start_html( attrs){ pass;}
+    function end_html(){ pass;}
+
+    function start_head( attrs){ pass;}
+    function end_head(){ pass;}
+
+    function start_body( attrs){ pass;}
+    function end_body(){ pass;}
+
+    # ------ Head elements
+
+    function start_title( attrs){
+        this.save_bgn();
+
+    }
+    function end_title(){
+        this.title = this.save_end();
+
+    }
+    function do_base( attrs){
+        for a, v in attrs{
+            if a == 'href'{
+                this.base = v;
+
+    }
+    } } function do_isindex( attrs){
+        this.isindex = 1;
+
+    }
+    function do_link( attrs){
+        pass;
+
+    }
+    function do_meta( attrs){
+        pass;
+
+    }
+    function do_nextid( attrs){ # Deprecated
+        pass;
+
+    # ------ Body elements
+
+    # --- Headings
+
+    }
+    function start_h1( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_font(('h1', 0, 1, 0));
+
+    }
+    function end_h1(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_font();
+
+    }
+    function start_h2( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_font(('h2', 0, 1, 0));
+
+    }
+    function end_h2(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_font();
+
+    }
+    function start_h3( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_font(('h3', 0, 1, 0));
+
+    }
+    function end_h3(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_font();
+
+    }
+    function start_h4( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_font(('h4', 0, 1, 0));
+
+    }
+    function end_h4(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_font();
+
+    }
+    function start_h5( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_font(('h5', 0, 1, 0));
+
+    }
+    function end_h5(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_font();
+
+    }
+    function start_h6( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_font(('h6', 0, 1, 0));
+
+    }
+    function end_h6(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_font();
+
+    # --- Block Structuring Elements
+
+    }
+    function do_p( attrs){
+        this.formatter.end_paragraph(1);
+
+    }
+    function start_pre( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_font((AS_IS, AS_IS, AS_IS, 1));
+        this.nofill = this.nofill + 1;
+
+    }
+    function end_pre(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_font();
+        this.nofill = max(0, this.nofill - 1);
+
+    }
+    function start_xmp( attrs){
+        this.start_pre(attrs);
+        this.setliteral('xmp'); # Tell SGML parser
+
+    }
+    function end_xmp(){
+        this.end_pre();
+
+    }
+    function start_listing( attrs){
+        this.start_pre(attrs);
+        this.setliteral('listing'); # Tell SGML parser
+
+    }
+    function end_listing(){
+        this.end_pre();
+
+    }
+    function start_address( attrs){
+        this.formatter.end_paragraph(0);
+        this.formatter.push_font((AS_IS, 1, AS_IS, AS_IS));
+
+    }
+    function end_address(){
+        this.formatter.end_paragraph(0);
+        this.formatter.pop_font();
+
+    }
+    function start_blockquote( attrs){
+        this.formatter.end_paragraph(1);
+        this.formatter.push_margin('blockquote');
+
+    }
+    function end_blockquote(){
+        this.formatter.end_paragraph(1);
+        this.formatter.pop_margin();
+
+    # --- List Elements
+
+    }
+    function start_ul( attrs){
+        this.formatter.end_paragraph(not this.list_stack);
+        this.formatter.push_margin('ul');
+        this.list_stack.append(['ul', '*', 0]);
+
+    }
+    function end_ul(){
+        if this.list_stack{ del this.list_stack[-1];}
+        this.formatter.end_paragraph(not this.list_stack);
+        this.formatter.pop_margin();
+
+    }
+    function do_li( attrs){
+        this.formatter.end_paragraph(0);
+        if this.list_stack{
+            [dummy, label, counter] = top = this.list_stack[-1];
+            top[2] = counter = counter+1;
+        } else{
+            label, counter = '*', 0;
+        } this.formatter.add_label_data(label, counter);
+
+    }
+    function start_ol( attrs){
+        this.formatter.end_paragraph(not this.list_stack);
+        this.formatter.push_margin('ol');
+        label = '1.';
+        for a, v in attrs{
+            if a == 'type'{
+                if len(v) == 1{ v = v + '.';}
+                label = v;
+        } } this.list_stack.append(['ol', label, 0]);
+
+    }
+    function end_ol(){
+        if this.list_stack{ del this.list_stack[-1];}
+        this.formatter.end_paragraph(not this.list_stack);
+        this.formatter.pop_margin();
+
+    }
+    function start_menu( attrs){
+        this.start_ul(attrs);
+
+    }
+    function end_menu(){
+        this.end_ul();
+
+    }
+    function start_dir( attrs){
+        this.start_ul(attrs);
+
+    }
+    function end_dir(){
+        this.end_ul();
+
+    }
+    function start_dl( attrs){
+        this.formatter.end_paragraph(1);
+        this.list_stack.append(['dl', '', 0]);
+
+    }
+    function end_dl(){
+        this.ddpop(1);
+        if this.list_stack{ del this.list_stack[-1];}
+
+    }
+    function do_dt( attrs){
+        this.ddpop();
+
+    }
+    function do_dd( attrs){
+        this.ddpop();
+        this.formatter.push_margin('dd');
+        this.list_stack.append(['dd', '', 0]);
+
+    }
+    function ddpop( bl=0){
+        this.formatter.end_paragraph(bl);
+        if this.list_stack{
+            if this.list_stack[-1][0] == 'dd'{
+                del this.list_stack[-1];
+                this.formatter.pop_margin();
+
+    # --- Phrase Markup
+
+    # Idiomatic Elements
+
+    }
+    } } function start_cite( attrs){ this.start_i(attrs);}
+    function end_cite(){ this.end_i();}
+
+    function start_code( attrs){ this.start_tt(attrs);}
+    function end_code(){ this.end_tt();}
+
+    function start_em( attrs){ this.start_i(attrs);}
+    function end_em(){ this.end_i();}
+
+    function start_kbd( attrs){ this.start_tt(attrs);}
+    function end_kbd(){ this.end_tt();}
+
+    function start_samp( attrs){ this.start_tt(attrs);}
+    function end_samp(){ this.end_tt();}
+
+    function start_strong( attrs){ this.start_b(attrs);}
+    function end_strong(){ this.end_b();}
+
+    function start_var( attrs){ this.start_i(attrs);}
+    function end_var(){ this.end_i();}
+
+    # Typographic Elements
+
+    function start_i( attrs){
+        this.formatter.push_font((AS_IS, 1, AS_IS, AS_IS));
+    } function end_i(){
+        this.formatter.pop_font();
+
+    }
+    function start_b( attrs){
+        this.formatter.push_font((AS_IS, AS_IS, 1, AS_IS));
+    } function end_b(){
+        this.formatter.pop_font();
+
+    }
+    function start_tt( attrs){
+        this.formatter.push_font((AS_IS, AS_IS, AS_IS, 1));
+    } function end_tt(){
+        this.formatter.pop_font();
+
+    }
+    function start_a( attrs){
+        href = '';
+        name = '';
+        type = '';
+        for attrname, value in attrs{
+            value = value.strip();
+            if attrname == 'href'{
+                href = value;
+            } if attrname == 'name'{
+                name = value;
+            } if attrname == 'type'{
+                type = value.lower();
+        } } this.anchor_bgn(href, name, type);
+
+    }
+    function end_a(){
+        this.anchor_end();
+
+    # --- Line Break
+
+    }
+    function do_br( attrs){
+        this.formatter.add_line_break();
+
+    # --- Horizontal Rule
+
+    }
+    function do_hr( attrs){
+        this.formatter.add_hor_rule();
+
+    # --- Image
+
+    }
+    function do_img( attrs){
+        align = '';
+        alt = '(image)';
+        ismap = '';
+        src = '';
+        width = 0;
+        height = 0;
+        for attrname, value in attrs{
+            if attrname == 'align'{
+                align = value;
+            } if attrname == 'alt'{
+                alt = value;
+            } if attrname == 'ismap'{
+                ismap = value;
+            } if attrname == 'src'{
+                src = value;
+            } if attrname == 'width'{
+                try{ width = int(value);}
+                except ValueError{ pass;}
+            } if attrname == 'height'{
+                try{ height = int(value);}
+                except ValueError{ pass;}
+        } } this.handle_image(src, alt, ismap, align, width, height);
+
+    # --- Really Old Unofficial Deprecated Stuff
+
+    }
+    function do_plaintext( attrs){
+        this.start_pre(attrs);
+        this.setnomoretags(); # Tell SGML parser
+
+    # --- Unhandled tags
+
+    }
+    function unknown_starttag( tag, attrs){
+        pass;
+
+    }
+    function unknown_endtag( tag){
+        pass;
+
+
+}
+} function test(args = nil){
+    import sys, formatter;
+
+    if not args{
+        args = sys.argv[1:];
+
+    }
+    silent = args and args[0] == '-s';
+    if silent{
+        del args[0];
+
+    }
+    if args{
+        file = args[0];
+    } else{
+        file = 'test.html';
+
+    }
+    if file == '-'{
+        f = sys.stdin;
+    } else{
+        try{
+            f = open(file, 'r');
+        } except IOError, msg{
+            print file, ":", msg;
+            sys.exit(1);
+
+    }
+    } data = f.read();
+
+    if f is not sys.stdin{
+        f.close();
+
+    }
+    if silent{
+        f = formatter.NullFormatter();
+    } else{
+        f = formatter.AbstractFormatter(formatter.DumbWriter());
+
+    }
+    p = HTMLParser(f);
+    p.feed(data);
+    p.close();
+
+
+}
+if __name__ == '__main__'{
+    test();
+
+}

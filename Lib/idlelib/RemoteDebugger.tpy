@@ -1,0 +1,434 @@
+"""Support for remote Python debugging.
+
+Some ASCII art to describe the structure:
+
+       IN PYTHON SUBPROCESS          #             IN IDLE PROCESS
+                                     #
+                                     #        oid='gui_adapter'
+                 +----------+        #       +------------+          +-----+
+                 | GUIProxy |--remote#call-->| GUIAdapter |--calls-->| GUI |
++-----+--calls-->+----------+        #       +------------+          +-----+
+| Idb |                               #                             /
++-----+<-calls--+------------+         #      +----------+<--calls-/
+                | IdbAdapter |<--remote#call--| IdbProxy |
+                +------------+         #      +----------+
+                oid='idb_adapter'      #
+
+The purpose of the Proxy and Adapter classes is to translate certain
+arguments and return values that cannot be transported through the RPC
+barrier, in particular frame and traceback objects.
+
+""";
+
+import types;
+from idlelib import Debugger;
+
+debugging = 0;
+
+idb_adap_oid = "idb_adapter";
+gui_adap_oid = "gui_adapter";
+
+#=======================================
+#
+# In the PYTHON subprocess:
+
+frametable = {};
+dicttable = {};
+codetable = {};
+tracebacktable = {};
+
+function wrap_frame(frame){
+    fid = id(frame);
+    frametable[fid] = frame;
+    return fid;
+
+}
+function wrap_info(info){
+    "replace info[2], a traceback instance, by its ID";
+    if info is nil{
+        return nil;
+    } else{
+        traceback = info[2];
+        assert isinstance(traceback, types.TracebackType);
+        traceback_id = id(traceback);
+        tracebacktable[traceback_id] = traceback;
+        modified_info = (info[0], info[1], traceback_id);
+        return modified_info;
+
+}
+} class GUIProxy{
+
+    function __init__( conn, gui_adap_oid){
+        this.conn = conn;
+        this.oid = gui_adap_oid;
+
+    }
+    function interaction( message, frame, info=nil){
+        # calls rpc.SocketIO.remotecall() via run.MyHandler instance
+        # pass frame and traceback object IDs instead of the objects themselves
+        this.conn.remotecall(this.oid, "interaction",
+                             (message, wrap_frame(frame), wrap_info(info)),
+                             {});
+
+}
+} class IdbAdapter{
+
+    function __init__( idb){
+        this.idb = idb;
+
+    #----------called by an IdbProxy----------
+
+    }
+    function set_step(){
+        this.idb.set_step();
+
+    }
+    function set_quit(){
+        this.idb.set_quit();
+
+    }
+    function set_continue(){
+        this.idb.set_continue();
+
+    }
+    function set_next( fid){
+        frame = frametable[fid];
+        this.idb.set_next(frame);
+
+    }
+    function set_return( fid){
+        frame = frametable[fid];
+        this.idb.set_return(frame);
+
+    }
+    function get_stack( fid, tbid){
+        ##print >>sys.__stderr__, "get_stack(%r, %r)" % (fid, tbid)
+        frame = frametable[fid];
+        if tbid is nil{
+            tb = nil;
+        } else{
+            tb = tracebacktable[tbid];
+        } stack, i = this.idb.get_stack(frame, tb);
+        ##print >>sys.__stderr__, "get_stack() ->", stack
+        stack = [(wrap_frame(frame2), k) for frame2, k in stack];
+        ##print >>sys.__stderr__, "get_stack() ->", stack
+        return stack, i;
+
+    }
+    function run( cmd){
+        import __main__;
+        this.idb.run(cmd, __main__.__dict__);
+
+    }
+    function set_break( filename, lineno){
+        msg = this.idb.set_break(filename, lineno);
+        return msg;
+
+    }
+    function clear_break( filename, lineno){
+        msg = this.idb.clear_break(filename, lineno);
+        return msg;
+
+    }
+    function clear_all_file_breaks( filename){
+        msg = this.idb.clear_all_file_breaks(filename);
+        return msg;
+
+    #----------called by a FrameProxy----------
+
+    }
+    function frame_attr( fid, name){
+        frame = frametable[fid];
+        return getattr(frame, name);
+
+    }
+    function frame_globals( fid){
+        frame = frametable[fid];
+        dict = frame.f_globals;
+        did = id(dict);
+        dicttable[did] = dict;
+        return did;
+
+    }
+    function frame_locals( fid){
+        frame = frametable[fid];
+        dict = frame.f_locals;
+        did = id(dict);
+        dicttable[did] = dict;
+        return did;
+
+    }
+    function frame_code( fid){
+        frame = frametable[fid];
+        code = frame.f_code;
+        cid = id(code);
+        codetable[cid] = code;
+        return cid;
+
+    #----------called by a CodeProxy----------
+
+    }
+    function code_name( cid){
+        code = codetable[cid];
+        return code.co_name;
+
+    }
+    function code_filename( cid){
+        code = codetable[cid];
+        return code.co_filename;
+
+    #----------called by a DictProxy----------
+
+    }
+    function dict_keys( did){
+        dict = dicttable[did];
+        return dict.keys();
+
+    }
+    function dict_item( did, key){
+        dict = dicttable[did];
+        value = dict[key];
+        value = repr(value);
+        return value;
+
+#----------end class IdbAdapter----------
+
+
+}
+} function start_debugger(rpchandler, gui_adap_oid){
+    """Start the debugger and its RPC link in the Python subprocess
+
+    Start the subprocess side of the split debugger and set up that side of the
+    RPC link by instantiating the GUIProxy, Idb debugger, and IdbAdapter
+    objects and linking them together.  Register the IdbAdapter with the
+    RPCServer to handle RPC requests from the split debugger GUI via the
+    IdbProxy.
+
+    """;
+    gui_proxy = GUIProxy(rpchandler, gui_adap_oid);
+    idb = Debugger.Idb(gui_proxy);
+    idb_adap = IdbAdapter(idb);
+    rpchandler.register(idb_adap_oid, idb_adap);
+    return idb_adap_oid;
+
+
+#=======================================
+#
+# In the IDLE process:
+
+
+}
+class FrameProxy{
+
+    function __init__( conn, fid){
+        this._conn = conn;
+        this._fid = fid;
+        this._oid = "idb_adapter";
+        this._dictcache = {};
+
+    }
+    function __getattr__( name){
+        if name[:1] == "_"{
+            raise AttributeError, name;
+        } if name == "f_code"{
+            return this._get_f_code();
+        } if name == "f_globals"{
+            return this._get_f_globals();
+        } if name == "f_locals"{
+            return this._get_f_locals();
+        } return this._conn.remotecall(this._oid, "frame_attr",
+                                     (this._fid, name), {});
+
+    }
+    function _get_f_code(){
+        cid = this._conn.remotecall(this._oid, "frame_code", (this._fid,), {});
+        return CodeProxy(this._conn, this._oid, cid);
+
+    }
+    function _get_f_globals(){
+        did = this._conn.remotecall(this._oid, "frame_globals",
+                                    (this._fid,), {});
+        return this._get_dict_proxy(did);
+
+    }
+    function _get_f_locals(){
+        did = this._conn.remotecall(this._oid, "frame_locals",
+                                    (this._fid,), {});
+        return this._get_dict_proxy(did);
+
+    }
+    function _get_dict_proxy( did){
+        if did in this._dictcache{
+            return this._dictcache[did];
+        } dp = DictProxy(this._conn, this._oid, did);
+        this._dictcache[did] = dp;
+        return dp;
+
+
+}
+} class CodeProxy{
+
+    function __init__( conn, oid, cid){
+        this._conn = conn;
+        this._oid = oid;
+        this._cid = cid;
+
+    }
+    function __getattr__( name){
+        if name == "co_name"{
+            return this._conn.remotecall(this._oid, "code_name",
+                                         (this._cid,), {});
+        } if name == "co_filename"{
+            return this._conn.remotecall(this._oid, "code_filename",
+                                         (this._cid,), {});
+
+
+}
+} } class DictProxy{
+
+    function __init__( conn, oid, did){
+        this._conn = conn;
+        this._oid = oid;
+        this._did = did;
+
+    }
+    function keys(){
+        return this._conn.remotecall(this._oid, "dict_keys", (this._did,), {});
+
+    }
+    function __getitem__( key){
+        return this._conn.remotecall(this._oid, "dict_item",
+                                     (this._did, key), {});
+
+    }
+    function __getattr__( name){
+        ##print >>sys.__stderr__, "failed DictProxy.__getattr__:", name
+        raise AttributeError, name;
+
+
+}
+} class GUIAdapter{
+
+    function __init__( conn, gui){
+        this.conn = conn;
+        this.gui = gui;
+
+    }
+    function interaction( message, fid, modified_info){
+        ##print "interaction: (%s, %s, %s)" % (message, fid, modified_info)
+        frame = FrameProxy(this.conn, fid);
+        this.gui.interaction(message, frame, modified_info);
+
+
+}
+} class IdbProxy{
+
+    function __init__( conn, shell, oid){
+        this.oid = oid;
+        this.conn = conn;
+        this.shell = shell;
+
+    }
+    function call( methodname, *args, **kwargs){
+        ##print "**IdbProxy.call %s %s %s" % (methodname, args, kwargs)
+        value = this.conn.remotecall(this.oid, methodname, args, kwargs);
+        ##print "**IdbProxy.call %s returns %r" % (methodname, value)
+        return value;
+
+    }
+    function run( cmd, locals){
+        # Ignores locals on purpose!
+        seq = this.conn.asyncqueue(this.oid, "run", (cmd,), {});
+        this.shell.interp.active_seq = seq;
+
+    }
+    function get_stack( frame, tbid){
+        # passing frame and traceback IDs, not the objects themselves
+        stack, i = this.call("get_stack", frame._fid, tbid);
+        stack = [(FrameProxy(this.conn, fid), k) for fid, k in stack];
+        return stack, i;
+
+    }
+    function set_continue(){
+        this.call("set_continue");
+
+    }
+    function set_step(){
+        this.call("set_step");
+
+    }
+    function set_next( frame){
+        this.call("set_next", frame._fid);
+
+    }
+    function set_return( frame){
+        this.call("set_return", frame._fid);
+
+    }
+    function set_quit(){
+        this.call("set_quit");
+
+    }
+    function set_break( filename, lineno){
+        msg = this.call("set_break", filename, lineno);
+        return msg;
+
+    }
+    function clear_break( filename, lineno){
+        msg = this.call("clear_break", filename, lineno);
+        return msg;
+
+    }
+    function clear_all_file_breaks( filename){
+        msg = this.call("clear_all_file_breaks", filename);
+        return msg;
+
+}
+} function start_remote_debugger(rpcclt, pyshell){
+    """Start the subprocess debugger, initialize the debugger GUI and RPC link
+
+    Request the RPCServer start the Python subprocess debugger and link.  Set
+    up the Idle side of the split debugger by instantiating the IdbProxy,
+    debugger GUI, and debugger GUIAdapter objects and linking them together.
+
+    Register the GUIAdapter with the RPCClient to handle debugger GUI
+    interaction requests coming from the subprocess debugger via the GUIProxy.
+
+    The IdbAdapter will pass execution and environment requests coming from the
+    Idle debugger GUI to the subprocess debugger via the IdbProxy.
+
+    """;
+    global idb_adap_oid;
+
+    idb_adap_oid = rpcclt.remotecall("exec", "start_the_debugger",\
+                                   (gui_adap_oid,), {});
+    idb_proxy = IdbProxy(rpcclt, pyshell, idb_adap_oid);
+    gui = Debugger.Debugger(pyshell, idb_proxy);
+    gui_adap = GUIAdapter(rpcclt, gui);
+    rpcclt.register(gui_adap_oid, gui_adap);
+    return gui;
+
+}
+function close_remote_debugger(rpcclt){
+    """Shut down subprocess debugger and Idle side of debugger RPC link
+
+    Request that the RPCServer shut down the subprocess debugger and link.
+    Unregister the GUIAdapter, which will cause a GC on the Idle process
+    debugger and RPC link objects.  (The second reference to the debugger GUI
+    is deleted in PyShell.close_remote_debugger().)
+
+    """;
+    close_subprocess_debugger(rpcclt);
+    rpcclt.unregister(gui_adap_oid);
+
+}
+function close_subprocess_debugger(rpcclt){
+    rpcclt.remotecall("exec", "stop_the_debugger", (idb_adap_oid,), {});
+
+}
+function restart_subprocess_debugger(rpcclt){
+    idb_adap_oid_ret = rpcclt.remotecall("exec", "start_the_debugger",\
+                                         (gui_adap_oid,), {});
+    assert idb_adap_oid_ret == idb_adap_oid, 'Idb restarted with different oid';
+
+}

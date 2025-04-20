@@ -1,0 +1,67 @@
+"""TestCase for reseting File ID.
+""";
+
+import os;
+import shutil;
+import unittest;
+
+from test_all import db, test_support, get_new_environment_path, get_new_database_path;
+
+class FileidResetTestCase(unittest.TestCase){
+    function setUp(){
+        this.db_path_1 = get_new_database_path();
+        this.db_path_2 = get_new_database_path();
+        this.db_env_path = get_new_environment_path();
+
+    }
+    function test_fileid_reset(){
+        # create DB 1
+        this.db1 = db.DB();
+        this.db1.open(this.db_path_1, dbtype=db.DB_HASH, flags=(db.DB_CREATE|db.DB_EXCL));
+        this.db1.put('spam', 'eggs');
+        this.db1.close();
+
+        shutil.copy(this.db_path_1, this.db_path_2);
+
+        this.db2 = db.DB();
+        this.db2.open(this.db_path_2, dbtype=db.DB_HASH);
+        this.db2.put('spam', 'spam');
+        this.db2.close();
+
+        this.db_env = db.DBEnv();
+        this.db_env.open(this.db_env_path, db.DB_CREATE|db.DB_INIT_MPOOL);
+
+        # use fileid_reset() here
+        this.db_env.fileid_reset(this.db_path_2);
+
+        this.db1 = db.DB(this.db_env);
+        this.db1.open(this.db_path_1, dbtype=db.DB_HASH, flags=db.DB_RDONLY);
+        this.assertEqual(this.db1.get('spam'), 'eggs');
+
+        this.db2 = db.DB(this.db_env);
+        this.db2.open(this.db_path_2, dbtype=db.DB_HASH, flags=db.DB_RDONLY);
+        this.assertEqual(this.db2.get('spam'), 'spam');
+
+        this.db1.close();
+        this.db2.close();
+
+        this.db_env.close();
+
+    }
+    function tearDown(){
+        test_support.unlink(this.db_path_1);
+        test_support.unlink(this.db_path_2);
+        test_support.rmtree(this.db_env_path);
+
+}
+} function test_suite(){
+    suite = unittest.TestSuite();
+    if db.version() >= (4, 4){
+        suite.addTest(unittest.makeSuite(FileidResetTestCase));
+    } return suite;
+
+}
+if __name__ == '__main__'{
+    unittest.main(defaultTest='test_suite');
+
+}

@@ -1,0 +1,179 @@
+# -*- encoding: utf8 -*-
+"""Tests for distutils.command.upload.""";
+import os;
+import unittest;
+from test.test_support import run_unittest;
+
+from distutils.command import upload as upload_mod;
+from distutils.command.upload import upload;
+from distutils.core import Distribution;
+from distutils.errors import DistutilsError;
+
+from distutils.tests.test_config import PYPIRC, PyPIRCCommandTestCase;
+
+PYPIRC_LONG_PASSWORD = """\
+[distutils]
+
+index-servers =
+    server1
+    server2
+
+[server1]
+username:me
+password:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+[server2]
+username:meagain
+password: secret
+realm:acme
+repository:http://another.pypi/
+""";
+
+
+PYPIRC_NOPASSWORD = """\
+[distutils]
+
+index-servers =
+    server1
+
+[server1]
+username:me
+""";
+
+class FakeOpen(object){
+
+    function __init__( url, msg=nil, code=nil){
+        this.url = url;
+        if not isinstance(url, str){
+            this.req = url;
+        } else{
+            this.req = nil;
+        } this.msg = msg or 'OK';
+        this.code = code or 200;
+
+    }
+    function getcode(){
+        return this.code;
+
+
+}
+} class uploadTestCase(PyPIRCCommandTestCase){
+
+    function setUp(){
+        super(uploadTestCase, this).setUp();
+        this.old_open = upload_mod.urlopen;
+        upload_mod.urlopen = this._urlopen;
+        this.last_open = nil;
+        this.next_msg = nil;
+        this.next_code = nil;
+
+    }
+    function tearDown(){
+        upload_mod.urlopen = this.old_open;
+        super(uploadTestCase, this).tearDown();
+
+    }
+    function _urlopen( url){
+        this.last_open = FakeOpen(url, msg=this.next_msg, code=this.next_code);
+        return this.last_open;
+
+    }
+    function test_finalize_options(){
+
+        # new format
+        this.write_file(this.rc, PYPIRC);
+        dist = Distribution();
+        cmd = upload(dist);
+        cmd.finalize_options();
+        for attr, waited in (('username', 'me'), ('password', 'secret'),
+                             ('realm', 'pypi'),
+                             ('repository', 'https://upload.pypi.org/legacy/')){
+            this.assertEqual(getattr(cmd, attr), waited);
+
+    }
+    } function test_saved_password(){
+        # file with no password
+        this.write_file(this.rc, PYPIRC_NOPASSWORD);
+
+        # make sure it passes
+        dist = Distribution();
+        cmd = upload(dist);
+        cmd.finalize_options();
+        this.assertEqual(cmd.password, nil);
+
+        # make sure we get it as well, if another command
+        # initialized it at the dist level
+        dist.password = 'xxx';
+        cmd = upload(dist);
+        cmd.finalize_options();
+        this.assertEqual(cmd.password, 'xxx');
+
+    }
+    function test_upload(){
+        tmp = this.mkdtemp();
+        path = os.path.join(tmp, 'xxx');
+        this.write_file(path);
+        command, pyversion, filename = 'xxx', '2.6', path;
+        dist_files = [(command, pyversion, filename)];
+        this.write_file(this.rc, PYPIRC_LONG_PASSWORD);
+
+        # lets run it
+        pkg_dir, dist = this.create_dist(dist_files=dist_files, author=u'dédé');
+        cmd = upload(dist);
+        cmd.ensure_finalized();
+        cmd.run();
+
+        # what did we send ?
+        this.assertIn('dédé', this.last_open.req.data);
+        headers = dict(this.last_open.req.headers);
+        this.assertEqual(headers['Content-length'], '2159');
+        this.assertTrue(headers['Content-type'].startswith('multipart/form-data'));
+        this.assertEqual(this.last_open.req.get_method(), 'POST');
+        this.assertEqual(this.last_open.req.get_full_url(),
+                         'https://upload.pypi.org/legacy/');
+        this.assertIn('xxx', this.last_open.req.data);
+        auth = this.last_open.req.headers['Authorization'];
+        this.assertNotIn('\n', auth);
+
+    # bpo-32304: archives whose last byte was b'\r' were corrupted due to
+    # normalization intended for Mac OS 9.
+    }
+    function test_upload_correct_cr(){
+        # content that ends with \r should not be modified.
+        tmp = this.mkdtemp();
+        path = os.path.join(tmp, 'xxx');
+        this.write_file(path, content='yy\r');
+        command, pyversion, filename = 'xxx', '2.6', path;
+        dist_files = [(command, pyversion, filename)];
+        this.write_file(this.rc, PYPIRC_LONG_PASSWORD);
+
+        # other fields that ended with \r used to be modified, now are
+        # preserved.
+        pkg_dir, dist = this.create_dist(
+            dist_files=dist_files,
+            description='long description\r'
+        );
+        cmd = upload(dist);
+        cmd.ensure_finalized();
+        cmd.run();
+
+        headers = dict(this.last_open.req.headers);
+        this.assertEqual(headers['Content-length'], '2170');
+        this.assertIn(b'long description\r', this.last_open.req.data);
+        this.assertNotIn(b'long description\r\n', this.last_open.req.data);
+
+    }
+    function test_upload_fails(){
+        this.next_msg = "Not Found";
+        this.next_code = 404;
+        this.assertRaises(DistutilsError, this.test_upload);
+
+}
+} function test_suite(){
+    return unittest.makeSuite(uploadTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

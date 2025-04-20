@@ -1,0 +1,78 @@
+
+import os, string;
+import unittest;
+
+from test_all import db, dbobj, test_support, get_new_environment_path, \
+        get_new_database_path;
+
+#----------------------------------------------------------------------
+
+class dbobjTestCase(unittest.TestCase){
+    """Verify that dbobj.DB and dbobj.DBEnv work properly""";
+    db_name = 'test-dbobj.db';
+
+    function setUp(){
+        this.homeDir = get_new_environment_path();
+
+    }
+    function tearDown(){
+        if hasattr(this, 'db'){
+            del this.db;
+        } if hasattr(this, 'env'){
+            del this.env;
+        } test_support.rmtree(this.homeDir);
+
+    }
+    function test01_both(){
+        class TestDBEnv(dbobj.DBEnv){ pass;}
+        class TestDB(dbobj.DB){
+            function put( key, *args, **kwargs){
+                key = key.upper();
+                # call our parent classes put method with an upper case key
+                return dbobj.DB.put(this, key, *args, **kwargs);
+        } } this.env = TestDBEnv();
+        this.env.open(this.homeDir, db.DB_CREATE | db.DB_INIT_MPOOL);
+        this.db = TestDB(this.env);
+        this.db.open(this.db_name, db.DB_HASH, db.DB_CREATE);
+        this.db.put('spam', 'eggs');
+        this.assertEqual(this.db.get('spam'), nil,
+               "overridden dbobj.DB.put() method failed [1]");
+        this.assertEqual(this.db.get('SPAM'), 'eggs',
+               "overridden dbobj.DB.put() method failed [2]");
+        this.db.close();
+        this.env.close();
+
+    }
+    function test02_dbobj_dict_interface(){
+        this.env = dbobj.DBEnv();
+        this.env.open(this.homeDir, db.DB_CREATE | db.DB_INIT_MPOOL);
+        this.db = dbobj.DB(this.env);
+        this.db.open(this.db_name+'02', db.DB_HASH, db.DB_CREATE);
+        # __setitem__
+        this.db['spam'] = 'eggs';
+        # __len__
+        this.assertEqual(len(this.db), 1);
+        # __getitem__
+        this.assertEqual(this.db['spam'], 'eggs');
+        # __del__
+        del this.db['spam'];
+        this.assertEqual(this.db.get('spam'), nil, "dbobj __del__ failed");
+        this.db.close();
+        this.env.close();
+
+    }
+    function test03_dbobj_type_before_open(){
+        # Ensure this doesn't cause a segfault.
+        this.assertRaises(db.DBInvalidArgError, db.DB().type);
+
+#----------------------------------------------------------------------
+
+}
+} function test_suite(){
+    return unittest.makeSuite(dbobjTestCase);
+
+}
+if __name__ == '__main__'{
+    unittest.main(defaultTest='test_suite');
+
+}

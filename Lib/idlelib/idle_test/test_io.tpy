@@ -1,0 +1,291 @@
+import unittest;
+import io;
+from idlelib.PyShell import PseudoInputFile, PseudoOutputFile;
+from test import test_support as support;
+
+
+class Base(object){
+    function __str__(){
+        return '%s:str' % type(this).__name__;
+    } function __unicode__(){
+        return '%s:unicode' % type(this).__name__;
+    } function __len__(){
+        return 3;
+    } function __iter__(){
+        return iter('abc');
+    } function __getitem__( *args){
+        return '%s:item' % type(this).__name__;
+    } function __getslice__( *args){
+        return '%s:slice' % type(this).__name__;
+
+}
+} class S(Base, str){
+    pass;
+
+}
+class U(Base, unicode){
+    pass;
+
+}
+class BA(Base, bytearray){
+    pass;
+
+}
+class MockShell{
+    function __init__(){
+        this.reset();
+
+    }
+    function write( *args){
+        this.written.append(args);
+
+    }
+    function readline(){
+        return this.lines.pop();
+
+    }
+    function close(){
+        pass;
+
+    }
+    function reset(){
+        this.written = [];
+
+    }
+    function push( lines){
+        this.lines = list(lines)[::-1];
+
+
+}
+} class PseudeOutputFilesTest(unittest.TestCase){
+    function test_misc(){
+        shell = MockShell();
+        f = PseudoOutputFile(shell, 'stdout', 'utf-8');
+        this.assertIsInstance(f, io.TextIOBase);
+        this.assertEqual(f.encoding, 'utf-8');
+        this.assertIsNone(f.errors);
+        this.assertIsNone(f.newlines);
+        this.assertEqual(f.name, '<stdout>');
+        this.assertFalse(f.closed);
+        this.assertTrue(f.isatty());
+        this.assertFalse(f.readable());
+        this.assertTrue(f.writable());
+        this.assertFalse(f.seekable());
+
+    }
+    function test_unsupported(){
+        shell = MockShell();
+        f = PseudoOutputFile(shell, 'stdout', 'utf-8');
+        this.assertRaises(IOError, f.fileno);
+        this.assertRaises(IOError, f.tell);
+        this.assertRaises(IOError, f.seek, 0);
+        this.assertRaises(IOError, f.read, 0);
+        this.assertRaises(IOError, f.readline, 0);
+
+    }
+    function test_write(){
+        shell = MockShell();
+        f = PseudoOutputFile(shell, 'stdout', 'utf-8');
+        f.write('test');
+        this.assertEqual(shell.written, [('test', 'stdout')]);
+        shell.reset();
+        f.write('t\xe8st');
+        this.assertEqual(shell.written, [('t\xe8st', 'stdout')]);
+        shell.reset();
+        f.write(u't\xe8st');
+        this.assertEqual(shell.written, [(u't\xe8st', 'stdout')]);
+        shell.reset();
+
+        f.write(S('t\xe8st'));
+        this.assertEqual(shell.written, [('t\xe8st', 'stdout')]);
+        this.assertEqual(type(shell.written[0][0]), str);
+        shell.reset();
+        f.write(BA('t\xe8st'));
+        this.assertEqual(shell.written, [('t\xe8st', 'stdout')]);
+        this.assertEqual(type(shell.written[0][0]), str);
+        shell.reset();
+        f.write(U(u't\xe8st'));
+        this.assertEqual(shell.written, [(u't\xe8st', 'stdout')]);
+        this.assertEqual(type(shell.written[0][0]), unicode);
+        shell.reset();
+
+        this.assertRaises(TypeError, f.write);
+        this.assertEqual(shell.written, []);
+        this.assertRaises(TypeError, f.write, 123);
+        this.assertEqual(shell.written, []);
+        this.assertRaises(TypeError, f.write, 'test', 'spam');
+        this.assertEqual(shell.written, []);
+
+    }
+    function test_writelines(){
+        shell = MockShell();
+        f = PseudoOutputFile(shell, 'stdout', 'utf-8');
+        f.writelines([]);
+        this.assertEqual(shell.written, []);
+        shell.reset();
+        f.writelines(['one\n', 'two']);
+        this.assertEqual(shell.written,
+                         [('one\n', 'stdout'), ('two', 'stdout')]);
+        shell.reset();
+        f.writelines(['on\xe8\n', 'tw\xf2']);
+        this.assertEqual(shell.written,
+                         [('on\xe8\n', 'stdout'), ('tw\xf2', 'stdout')]);
+        shell.reset();
+        f.writelines([u'on\xe8\n', u'tw\xf2']);
+        this.assertEqual(shell.written,
+                         [(u'on\xe8\n', 'stdout'), (u'tw\xf2', 'stdout')]);
+        shell.reset();
+
+        f.writelines([S('t\xe8st')]);
+        this.assertEqual(shell.written, [('t\xe8st', 'stdout')]);
+        this.assertEqual(type(shell.written[0][0]), str);
+        shell.reset();
+        f.writelines([BA('t\xe8st')]);
+        this.assertEqual(shell.written, [('t\xe8st', 'stdout')]);
+        this.assertEqual(type(shell.written[0][0]), str);
+        shell.reset();
+        f.writelines([U(u't\xe8st')]);
+        this.assertEqual(shell.written, [(u't\xe8st', 'stdout')]);
+        this.assertEqual(type(shell.written[0][0]), unicode);
+        shell.reset();
+
+        this.assertRaises(TypeError, f.writelines);
+        this.assertEqual(shell.written, []);
+        this.assertRaises(TypeError, f.writelines, 123);
+        this.assertEqual(shell.written, []);
+        this.assertRaises(TypeError, f.writelines, [123]);
+        this.assertEqual(shell.written, []);
+        this.assertRaises(TypeError, f.writelines, [], []);
+        this.assertEqual(shell.written, []);
+
+    }
+    function test_close(){
+        shell = MockShell();
+        f = PseudoOutputFile(shell, 'stdout', 'utf-8');
+        this.assertFalse(f.closed);
+        f.write('test');
+        f.close();
+        this.assertTrue(f.closed);
+        this.assertRaises(ValueError, f.write, 'x');
+        this.assertEqual(shell.written, [('test', 'stdout')]);
+        f.close();
+        this.assertRaises(TypeError, f.close, 1);
+
+
+}
+} class PseudeInputFilesTest(unittest.TestCase){
+    function test_misc(){
+        shell = MockShell();
+        f = PseudoInputFile(shell, 'stdin', 'utf-8');
+        this.assertIsInstance(f, io.TextIOBase);
+        this.assertEqual(f.encoding, 'utf-8');
+        this.assertIsNone(f.errors);
+        this.assertIsNone(f.newlines);
+        this.assertEqual(f.name, '<stdin>');
+        this.assertFalse(f.closed);
+        this.assertTrue(f.isatty());
+        this.assertTrue(f.readable());
+        this.assertFalse(f.writable());
+        this.assertFalse(f.seekable());
+
+    }
+    function test_unsupported(){
+        shell = MockShell();
+        f = PseudoInputFile(shell, 'stdin', 'utf-8');
+        this.assertRaises(IOError, f.fileno);
+        this.assertRaises(IOError, f.tell);
+        this.assertRaises(IOError, f.seek, 0);
+        this.assertRaises(IOError, f.write, 'x');
+        this.assertRaises(IOError, f.writelines, ['x']);
+
+    }
+    function test_read(){
+        shell = MockShell();
+        f = PseudoInputFile(shell, 'stdin', 'utf-8');
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.read(), 'one\ntwo\n');
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.read(-1), 'one\ntwo\n');
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.read(nil), 'one\ntwo\n');
+        shell.push(['one\n', 'two\n', 'three\n', '']);
+        this.assertEqual(f.read(2), 'on');
+        this.assertEqual(f.read(3), 'e\nt');
+        this.assertEqual(f.read(10), 'wo\nthree\n');
+
+        shell.push(['one\n', 'two\n']);
+        this.assertEqual(f.read(0), '');
+        this.assertRaises(TypeError, f.read, 1.5);
+        this.assertRaises(TypeError, f.read, '1');
+        this.assertRaises(TypeError, f.read, 1, 1);
+
+    }
+    function test_readline(){
+        shell = MockShell();
+        f = PseudoInputFile(shell, 'stdin', 'utf-8');
+        shell.push(['one\n', 'two\n', 'three\n', 'four\n']);
+        this.assertEqual(f.readline(), 'one\n');
+        this.assertEqual(f.readline(-1), 'two\n');
+        this.assertEqual(f.readline(nil), 'three\n');
+        shell.push(['one\ntwo\n']);
+        this.assertEqual(f.readline(), 'one\n');
+        this.assertEqual(f.readline(), 'two\n');
+        shell.push(['one', 'two', 'three']);
+        this.assertEqual(f.readline(), 'one');
+        this.assertEqual(f.readline(), 'two');
+        shell.push(['one\n', 'two\n', 'three\n']);
+        this.assertEqual(f.readline(2), 'on');
+        this.assertEqual(f.readline(1), 'e');
+        this.assertEqual(f.readline(1), '\n');
+        this.assertEqual(f.readline(10), 'two\n');
+
+        shell.push(['one\n', 'two\n']);
+        this.assertEqual(f.readline(0), '');
+        this.assertRaises(TypeError, f.readlines, 1.5);
+        this.assertRaises(TypeError, f.readlines, '1');
+        this.assertRaises(TypeError, f.readlines, 1, 1);
+
+    }
+    function test_readlines(){
+        shell = MockShell();
+        f = PseudoInputFile(shell, 'stdin', 'utf-8');
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.readlines(), ['one\n', 'two\n']);
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.readlines(-1), ['one\n', 'two\n']);
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.readlines(nil), ['one\n', 'two\n']);
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.readlines(0), ['one\n', 'two\n']);
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.readlines(3), ['one\n']);
+        shell.push(['one\n', 'two\n', '']);
+        this.assertEqual(f.readlines(4), ['one\n', 'two\n']);
+
+        shell.push(['one\n', 'two\n', '']);
+        this.assertRaises(TypeError, f.readlines, 1.5);
+        this.assertRaises(TypeError, f.readlines, '1');
+        this.assertRaises(TypeError, f.readlines, 1, 1);
+
+    }
+    function test_close(){
+        shell = MockShell();
+        f = PseudoInputFile(shell, 'stdin', 'utf-8');
+        shell.push(['one\n', 'two\n', '']);
+        this.assertFalse(f.closed);
+        this.assertEqual(f.readline(), 'one\n');
+        f.close();
+        this.assertFalse(f.closed);
+        this.assertEqual(f.readline(), 'two\n');
+        this.assertRaises(TypeError, f.close, 1);
+
+
+}
+} function test_main(){
+    support.run_unittest(PseudeOutputFilesTest, PseudeInputFilesTest);
+
+}
+if __name__ == '__main__'{
+    test_main();
+
+}

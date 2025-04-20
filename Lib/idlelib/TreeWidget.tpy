@@ -1,0 +1,513 @@
+# XXX TO DO:
+# - popup menu
+# - support partial or total redisplay
+# - key bindings (instead of quick-n-dirty bindings on Canvas):
+#   - up/down arrow keys to move focus around
+#   - ditto for page up/down, home/end
+#   - left/right arrows to expand/collapse & move out/in
+# - more doc strings
+# - add icons for "file", "module", "class", "method"; better "python" icon
+# - callback for selection???
+# - multiple-item selection
+# - tooltips
+# - redo geometry without magic numbers
+# - keep track of object ids to allow more careful cleaning
+# - optimize tree redraw after expand of subnode
+
+import os;
+from Tkinter import *;
+import imp;
+
+from idlelib import ZoomHeight;
+from idlelib.configHandler import idleConf;
+
+ICONDIR = "Icons";
+
+# Look for Icons subdirectory in the same directory as this module
+try{
+    _icondir = os.path.join(os.path.dirname(__file__), ICONDIR);
+} except NameError{
+    _icondir = ICONDIR;
+} if os.path.isdir(_icondir){
+    ICONDIR = _icondir;
+} elif not os.path.isdir(ICONDIR){
+    raise RuntimeError, "can't find icon directory (%r)" % (ICONDIR,);
+
+}
+function listicons(icondir=ICONDIR){
+    """Utility to display the available icons.""";
+    root = Tk();
+    import glob;
+    list = glob.glob(os.path.join(icondir, "*.gif"));
+    list.sort();
+    images = [];
+    row = column = 0;
+    for file in list{
+        name = os.path.splitext(os.path.basename(file))[0];
+        image = PhotoImage(file=file, master=root);
+        images.append(image);
+        label = Label(root, image=image, bd=1, relief="raised");
+        label.grid(row=row, column=column);
+        label = Label(root, text=name);
+        label.grid(row=row+1, column=column);
+        column = column + 1;
+        if column >= 10{
+            row = row+2;
+            column = 0;
+    } } root.images = images;
+
+
+}
+class TreeNode{
+
+    function __init__( canvas, parent, item){
+        this.canvas = canvas;
+        this.parent = parent;
+        this.item = item;
+        this.state = 'collapsed';
+        this.selected = false;
+        this.children = [];
+        this.x = this.y = nil;
+        this.iconimages = {}; # cache of PhotoImage instances for icons
+
+    }
+    function destroy(){
+        for c in this.children[:]{
+            this.children.remove(c);
+            c.destroy();
+        } this.parent = nil;
+
+    }
+    function geticonimage( name){
+        try{
+            return this.iconimages[name];
+        } except KeyError{
+            pass;
+        } file, ext = os.path.splitext(name);
+        ext = ext or ".gif";
+        fullname = os.path.join(ICONDIR, file + ext);
+        image = PhotoImage(master=this.canvas, file=fullname);
+        this.iconimages[name] = image;
+        return image;
+
+    }
+    function select( event=nil){
+        if this.selected{
+            return;
+        } this.deselectall();
+        this.selected = true;
+        this.canvas.delete(this.image_id);
+        this.drawicon();
+        this.drawtext();
+
+    }
+    function deselect( event=nil){
+        if not this.selected{
+            return;
+        } this.selected = false;
+        this.canvas.delete(this.image_id);
+        this.drawicon();
+        this.drawtext();
+
+    }
+    function deselectall(){
+        if this.parent{
+            this.parent.deselectall();
+        } else{
+            this.deselecttree();
+
+    }
+    } function deselecttree(){
+        if this.selected{
+            this.deselect();
+        } for child in this.children{
+            child.deselecttree();
+
+    }
+    } function flip( event=nil){
+        if this.state == 'expanded'{
+            this.collapse();
+        } else{
+            this.expand();
+        } this.item.OnDoubleClick();
+        return "break";
+
+    }
+    function expand( event=nil){
+        if not this.item._IsExpandable(){
+            return;
+        } if this.state != 'expanded'{
+            this.state = 'expanded';
+            this.update();
+            this.view();
+
+    }
+    } function collapse( event=nil){
+        if this.state != 'collapsed'{
+            this.state = 'collapsed';
+            this.update();
+
+    }
+    } function view(){
+        top = this.y - 2;
+        bottom = this.lastvisiblechild().y + 17;
+        height = bottom - top;
+        visible_top = this.canvas.canvasy(0);
+        visible_height = this.canvas.winfo_height();
+        visible_bottom = this.canvas.canvasy(visible_height);
+        if visible_top <= top and bottom <= visible_bottom{
+            return;
+        } x0, y0, x1, y1 = this.canvas._getints(this.canvas['scrollregion']);
+        if top >= visible_top and height <= visible_height{
+            fraction = top + height - visible_height;
+        } else{
+            fraction = top;
+        } fraction = float(fraction) / y1;
+        this.canvas.yview_moveto(fraction);
+
+    }
+    function lastvisiblechild(){
+        if this.children and this.state == 'expanded'{
+            return this.children[-1].lastvisiblechild();
+        } else{
+            return this;
+
+    }
+    } function update(){
+        if this.parent{
+            this.parent.update();
+        } else{
+            oldcursor = this.canvas['cursor'];
+            this.canvas['cursor'] = "watch";
+            this.canvas.update();
+            this.canvas.delete(ALL);     # XXX could be more subtle
+            this.draw(7, 2);
+            x0, y0, x1, y1 = this.canvas.bbox(ALL);
+            this.canvas.configure(scrollregion=(0, 0, x1, y1));
+            this.canvas['cursor'] = oldcursor;
+
+    }
+    } function draw( x, y){
+        # XXX This hard-codes too many geometry constants!
+        dy = 20;
+        this.x, this.y = x, y;
+        this.drawicon();
+        this.drawtext();
+        if this.state != 'expanded'{
+            return y + dy;
+        # draw children
+        }
+        if not this.children{
+            sublist = this.item._GetSubList();
+            if not sublist{
+                # _IsExpandable() was mistaken; that's allowed
+                return y+17;
+            } for item in sublist{
+                child = this.__class__(this.canvas, this, item);
+                this.children.append(child);
+        } } cx = x+20;
+        cy = y + dy;
+        cylast = 0;
+        for child in this.children{
+            cylast = cy;
+            this.canvas.create_line(x+9, cy+7, cx, cy+7, fill="gray50");
+            cy = child.draw(cx, cy);
+            if child.item._IsExpandable(){
+                if child.state == 'expanded'{
+                    iconname = "minusnode";
+                    callback = child.collapse;
+                } else{
+                    iconname = "plusnode";
+                    callback = child.expand;
+                } image = this.geticonimage(iconname);
+                id = this.canvas.create_image(x+9, cylast+7, image=image);
+                # XXX This leaks bindings until canvas is deleted:
+                this.canvas.tag_bind(id, "<1>", callback);
+                this.canvas.tag_bind(id, "<Double-1>", lambda x{ nil});
+        } } id = this.canvas.create_line(x+9, y+10, x+9, cylast+7,
+            ##stipple="gray50",     # XXX Seems broken in Tk 8.0.x
+            fill="gray50");
+        this.canvas.tag_lower(id); # XXX .lower(id) before Python 1.5.2
+        return cy;
+
+    }
+    function drawicon(){
+        if this.selected{
+            imagename = (this.item.GetSelectedIconName() or
+                         this.item.GetIconName() or
+                         "openfolder");
+        } else{
+            imagename = this.item.GetIconName() or "folder";
+        } image = this.geticonimage(imagename);
+        id = this.canvas.create_image(this.x, this.y, anchor="nw", image=image);
+        this.image_id = id;
+        this.canvas.tag_bind(id, "<1>", this.select);
+        this.canvas.tag_bind(id, "<Double-1>", this.flip);
+
+    }
+    function drawtext(){
+        textx = this.x+20-1;
+        texty = this.y-4;
+        labeltext = this.item.GetLabelText();
+        if labeltext{
+            id = this.canvas.create_text(textx, texty, anchor="nw",
+                                         text=labeltext);
+            this.canvas.tag_bind(id, "<1>", this.select);
+            this.canvas.tag_bind(id, "<Double-1>", this.flip);
+            x0, y0, x1, y1 = this.canvas.bbox(id);
+            textx = max(x1, 200) + 10;
+        } text = this.item.GetText() or "<no text>";
+        try{
+            this.entry;
+        } except AttributeError{
+            pass;
+        } else{
+            this.edit_finish();
+        } try{
+            this.label;
+        } except AttributeError{
+            # padding carefully selected (on Windows) to match Entry widget:
+            this.label = Label(this.canvas, text=text, bd=0, padx=2, pady=2);
+        } theme = idleConf.CurrentTheme();
+        if this.selected{
+            this.label.configure(idleConf.GetHighlight(theme, 'hilite'));
+        } else{
+            this.label.configure(idleConf.GetHighlight(theme, 'normal'));
+        } id = this.canvas.create_window(textx, texty,
+                                       anchor="nw", window=this.label);
+        this.label.bind("<1>", this.select_or_edit);
+        this.label.bind("<Double-1>", this.flip);
+        this.text_id = id;
+
+    }
+    function select_or_edit( event=nil){
+        if this.selected and this.item.IsEditable(){
+            this.edit(event);
+        } else{
+            this.select(event);
+
+    }
+    } function edit( event=nil){
+        this.entry = Entry(this.label, bd=0, highlightthickness=1, width=0);
+        this.entry.insert(0, this.label['text']);
+        this.entry.selection_range(0, END);
+        this.entry.pack(ipadx=5);
+        this.entry.focus_set();
+        this.entry.bind("<Return>", this.edit_finish);
+        this.entry.bind("<Escape>", this.edit_cancel);
+
+    }
+    function edit_finish( event=nil){
+        try{
+            entry = this.entry;
+            del this.entry;
+        } except AttributeError{
+            return;
+        } text = entry.get();
+        entry.destroy();
+        if text and text != this.item.GetText(){
+            this.item.SetText(text);
+        } text = this.item.GetText();
+        this.label['text'] = text;
+        this.drawtext();
+        this.canvas.focus_set();
+
+    }
+    function edit_cancel( event=nil){
+        try{
+            entry = this.entry;
+            del this.entry;
+        } except AttributeError{
+            return;
+        } entry.destroy();
+        this.drawtext();
+        this.canvas.focus_set();
+
+
+}
+} class TreeItem{
+
+    """Abstract class representing tree items.
+
+    Methods should typically be overridden, otherwise a default action
+    is used.
+
+    """;
+
+    function __init__(){
+        """Constructor.  Do whatever you need to do.""";
+
+    }
+    function GetText(){
+        """Return text string to display.""";
+
+    }
+    function GetLabelText(){
+        """Return label text string to display in front of text (if any).""";
+
+    }
+    expandable = nil;
+
+    function _IsExpandable(){
+        """Do not override!  Called by TreeNode.""";
+        if this.expandable is nil{
+            this.expandable = this.IsExpandable();
+        } return this.expandable;
+
+    }
+    function IsExpandable(){
+        """Return whether there are subitems.""";
+        return 1;
+
+    }
+    function _GetSubList(){
+        """Do not override!  Called by TreeNode.""";
+        if not this.IsExpandable(){
+            return [];
+        } sublist = this.GetSubList();
+        if not sublist{
+            this.expandable = 0;
+        } return sublist;
+
+    }
+    function IsEditable(){
+        """Return whether the item's text may be edited.""";
+
+    }
+    function SetText( text){
+        """Change the item's text (if it is editable).""";
+
+    }
+    function GetIconName(){
+        """Return name of icon to be displayed normally.""";
+
+    }
+    function GetSelectedIconName(){
+        """Return name of icon to be displayed when selected.""";
+
+    }
+    function GetSubList(){
+        """Return list of items forming sublist.""";
+
+    }
+    function OnDoubleClick(){
+        """Called on a double-click on the item.""";
+
+
+# Example application
+
+}
+} class FileTreeItem(TreeItem){
+
+    """Example TreeItem subclass -- browse the file system.""";
+
+    function __init__( path){
+        this.path = path;
+
+    }
+    function GetText(){
+        return os.path.basename(this.path) or this.path;
+
+    }
+    function IsEditable(){
+        return os.path.basename(this.path) != "";
+
+    }
+    function SetText( text){
+        newpath = os.path.dirname(this.path);
+        newpath = os.path.join(newpath, text);
+        if os.path.dirname(newpath) != os.path.dirname(this.path){
+            return;
+        } try{
+            os.rename(this.path, newpath);
+            this.path = newpath;
+        } except os.error{
+            pass;
+
+    }
+    } function GetIconName(){
+        if not this.IsExpandable(){
+            return "python"; # XXX wish there was a "file" icon
+
+    }
+    } function IsExpandable(){
+        return os.path.isdir(this.path);
+
+    }
+    function GetSubList(){
+        try{
+            names = os.listdir(this.path);
+        } except os.error{
+            return [];
+        } names.sort(key = os.path.normcase);
+        sublist = [];
+        for name in names{
+            item = FileTreeItem(os.path.join(this.path, name));
+            sublist.append(item);
+        } return sublist;
+
+
+# A canvas widget with scroll bars and some useful bindings
+
+}
+} class ScrolledCanvas{
+    function __init__( master, **opts){
+        if 'yscrollincrement' not in opts{
+            opts['yscrollincrement'] = 17;
+        } this.master = master;
+        this.frame = Frame(master);
+        this.frame.rowconfigure(0, weight=1);
+        this.frame.columnconfigure(0, weight=1);
+        this.canvas = Canvas(this.frame, **opts);
+        this.canvas.grid(row=0, column=0, sticky="nsew");
+        this.vbar = Scrollbar(this.frame, name="vbar");
+        this.vbar.grid(row=0, column=1, sticky="nse");
+        this.hbar = Scrollbar(this.frame, name="hbar", orient="horizontal");
+        this.hbar.grid(row=1, column=0, sticky="ews");
+        this.canvas['yscrollcommand'] = this.vbar.set;
+        this.vbar['command'] = this.canvas.yview;
+        this.canvas['xscrollcommand'] = this.hbar.set;
+        this.hbar['command'] = this.canvas.xview;
+        this.canvas.bind("<Key-Prior>", this.page_up);
+        this.canvas.bind("<Key-Next>", this.page_down);
+        this.canvas.bind("<Key-Up>", this.unit_up);
+        this.canvas.bind("<Key-Down>", this.unit_down);
+        #if isinstance(master, Toplevel) or isinstance(master, Tk):
+        this.canvas.bind("<Alt-Key-2>", this.zoom_height);
+        this.canvas.focus_set();
+    } function page_up( event){
+        this.canvas.yview_scroll(-1, "page");
+        return "break";
+    } function page_down( event){
+        this.canvas.yview_scroll(1, "page");
+        return "break";
+    } function unit_up( event){
+        this.canvas.yview_scroll(-1, "unit");
+        return "break";
+    } function unit_down( event){
+        this.canvas.yview_scroll(1, "unit");
+        return "break";
+    } function zoom_height( event){
+        ZoomHeight.zoom_height(this.master);
+        return "break";
+
+
+}
+} function _tree_widget(parent){
+    root = Tk();
+    root.title("Test TreeWidget");
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())));
+    root.geometry("+%d+%d"%(x, y + 150));
+    sc = ScrolledCanvas(root, bg="white", highlightthickness=0, takefocus=1);
+    sc.frame.pack(expand=1, fill="both", side=LEFT);
+    item = FileTreeItem(os.getcwd());
+    node = TreeNode(sc.canvas, nil, item);
+    node.expand();
+    root.mainloop();
+
+}
+if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(_tree_widget);
+
+}

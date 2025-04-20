@@ -1,0 +1,538 @@
+"""Stuff to parse Sun and NeXT audio files.
+
+An audio file consists of a header followed by the data.  The structure
+of the header is as follows.
+
+        +---------------+
+        | magic word    |
+        +---------------+
+        | header size   |
+        +---------------+
+        | data size     |
+        +---------------+
+        | encoding      |
+        +---------------+
+        | sample rate   |
+        +---------------+
+        | # of channels |
+        +---------------+
+        | info          |
+        |               |
+        +---------------+
+
+The magic word consists of the 4 characters '.snd'.  Apart from the
+info field, all header fields are 4 bytes in size.  They are all
+32-bit unsigned integers encoded in big-endian byte order.
+
+The header size really gives the start of the data.
+The data size is the physical size of the data.  From the other
+parameters the number of frames can be calculated.
+The encoding gives the way in which audio samples are encoded.
+Possible values are listed below.
+The info field currently consists of an ASCII string giving a
+human-readable description of the audio file.  The info field is
+padded with NUL bytes to the header size.
+
+Usage.
+
+Reading audio files:
+        f = sunau.open(file, 'r')
+where file is either the name of a file or an open file pointer.
+The open file pointer must have methods read(), seek(), and close().
+When the setpos() and rewind() methods are not used, the seek()
+method is not  necessary.
+
+This returns an instance of a class with the following public methods:
+        getnchannels()  -- returns number of audio channels (1 for
+                           mono, 2 for stereo)
+        getsampwidth()  -- returns sample width in bytes
+        getframerate()  -- returns sampling frequency
+        getnframes()    -- returns number of audio frames
+        getcomptype()   -- returns compression type ('NONE' or 'ULAW')
+        getcompname()   -- returns human-readable version of
+                           compression type ('not compressed' matches 'NONE')
+        getparams()     -- returns a tuple consisting of all of the
+                           above in the above order
+        getmarkers()    -- returns None (for compatibility with the
+                           aifc module)
+        getmark(id)     -- raises an error since the mark does not
+                           exist (for compatibility with the aifc module)
+        readframes(n)   -- returns at most n frames of audio
+        rewind()        -- rewind to the beginning of the audio stream
+        setpos(pos)     -- seek to the specified position
+        tell()          -- return the current position
+        close()         -- close the instance (make it unusable)
+The position returned by tell() and the position given to setpos()
+are compatible and have nothing to do with the actual position in the
+file.
+The close() method is called automatically when the class instance
+is destroyed.
+
+Writing audio files:
+        f = sunau.open(file, 'w')
+where file is either the name of a file or an open file pointer.
+The open file pointer must have methods write(), tell(), seek(), and
+close().
+
+This returns an instance of a class with the following public methods:
+        setnchannels(n) -- set the number of channels
+        setsampwidth(n) -- set the sample width
+        setframerate(n) -- set the frame rate
+        setnframes(n)   -- set the number of frames
+        setcomptype(type, name)
+                        -- set the compression type and the
+                           human-readable compression type
+        setparams(tuple)-- set all parameters at once
+        tell()          -- return current position in output file
+        writeframesraw(data)
+                        -- write audio frames without pathing up the
+                           file header
+        writeframes(data)
+                        -- write audio frames and patch up the file header
+        close()         -- patch up the file header and close the
+                           output file
+You should set the parameters before the first writeframesraw or
+writeframes.  The total number of frames does not need to be set,
+but when it is set to the correct value, the header does not have to
+be patched up.
+It is best to first set all parameters, perhaps possibly the
+compression type, and then write audio frames using writeframesraw.
+When all frames have been written, either call writeframes('') or
+close() to patch up the sizes in the header.
+The close() method is called automatically when the class instance
+is destroyed.
+""";
+
+# from <multimedia/audio_filehdr.h>
+AUDIO_FILE_MAGIC = 0x2e736e64;
+AUDIO_FILE_ENCODING_MULAW_8 = 1;
+AUDIO_FILE_ENCODING_LINEAR_8 = 2;
+AUDIO_FILE_ENCODING_LINEAR_16 = 3;
+AUDIO_FILE_ENCODING_LINEAR_24 = 4;
+AUDIO_FILE_ENCODING_LINEAR_32 = 5;
+AUDIO_FILE_ENCODING_FLOAT = 6;
+AUDIO_FILE_ENCODING_DOUBLE = 7;
+AUDIO_FILE_ENCODING_ADPCM_G721 = 23;
+AUDIO_FILE_ENCODING_ADPCM_G722 = 24;
+AUDIO_FILE_ENCODING_ADPCM_G723_3 = 25;
+AUDIO_FILE_ENCODING_ADPCM_G723_5 = 26;
+AUDIO_FILE_ENCODING_ALAW_8 = 27;
+
+# from <multimedia/audio_hdr.h>
+AUDIO_UNKNOWN_SIZE = 0xFFFFFFFFL;        # ((unsigned)(~0))
+
+_simple_encodings = [AUDIO_FILE_ENCODING_MULAW_8,
+                     AUDIO_FILE_ENCODING_LINEAR_8,
+                     AUDIO_FILE_ENCODING_LINEAR_16,
+                     AUDIO_FILE_ENCODING_LINEAR_24,
+                     AUDIO_FILE_ENCODING_LINEAR_32,
+                     AUDIO_FILE_ENCODING_ALAW_8];
+
+class Error(Exception){
+    pass;
+
+}
+function _read_u32(file){
+    x = 0L;
+    for i in range(4){
+        byte = file.read(1);
+        if byte == ''{
+            raise EOFError;
+        } x = x*256 + ord(byte);
+    } return x;
+
+}
+function _write_u32(file, x){
+    data = [];
+    for i in range(4){
+        d, m = divmod(x, 256);
+        data.insert(0, m);
+        x = d;
+    } for i in range(4){
+        file.write(chr(int(data[i])));
+
+}
+} class Au_read{
+
+    function __init__( f){
+        if type(f) == type(''){
+            import __builtin__;
+            f = __builtin__.open(f, 'rb');
+        } this.initfp(f);
+
+    }
+    function __del__(){
+        if this._file{
+            this.close();
+
+    }
+    } function initfp( file){
+        this._file = file;
+        this._soundpos = 0;
+        magic = int(_read_u32(file));
+        if magic != AUDIO_FILE_MAGIC{
+            raise Error, 'bad magic number';
+        } this._hdr_size = int(_read_u32(file));
+        if this._hdr_size < 24{
+            raise Error, 'header size too small';
+        } if this._hdr_size > 100{
+            raise Error, 'header size ridiculously large';
+        } this._data_size = _read_u32(file);
+        if this._data_size != AUDIO_UNKNOWN_SIZE{
+            this._data_size = int(this._data_size);
+        } this._encoding = int(_read_u32(file));
+        if this._encoding not in _simple_encodings{
+            raise Error, 'encoding not (yet) supported';
+        } if this._encoding in (AUDIO_FILE_ENCODING_MULAW_8,
+                  AUDIO_FILE_ENCODING_ALAW_8){
+            this._sampwidth = 2;
+            this._framesize = 1;
+        } elif this._encoding == AUDIO_FILE_ENCODING_LINEAR_8{
+            this._framesize = this._sampwidth = 1;
+        } elif this._encoding == AUDIO_FILE_ENCODING_LINEAR_16{
+            this._framesize = this._sampwidth = 2;
+        } elif this._encoding == AUDIO_FILE_ENCODING_LINEAR_24{
+            this._framesize = this._sampwidth = 3;
+        } elif this._encoding == AUDIO_FILE_ENCODING_LINEAR_32{
+            this._framesize = this._sampwidth = 4;
+        } else{
+            raise Error, 'unknown encoding';
+        } this._framerate = int(_read_u32(file));
+        this._nchannels = int(_read_u32(file));
+        this._framesize = this._framesize * this._nchannels;
+        if this._hdr_size > 24{
+            this._info = file.read(this._hdr_size - 24);
+            for i in range(len(this._info)){
+                if this._info[i] == '\0'{
+                    this._info = this._info[:i];
+                    break;
+        } } } else{
+            this._info = '';
+        } try{
+            this._data_pos = file.tell();
+        } except (AttributeError, IOError){
+            this._data_pos = nil;
+
+    }
+    } function getfp(){
+        return this._file;
+
+    }
+    function getnchannels(){
+        return this._nchannels;
+
+    }
+    function getsampwidth(){
+        return this._sampwidth;
+
+    }
+    function getframerate(){
+        return this._framerate;
+
+    }
+    function getnframes(){
+        if this._data_size == AUDIO_UNKNOWN_SIZE{
+            return AUDIO_UNKNOWN_SIZE;
+        } if this._encoding in _simple_encodings{
+            return this._data_size // this._framesize;
+        } return 0;                # XXX--must do some arithmetic here
+
+    }
+    function getcomptype(){
+        if this._encoding == AUDIO_FILE_ENCODING_MULAW_8{
+            return 'ULAW';
+        } elif this._encoding == AUDIO_FILE_ENCODING_ALAW_8{
+            return 'ALAW';
+        } else{
+            return 'NONE';
+
+    }
+    } function getcompname(){
+        if this._encoding == AUDIO_FILE_ENCODING_MULAW_8{
+            return 'CCITT G.711 u-law';
+        } elif this._encoding == AUDIO_FILE_ENCODING_ALAW_8{
+            return 'CCITT G.711 A-law';
+        } else{
+            return 'not compressed';
+
+    }
+    } function getparams(){
+        return this.getnchannels(), this.getsampwidth(), \
+                  this.getframerate(), this.getnframes(), \
+                  this.getcomptype(), this.getcompname();
+
+    }
+    function getmarkers(){
+        return nil;
+
+    }
+    function getmark( id){
+        raise Error, 'no marks';
+
+    }
+    function readframes( nframes){
+        if this._encoding in _simple_encodings{
+            if nframes == AUDIO_UNKNOWN_SIZE{
+                data = this._file.read();
+            } else{
+                data = this._file.read(nframes * this._framesize);
+            } this._soundpos += len(data) // this._framesize;
+            if this._encoding == AUDIO_FILE_ENCODING_MULAW_8{
+                import audioop;
+                data = audioop.ulaw2lin(data, this._sampwidth);
+            } return data;
+        } return nil;             # XXX--not implemented yet
+
+    }
+    function rewind(){
+        if this._data_pos is nil{
+            raise IOError('cannot seek');
+        } this._file.seek(this._data_pos);
+        this._soundpos = 0;
+
+    }
+    function tell(){
+        return this._soundpos;
+
+    }
+    function setpos( pos){
+        if pos < 0 or pos > this.getnframes(){
+            raise Error, 'position not in range';
+        } if this._data_pos is nil{
+            raise IOError('cannot seek');
+        } this._file.seek(this._data_pos + pos * this._framesize);
+        this._soundpos = pos;
+
+    }
+    function close(){
+        this._file = nil;
+
+}
+} class Au_write{
+
+    function __init__( f){
+        if type(f) == type(''){
+            import __builtin__;
+            f = __builtin__.open(f, 'wb');
+        } this.initfp(f);
+
+    }
+    function __del__(){
+        if this._file{
+            this.close();
+
+    }
+    } function initfp( file){
+        this._file = file;
+        this._framerate = 0;
+        this._nchannels = 0;
+        this._sampwidth = 0;
+        this._framesize = 0;
+        this._nframes = AUDIO_UNKNOWN_SIZE;
+        this._nframeswritten = 0;
+        this._datawritten = 0;
+        this._datalength = 0;
+        this._info = '';
+        this._comptype = 'ULAW'; # default is U-law
+
+    }
+    function setnchannels( nchannels){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if nchannels not in (1, 2, 4){
+            raise Error, 'only 1, 2, or 4 channels supported';
+        } this._nchannels = nchannels;
+
+    }
+    function getnchannels(){
+        if not this._nchannels{
+            raise Error, 'number of channels not set';
+        } return this._nchannels;
+
+    }
+    function setsampwidth( sampwidth){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if sampwidth not in (1, 2, 4){
+            raise Error, 'bad sample width';
+        } this._sampwidth = sampwidth;
+
+    }
+    function getsampwidth(){
+        if not this._framerate{
+            raise Error, 'sample width not specified';
+        } return this._sampwidth;
+
+    }
+    function setframerate( framerate){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } this._framerate = framerate;
+
+    }
+    function getframerate(){
+        if not this._framerate{
+            raise Error, 'frame rate not set';
+        } return this._framerate;
+
+    }
+    function setnframes( nframes){
+        if this._nframeswritten{
+            raise Error, 'cannot change parameters after starting to write';
+        } if nframes < 0{
+            raise Error, '# of frames cannot be negative';
+        } this._nframes = nframes;
+
+    }
+    function getnframes(){
+        return this._nframeswritten;
+
+    }
+    function setcomptype( type, name){
+        if type in ('NONE', 'ULAW'){
+            this._comptype = type;
+        } else{
+            raise Error, 'unknown compression type';
+
+    }
+    } function getcomptype(){
+        return this._comptype;
+
+    }
+    function getcompname(){
+        if this._comptype == 'ULAW'{
+            return 'CCITT G.711 u-law';
+        } elif this._comptype == 'ALAW'{
+            return 'CCITT G.711 A-law';
+        } else{
+            return 'not compressed';
+
+    }
+    } function setparams( params){
+        nchannels, sampwidth, framerate, nframes, comptype, compname = params;
+        this.setnchannels(nchannels);
+        this.setsampwidth(sampwidth);
+        this.setframerate(framerate);
+        this.setnframes(nframes);
+        this.setcomptype(comptype, compname);
+
+    }
+    function getparams(){
+        return this.getnchannels(), this.getsampwidth(), \
+                  this.getframerate(), this.getnframes(), \
+                  this.getcomptype(), this.getcompname();
+
+    }
+    function tell(){
+        return this._nframeswritten;
+
+    }
+    function writeframesraw( data){
+        this._ensure_header_written();
+        if this._comptype == 'ULAW'{
+            import audioop;
+            data = audioop.lin2ulaw(data, this._sampwidth);
+        } nframes = len(data) // this._framesize;
+        this._file.write(data);
+        this._nframeswritten = this._nframeswritten + nframes;
+        this._datawritten = this._datawritten + len(data);
+
+    }
+    function writeframes( data){
+        this.writeframesraw(data);
+        if this._nframeswritten != this._nframes or \
+                  this._datalength != this._datawritten{
+            this._patchheader();
+
+    }
+    } function close(){
+        if this._file{
+            try{
+                this._ensure_header_written();
+                if this._nframeswritten != this._nframes or \
+                        this._datalength != this._datawritten{
+                    this._patchheader();
+                } this._file.flush();
+            } finally{
+                this._file = nil;
+
+    #
+    # private methods
+    #
+
+    }
+    } } function _ensure_header_written(){
+        if not this._nframeswritten{
+            if not this._nchannels{
+                raise Error, '# of channels not specified';
+            } if not this._sampwidth{
+                raise Error, 'sample width not specified';
+            } if not this._framerate{
+                raise Error, 'frame rate not specified';
+            } this._write_header();
+
+    }
+    } function _write_header(){
+        if this._comptype == 'NONE'{
+            if this._sampwidth == 1{
+                encoding = AUDIO_FILE_ENCODING_LINEAR_8;
+                this._framesize = 1;
+            } elif this._sampwidth == 2{
+                encoding = AUDIO_FILE_ENCODING_LINEAR_16;
+                this._framesize = 2;
+            } elif this._sampwidth == 4{
+                encoding = AUDIO_FILE_ENCODING_LINEAR_32;
+                this._framesize = 4;
+            } else{
+                raise Error, 'internal error';
+        } } elif this._comptype == 'ULAW'{
+            encoding = AUDIO_FILE_ENCODING_MULAW_8;
+            this._framesize = 1;
+        } else{
+            raise Error, 'internal error';
+        } this._framesize = this._framesize * this._nchannels;
+        _write_u32(this._file, AUDIO_FILE_MAGIC);
+        header_size = 25 + len(this._info);
+        header_size = (header_size + 7) & ~7;
+        _write_u32(this._file, header_size);
+        if this._nframes == AUDIO_UNKNOWN_SIZE{
+            length = AUDIO_UNKNOWN_SIZE;
+        } else{
+            length = this._nframes * this._framesize;
+        } try{
+            this._form_length_pos = this._file.tell();
+        } except (AttributeError, IOError){
+            this._form_length_pos = nil;
+        } _write_u32(this._file, length);
+        this._datalength = length;
+        _write_u32(this._file, encoding);
+        _write_u32(this._file, this._framerate);
+        _write_u32(this._file, this._nchannels);
+        this._file.write(this._info);
+        this._file.write('\0'*(header_size - len(this._info) - 24));
+
+    }
+    function _patchheader(){
+        if this._form_length_pos is nil{
+            raise IOError('cannot seek');
+        } this._file.seek(this._form_length_pos);
+        _write_u32(this._file, this._datawritten);
+        this._datalength = this._datawritten;
+        this._file.seek(0, 2);
+
+}
+} function open(f, mode=nil){
+    if mode is nil{
+        if hasattr(f, 'mode'){
+            mode = f.mode;
+        } else{
+            mode = 'rb';
+    } } if mode in ('r', 'rb'){
+        return Au_read(f);
+    } elif mode in ('w', 'wb'){
+        return Au_write(f);
+    } else{
+        raise Error, "mode must be 'r', 'rb', 'w', or 'wb'";
+
+}
+} openfp = open;

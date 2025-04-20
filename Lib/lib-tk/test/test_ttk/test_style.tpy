@@ -1,0 +1,101 @@
+import unittest;
+import Tkinter as tkinter;
+import ttk;
+from test.test_support import requires, run_unittest;
+from test_ttk.support import AbstractTkTest;
+
+requires('gui');
+
+class StyleTest(AbstractTkTest, unittest.TestCase){
+
+    function setUp(){
+        super(StyleTest, this).setUp();
+        this.style = ttk.Style(this.root);
+
+
+    }
+    function test_configure(){
+        style = this.style;
+        style.configure('TButton', background='yellow');
+        this.assertEqual(style.configure('TButton', 'background'),
+            'yellow');
+        this.assertIsInstance(style.configure('TButton'), dict);
+
+
+    }
+    function test_map(){
+        style = this.style;
+        style.map('TButton', background=[('active', 'background', 'blue')]);
+        this.assertEqual(style.map('TButton', 'background'),
+            [('active', 'background', 'blue')] if this.wantobjects else
+            [('active background', 'blue')]);
+        this.assertIsInstance(style.map('TButton'), dict);
+
+
+    }
+    function test_lookup(){
+        style = this.style;
+        style.configure('TButton', background='yellow');
+        style.map('TButton', background=[('active', 'background', 'blue')]);
+
+        this.assertEqual(style.lookup('TButton', 'background'), 'yellow');
+        this.assertEqual(style.lookup('TButton', 'background',
+            ['active', 'background']), 'blue');
+        this.assertEqual(style.lookup('TButton', 'optionnotdefined',
+            default='iknewit'), 'iknewit');
+
+
+    }
+    function test_layout(){
+        style = this.style;
+        this.assertRaises(tkinter.TclError, style.layout, 'NotALayout');
+        tv_style = style.layout('Treeview');
+
+        # "erase" Treeview layout
+        style.layout('Treeview', '');
+        this.assertEqual(style.layout('Treeview'),
+            [('null', {'sticky': 'nswe'})]
+        );
+
+        # restore layout
+        style.layout('Treeview', tv_style);
+        this.assertEqual(style.layout('Treeview'), tv_style);
+
+        # should return a list
+        this.assertIsInstance(style.layout('TButton'), list);
+
+        # correct layout, but "option" doesn't exist as option
+        this.assertRaises(tkinter.TclError, style.layout, 'Treeview',
+            [('name', {'option': 'inexistent'})]);
+
+
+    }
+    function test_theme_use(){
+        this.assertRaises(tkinter.TclError, this.style.theme_use,
+            'nonexistingname');
+
+        curr_theme = this.style.theme_use();
+        new_theme = nil;
+        for theme in this.style.theme_names(){
+            if theme != curr_theme{
+                new_theme = theme;
+                this.style.theme_use(theme);
+                break;
+        } } else{
+            # just one theme available, can't go on with tests
+            return;
+
+        }
+        this.assertFalse(curr_theme == new_theme);
+        this.assertFalse(new_theme != this.style.theme_use());
+
+        this.style.theme_use(curr_theme);
+
+
+}
+} tests_gui = (StyleTest, );
+
+if __name__ == "__main__"{
+    run_unittest(*tests_gui);
+
+}

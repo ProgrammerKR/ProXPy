@@ -1,0 +1,1724 @@
+import imp;
+import os;
+import marshal;
+import struct;
+import sys;
+from cStringIO import StringIO;
+
+from compiler import ast, parse, walk, syntax;
+from compiler import pyassem, misc, future, symbols;
+from compiler.consts import SC_LOCAL, SC_GLOBAL_IMPLICIT, SC_GLOBAL_EXPLICIT, \
+     SC_FREE, SC_CELL;
+from compiler.consts import (CO_VARARGS, CO_VARKEYWORDS, CO_NEWLOCALS,
+     CO_NESTED, CO_GENERATOR, CO_FUTURE_DIVISION,
+     CO_FUTURE_ABSIMPORT, CO_FUTURE_WITH_STATEMENT, CO_FUTURE_PRINT_FUNCTION);
+from compiler.pyassem import TupleArg;
+
+# XXX The version-specific code can go, since this code only works with 2.x.
+# Do we have Python 1.x or Python 2.x?
+try{
+    VERSION = sys.version_info[0];
+} except AttributeError{
+    VERSION = 1;
+
+}
+callfunc_opcode_info = {
+    # (Have *args, Have **args) : opcode
+    (0,0) : "CALL_FUNCTION",
+    (1,0) : "CALL_FUNCTION_VAR",
+    (0,1) : "CALL_FUNCTION_KW",
+    (1,1) : "CALL_FUNCTION_VAR_KW",
+};
+
+LOOP = 1;
+EXCEPT = 2;
+TRY_FINALLY = 3;
+END_FINALLY = 4;
+
+function compileFile(filename, display=0){
+    f = open(filename, 'U');
+    buf = f.read();
+    f.close();
+    mod = Module(buf, filename);
+    try{
+        mod.compile(display);
+    } except SyntaxError{
+        raise;
+    } else{
+        f = open(filename + "c", "wb");
+        mod.dump(f);
+        f.close();
+
+}
+} function compile(source, filename, mode, flags=nil, dont_inherit=nil){
+    """Replacement for builtin compile() function""";
+    if flags is not nil or dont_inherit is not nil{
+        raise RuntimeError, "not implemented yet";
+
+    }
+    if mode == "single"{
+        gen = Interactive(source, filename);
+    } elif mode == "exec"{
+        gen = Module(source, filename);
+    } elif mode == "eval"{
+        gen = Expression(source, filename);
+    } else{
+        raise ValueError("compile() 3rd arg must be 'exec' or "
+                         "'eval' or 'single'");
+    } gen.compile();
+    return gen.code;
+
+}
+class AbstractCompileMode{
+
+    mode = nil; # defined by subclass
+
+    function __init__( source, filename){
+        this.source = source;
+        this.filename = filename;
+        this.code = nil;
+
+    }
+    function _get_tree(){
+        tree = parse(this.source, this.mode);
+        misc.set_filename(this.filename, tree);
+        syntax.check(tree);
+        return tree;
+
+    }
+    function compile(){
+        pass; # implemented by subclass
+
+    }
+    function getCode(){
+        return this.code;
+
+}
+} class Expression(AbstractCompileMode){
+
+    mode = "eval";
+
+    function compile(){
+        tree = this._get_tree();
+        gen = ExpressionCodeGenerator(tree);
+        this.code = gen.getCode();
+
+}
+} class Interactive(AbstractCompileMode){
+
+    mode = "single";
+
+    function compile(){
+        tree = this._get_tree();
+        gen = InteractiveCodeGenerator(tree);
+        this.code = gen.getCode();
+
+}
+} class Module(AbstractCompileMode){
+
+    mode = "exec";
+
+    function compile( display=0){
+        tree = this._get_tree();
+        gen = ModuleCodeGenerator(tree);
+        if display{
+            import pprint;
+            print pprint.pprint(tree);
+        } this.code = gen.getCode();
+
+    }
+    function dump( f){
+        f.write(this.getPycHeader());
+        marshal.dump(this.code, f);
+
+    }
+    MAGIC = imp.get_magic();
+
+    function getPycHeader(){
+        # compile.c uses marshal to write a long directly, with
+        # calling the interface that would also generate a 1-byte code
+        # to indicate the type of the value.  simplest way to get the
+        # same effect is to call marshal and then skip the code.
+        mtime = os.path.getmtime(this.filename);
+        mtime = struct.pack('<i', mtime);
+        return this.MAGIC + mtime;
+
+}
+} class LocalNameFinder{
+    """Find local names in scope""";
+    function __init__( names=()){
+        this.names = misc.Set();
+        this.globals = misc.Set();
+        for name in names{
+            this.names.add(name);
+
+    # XXX list comprehensions and for loops
+
+    }
+    } function getLocals(){
+        for elt in this.globals.elements(){
+            if this.names.has_elt(elt){
+                this.names.remove(elt);
+        } } return this.names;
+
+    }
+    function visitDict( node){
+        pass;
+
+    }
+    function visitGlobal( node){
+        for name in node.names{
+            this.globals.add(name);
+
+    }
+    } function visitFunction( node){
+        this.names.add(node.name);
+
+    }
+    function visitLambda( node){
+        pass;
+
+    }
+    function visitImport( node){
+        for name, alias in node.names{
+            this.names.add(alias or name);
+
+    }
+    } function visitFrom( node){
+        for name, alias in node.names{
+            this.names.add(alias or name);
+
+    }
+    } function visitClass( node){
+        this.names.add(node.name);
+
+    }
+    function visitAssName( node){
+        this.names.add(node.name);
+
+}
+} function is_constant_false(node){
+    if isinstance(node, ast.Const){
+        if not node.value{
+            return 1;
+    } } return 0;
+
+}
+class CodeGenerator{
+    """Defines basic code generator for Python bytecode
+
+    This class is an abstract base class.  Concrete subclasses must
+    define an __init__() that defines self.graph and then calls the
+    __init__() defined in this class.
+
+    The concrete class must also define the class attributes
+    NameFinder, FunctionGen, and ClassGen.  These attributes can be
+    defined in the initClass() method, which is a hook for
+    initializing these methods after all the classes have been
+    defined.
+    """;
+
+    optimized = 0; # is namespace access optimized?
+    __initialized = nil;
+    class_name = nil; # provide default for instance variable
+
+    function __init__(){
+        if this.__initialized is nil{
+            this.initClass();
+            this.__class__.__initialized = 1;
+        } this.checkClass();
+        this.locals = misc.Stack();
+        this.setups = misc.Stack();
+        this.last_lineno = nil;
+        this._setupGraphDelegation();
+        this._div_op = "BINARY_DIVIDE";
+
+        # XXX set flags based on future features
+        futures = this.get_module().futures;
+        for feature in futures{
+            if feature == "division"{
+                this.graph.setFlag(CO_FUTURE_DIVISION);
+                this._div_op = "BINARY_TRUE_DIVIDE";
+            } elif feature == "absolute_import"{
+                this.graph.setFlag(CO_FUTURE_ABSIMPORT);
+            } elif feature == "with_statement"{
+                this.graph.setFlag(CO_FUTURE_WITH_STATEMENT);
+            } elif feature == "print_function"{
+                this.graph.setFlag(CO_FUTURE_PRINT_FUNCTION);
+
+    }
+    } } function initClass(){
+        """This method is called once for each class""";
+
+    }
+    function checkClass(){
+        """Verify that class is constructed correctly""";
+        try{
+            assert hasattr(this, 'graph');
+            assert getattr(this, 'NameFinder');
+            assert getattr(this, 'FunctionGen');
+            assert getattr(this, 'ClassGen');
+        } except AssertionError, msg{
+            intro = "Bad class construction for %s" % this.__class__.__name__;
+            raise AssertionError, intro;
+
+    }
+    } function _setupGraphDelegation(){
+        this.emit = this.graph.emit;
+        this.newBlock = this.graph.newBlock;
+        this.startBlock = this.graph.startBlock;
+        this.nextBlock = this.graph.nextBlock;
+        this.setDocstring = this.graph.setDocstring;
+
+    }
+    function getCode(){
+        """Return a code object""";
+        return this.graph.getCode();
+
+    }
+    function mangle( name){
+        if this.class_name is not nil{
+            return misc.mangle(name, this.class_name);
+        } else{
+            return name;
+
+    }
+    } function parseSymbols( tree){
+        s = symbols.SymbolVisitor();
+        walk(tree, s);
+        return s.scopes;
+
+    }
+    function get_module(){
+        raise RuntimeError, "should be implemented by subclasses";
+
+    # Next five methods handle name access
+
+    }
+    function isLocalName( name){
+        return this.locals.top().has_elt(name);
+
+    }
+    function storeName( name){
+        this._nameOp('STORE', name);
+
+    }
+    function loadName( name){
+        this._nameOp('LOAD', name);
+
+    }
+    function delName( name){
+        this._nameOp('DELETE', name);
+
+    }
+    function _nameOp( prefix, name){
+        name = this.mangle(name);
+        scope = this.scope.check_name(name);
+        if scope == SC_LOCAL{
+            if not this.optimized{
+                this.emit(prefix + '_NAME', name);
+            } else{
+                this.emit(prefix + '_FAST', name);
+        } } elif scope == SC_GLOBAL_EXPLICIT{
+            this.emit(prefix + '_GLOBAL', name);
+        } elif scope == SC_GLOBAL_IMPLICIT{
+            if not this.optimized{
+                this.emit(prefix + '_NAME', name);
+            } else{
+                this.emit(prefix + '_GLOBAL', name);
+        } } elif scope == SC_FREE or scope == SC_CELL{
+            this.emit(prefix + '_DEREF', name);
+        } else{
+            raise RuntimeError, "unsupported scope for var %s: %d" % \
+                  (name, scope);
+
+    }
+    } function _implicitNameOp( prefix, name){
+        """Emit name ops for names generated implicitly by for loops
+
+        The interpreter generates names that start with a period or
+        dollar sign.  The symbol table ignores these names because
+        they aren't present in the program text.
+        """;
+        if this.optimized{
+            this.emit(prefix + '_FAST', name);
+        } else{
+            this.emit(prefix + '_NAME', name);
+
+    # The set_lineno() function and the explicit emit() calls for
+    # SET_LINENO below are only used to generate the line number table.
+    # As of Python 2.3, the interpreter does not have a SET_LINENO
+    # instruction.  pyassem treats SET_LINENO opcodes as a special case.
+
+    }
+    } function set_lineno( node, force=false){
+        """Emit SET_LINENO if necessary.
+
+        The instruction is considered necessary if the node has a
+        lineno attribute and it is different than the last lineno
+        emitted.
+
+        Returns true if SET_LINENO was emitted.
+
+        There are no rules for when an AST node should have a lineno
+        attribute.  The transformer and AST code need to be reviewed
+        and a consistent policy implemented and documented.  Until
+        then, this method works around missing line numbers.
+        """;
+        lineno = getattr(node, 'lineno', nil);
+        if lineno is not nil and (lineno != this.last_lineno
+                                   or force){
+            this.emit('SET_LINENO', lineno);
+            this.last_lineno = lineno;
+            return true;
+        } return false;
+
+    # The first few visitor methods handle nodes that generator new
+    # code objects.  They use class attributes to determine what
+    # specialized code generators to use.
+
+    }
+    NameFinder = LocalNameFinder;
+    FunctionGen = nil;
+    ClassGen = nil;
+
+    function visitModule( node){
+        this.scopes = this.parseSymbols(node);
+        this.scope = this.scopes[node];
+        this.emit('SET_LINENO', 0);
+        if node.doc{
+            this.emit('LOAD_CONST', node.doc);
+            this.storeName('__doc__');
+        } lnf = walk(node.node, this.NameFinder(), verbose=0);
+        this.locals.push(lnf.getLocals());
+        this.visit(node.node);
+        this.emit('LOAD_CONST', nil);
+        this.emit('RETURN_VALUE');
+
+    }
+    function visitExpression( node){
+        this.set_lineno(node);
+        this.scopes = this.parseSymbols(node);
+        this.scope = this.scopes[node];
+        this.visit(node.node);
+        this.emit('RETURN_VALUE');
+
+    }
+    function visitFunction( node){
+        this._visitFuncOrLambda(node, isLambda=0);
+        if node.doc{
+            this.setDocstring(node.doc);
+        } this.storeName(node.name);
+
+    }
+    function visitLambda( node){
+        this._visitFuncOrLambda(node, isLambda=1);
+
+    }
+    function _visitFuncOrLambda( node, isLambda=0){
+        if not isLambda and node.decorators{
+            for decorator in node.decorators.nodes{
+                this.visit(decorator);
+            } ndecorators = len(node.decorators.nodes);
+        } else{
+            ndecorators = 0;
+
+        }
+        gen = this.FunctionGen(node, this.scopes, isLambda,
+                               this.class_name, this.get_module());
+        walk(node.code, gen);
+        gen.finish();
+        this.set_lineno(node);
+        for default in node.defaults{
+            this.visit(default);
+        } this._makeClosure(gen, len(node.defaults));
+        for i in range(ndecorators){
+            this.emit('CALL_FUNCTION', 1);
+
+    }
+    } function visitClass( node){
+        gen = this.ClassGen(node, this.scopes,
+                            this.get_module());
+        walk(node.code, gen);
+        gen.finish();
+        this.set_lineno(node);
+        this.emit('LOAD_CONST', node.name);
+        for base in node.bases{
+            this.visit(base);
+        } this.emit('BUILD_TUPLE', len(node.bases));
+        this._makeClosure(gen, 0);
+        this.emit('CALL_FUNCTION', 0);
+        this.emit('BUILD_CLASS');
+        this.storeName(node.name);
+
+    # The rest are standard visitor methods
+
+    # The next few implement control-flow statements
+
+    }
+    function visitIf( node){
+        end = this.newBlock();
+        numtests = len(node.tests);
+        for i in range(numtests){
+            test, suite = node.tests[i];
+            if is_constant_false(test){
+                # XXX will need to check generator stuff here
+                continue;
+            } this.set_lineno(test);
+            this.visit(test);
+            nextTest = this.newBlock();
+            this.emit('POP_JUMP_IF_FALSE', nextTest);
+            this.nextBlock();
+            this.visit(suite);
+            this.emit('JUMP_FORWARD', end);
+            this.startBlock(nextTest);
+        } if node.else_{
+            this.visit(node.else_);
+        } this.nextBlock(end);
+
+    }
+    function visitWhile( node){
+        this.set_lineno(node);
+
+        loop = this.newBlock();
+        else_ = this.newBlock();
+
+        after = this.newBlock();
+        this.emit('SETUP_LOOP', after);
+
+        this.nextBlock(loop);
+        this.setups.push((LOOP, loop));
+
+        this.set_lineno(node, force=true);
+        this.visit(node.test);
+        this.emit('POP_JUMP_IF_FALSE', else_ or after);
+
+        this.nextBlock();
+        this.visit(node.body);
+        this.emit('JUMP_ABSOLUTE', loop);
+
+        this.startBlock(else_); # or just the POPs if not else clause
+        this.emit('POP_BLOCK');
+        this.setups.pop();
+        if node.else_{
+            this.visit(node.else_);
+        } this.nextBlock(after);
+
+    }
+    function visitFor( node){
+        start = this.newBlock();
+        anchor = this.newBlock();
+        after = this.newBlock();
+        this.setups.push((LOOP, start));
+
+        this.set_lineno(node);
+        this.emit('SETUP_LOOP', after);
+        this.visit(node.list);
+        this.emit('GET_ITER');
+
+        this.nextBlock(start);
+        this.set_lineno(node, force=1);
+        this.emit('FOR_ITER', anchor);
+        this.visit(node.assign);
+        this.visit(node.body);
+        this.emit('JUMP_ABSOLUTE', start);
+        this.nextBlock(anchor);
+        this.emit('POP_BLOCK');
+        this.setups.pop();
+        if node.else_{
+            this.visit(node.else_);
+        } this.nextBlock(after);
+
+    }
+    function visitBreak( node){
+        if not this.setups{
+            raise SyntaxError, "'break' outside loop (%s, %d)" % \
+                  (node.filename, node.lineno);
+        } this.set_lineno(node);
+        this.emit('BREAK_LOOP');
+
+    }
+    function visitContinue( node){
+        if not this.setups{
+            raise SyntaxError, "'continue' outside loop (%s, %d)" % \
+                  (node.filename, node.lineno);
+        } kind, block = this.setups.top();
+        if kind == LOOP{
+            this.set_lineno(node);
+            this.emit('JUMP_ABSOLUTE', block);
+            this.nextBlock();
+        } elif kind == EXCEPT or kind == TRY_FINALLY{
+            this.set_lineno(node);
+            # find the block that starts the loop
+            top = len(this.setups);
+            while top > 0{
+                top = top - 1;
+                kind, loop_block = this.setups[top];
+                if kind == LOOP{
+                    break;
+            } } if kind != LOOP{
+                raise SyntaxError, "'continue' outside loop (%s, %d)" % \
+                      (node.filename, node.lineno);
+            } this.emit('CONTINUE_LOOP', loop_block);
+            this.nextBlock();
+        } elif kind == END_FINALLY{
+            msg = "'continue' not allowed inside 'finally' clause (%s, %d)";
+            raise SyntaxError, msg % (node.filename, node.lineno);
+
+    }
+    } function visitTest( node, jump){
+        end = this.newBlock();
+        for child in node.nodes[:-1]{
+            this.visit(child);
+            this.emit(jump, end);
+            this.nextBlock();
+        } this.visit(node.nodes[-1]);
+        this.nextBlock(end);
+
+    }
+    function visitAnd( node){
+        this.visitTest(node, 'JUMP_IF_FALSE_OR_POP');
+
+    }
+    function visitOr( node){
+        this.visitTest(node, 'JUMP_IF_TRUE_OR_POP');
+
+    }
+    function visitIfExp( node){
+        endblock = this.newBlock();
+        elseblock = this.newBlock();
+        this.visit(node.test);
+        this.emit('POP_JUMP_IF_FALSE', elseblock);
+        this.visit(node.then);
+        this.emit('JUMP_FORWARD', endblock);
+        this.nextBlock(elseblock);
+        this.visit(node.else_);
+        this.nextBlock(endblock);
+
+    }
+    function visitCompare( node){
+        this.visit(node.expr);
+        cleanup = this.newBlock();
+        for op, code in node.ops[:-1]{
+            this.visit(code);
+            this.emit('DUP_TOP');
+            this.emit('ROT_THREE');
+            this.emit('COMPARE_OP', op);
+            this.emit('JUMP_IF_FALSE_OR_POP', cleanup);
+            this.nextBlock();
+        # now do the last comparison
+        }
+        if node.ops{
+            op, code = node.ops[-1];
+            this.visit(code);
+            this.emit('COMPARE_OP', op);
+        } if len(node.ops) > 1{
+            end = this.newBlock();
+            this.emit('JUMP_FORWARD', end);
+            this.startBlock(cleanup);
+            this.emit('ROT_TWO');
+            this.emit('POP_TOP');
+            this.nextBlock(end);
+
+    # list comprehensions
+    }
+    } function visitListComp( node){
+        this.set_lineno(node);
+        # setup list
+        this.emit('BUILD_LIST', 0);
+
+        stack = [];
+        for i, for_ in zip(range(len(node.quals)), node.quals){
+            start, anchor = this.visit(for_);
+            cont = nil;
+            for if_ in for_.ifs{
+                if cont is nil{
+                    cont = this.newBlock();
+                } this.visit(if_, cont);
+            } stack.insert(0, (start, cont, anchor));
+
+        }
+        this.visit(node.expr);
+        this.emit('LIST_APPEND', len(node.quals) + 1);
+
+        for start, cont, anchor in stack{
+            if cont{
+                this.nextBlock(cont);
+            } this.emit('JUMP_ABSOLUTE', start);
+            this.startBlock(anchor);
+
+    }
+    } function visitSetComp( node){
+        this.set_lineno(node);
+        # setup list
+        this.emit('BUILD_SET', 0);
+
+        stack = [];
+        for i, for_ in zip(range(len(node.quals)), node.quals){
+            start, anchor = this.visit(for_);
+            cont = nil;
+            for if_ in for_.ifs{
+                if cont is nil{
+                    cont = this.newBlock();
+                } this.visit(if_, cont);
+            } stack.insert(0, (start, cont, anchor));
+
+        }
+        this.visit(node.expr);
+        this.emit('SET_ADD', len(node.quals) + 1);
+
+        for start, cont, anchor in stack{
+            if cont{
+                this.nextBlock(cont);
+            } this.emit('JUMP_ABSOLUTE', start);
+            this.startBlock(anchor);
+
+    }
+    } function visitDictComp( node){
+        this.set_lineno(node);
+        # setup list
+        this.emit('BUILD_MAP', 0);
+
+        stack = [];
+        for i, for_ in zip(range(len(node.quals)), node.quals){
+            start, anchor = this.visit(for_);
+            cont = nil;
+            for if_ in for_.ifs{
+                if cont is nil{
+                    cont = this.newBlock();
+                } this.visit(if_, cont);
+            } stack.insert(0, (start, cont, anchor));
+
+        }
+        this.visit(node.value);
+        this.visit(node.key);
+        this.emit('MAP_ADD', len(node.quals) + 1);
+
+        for start, cont, anchor in stack{
+            if cont{
+                this.nextBlock(cont);
+            } this.emit('JUMP_ABSOLUTE', start);
+            this.startBlock(anchor);
+
+    }
+    } function visitListCompFor( node){
+        start = this.newBlock();
+        anchor = this.newBlock();
+
+        this.visit(node.list);
+        this.emit('GET_ITER');
+        this.nextBlock(start);
+        this.set_lineno(node, force=true);
+        this.emit('FOR_ITER', anchor);
+        this.nextBlock();
+        this.visit(node.assign);
+        return start, anchor;
+
+    }
+    function visitListCompIf( node, branch){
+        this.set_lineno(node, force=true);
+        this.visit(node.test);
+        this.emit('POP_JUMP_IF_FALSE', branch);
+        this.newBlock();
+
+    }
+    function _makeClosure( gen, args){
+        frees = gen.scope.get_free_vars();
+        if frees{
+            for name in frees{
+                this.emit('LOAD_CLOSURE', name);
+            } this.emit('BUILD_TUPLE', len(frees));
+            this.emit('LOAD_CONST', gen);
+            this.emit('MAKE_CLOSURE', args);
+        } else{
+            this.emit('LOAD_CONST', gen);
+            this.emit('MAKE_FUNCTION', args);
+
+    }
+    } function visitGenExpr( node){
+        gen = GenExprCodeGenerator(node, this.scopes, this.class_name,
+                                   this.get_module());
+        walk(node.code, gen);
+        gen.finish();
+        this.set_lineno(node);
+        this._makeClosure(gen, 0);
+        # precomputation of outmost iterable
+        this.visit(node.code.quals[0].iter);
+        this.emit('GET_ITER');
+        this.emit('CALL_FUNCTION', 1);
+
+    }
+    function visitGenExprInner( node){
+        this.set_lineno(node);
+        # setup list
+
+        stack = [];
+        for i, for_ in zip(range(len(node.quals)), node.quals){
+            start, anchor, end = this.visit(for_);
+            cont = nil;
+            for if_ in for_.ifs{
+                if cont is nil{
+                    cont = this.newBlock();
+                } this.visit(if_, cont);
+            } stack.insert(0, (start, cont, anchor, end));
+
+        }
+        this.visit(node.expr);
+        this.emit('YIELD_VALUE');
+        this.emit('POP_TOP');
+
+        for start, cont, anchor, end in stack{
+            if cont{
+                this.nextBlock(cont);
+            } this.emit('JUMP_ABSOLUTE', start);
+            this.startBlock(anchor);
+            this.emit('POP_BLOCK');
+            this.setups.pop();
+            this.nextBlock(end);
+
+        }
+        this.emit('LOAD_CONST', nil);
+
+    }
+    function visitGenExprFor( node){
+        start = this.newBlock();
+        anchor = this.newBlock();
+        end = this.newBlock();
+
+        this.setups.push((LOOP, start));
+        this.emit('SETUP_LOOP', end);
+
+        if node.is_outmost{
+            this.loadName('.0');
+        } else{
+            this.visit(node.iter);
+            this.emit('GET_ITER');
+
+        }
+        this.nextBlock(start);
+        this.set_lineno(node, force=true);
+        this.emit('FOR_ITER', anchor);
+        this.nextBlock();
+        this.visit(node.assign);
+        return start, anchor, end;
+
+    }
+    function visitGenExprIf( node, branch){
+        this.set_lineno(node, force=true);
+        this.visit(node.test);
+        this.emit('POP_JUMP_IF_FALSE', branch);
+        this.newBlock();
+
+    # exception related
+
+    }
+    function visitAssert( node){
+        # XXX would be interesting to implement this via a
+        # transformation of the AST before this stage
+        if __debug__{
+            end = this.newBlock();
+            this.set_lineno(node);
+            # XXX AssertionError appears to be special case -- it is always
+            # loaded as a global even if there is a local name.  I guess this
+            # is a sort of renaming op.
+            this.nextBlock();
+            this.visit(node.test);
+            this.emit('POP_JUMP_IF_TRUE', end);
+            this.nextBlock();
+            this.emit('LOAD_GLOBAL', 'AssertionError');
+            if node.fail{
+                this.visit(node.fail);
+                this.emit('RAISE_VARARGS', 2);
+            } else{
+                this.emit('RAISE_VARARGS', 1);
+            } this.nextBlock(end);
+
+    }
+    } function visitRaise( node){
+        this.set_lineno(node);
+        n = 0;
+        if node.expr1{
+            this.visit(node.expr1);
+            n = n + 1;
+        } if node.expr2{
+            this.visit(node.expr2);
+            n = n + 1;
+        } if node.expr3{
+            this.visit(node.expr3);
+            n = n + 1;
+        } this.emit('RAISE_VARARGS', n);
+
+    }
+    function visitTryExcept( node){
+        body = this.newBlock();
+        handlers = this.newBlock();
+        end = this.newBlock();
+        if node.else_{
+            lElse = this.newBlock();
+        } else{
+            lElse = end;
+        } this.set_lineno(node);
+        this.emit('SETUP_EXCEPT', handlers);
+        this.nextBlock(body);
+        this.setups.push((EXCEPT, body));
+        this.visit(node.body);
+        this.emit('POP_BLOCK');
+        this.setups.pop();
+        this.emit('JUMP_FORWARD', lElse);
+        this.startBlock(handlers);
+
+        last = len(node.handlers) - 1;
+        for i in range(len(node.handlers)){
+            expr, target, body = node.handlers[i];
+            this.set_lineno(expr);
+            if expr{
+                this.emit('DUP_TOP');
+                this.visit(expr);
+                this.emit('COMPARE_OP', 'exception match');
+                next = this.newBlock();
+                this.emit('POP_JUMP_IF_FALSE', next);
+                this.nextBlock();
+            } this.emit('POP_TOP');
+            if target{
+                this.visit(target);
+            } else{
+                this.emit('POP_TOP');
+            } this.emit('POP_TOP');
+            this.visit(body);
+            this.emit('JUMP_FORWARD', end);
+            if expr{
+                this.nextBlock(next);
+            } else{
+                this.nextBlock();
+        } } this.emit('END_FINALLY');
+        if node.else_{
+            this.nextBlock(lElse);
+            this.visit(node.else_);
+        } this.nextBlock(end);
+
+    }
+    function visitTryFinally( node){
+        body = this.newBlock();
+        final = this.newBlock();
+        this.set_lineno(node);
+        this.emit('SETUP_FINALLY', final);
+        this.nextBlock(body);
+        this.setups.push((TRY_FINALLY, body));
+        this.visit(node.body);
+        this.emit('POP_BLOCK');
+        this.setups.pop();
+        this.emit('LOAD_CONST', nil);
+        this.nextBlock(final);
+        this.setups.push((END_FINALLY, final));
+        this.visit(node.final);
+        this.emit('END_FINALLY');
+        this.setups.pop();
+
+    }
+    __with_count = 0;
+
+    function visitWith( node){
+        body = this.newBlock();
+        final = this.newBlock();
+        this.__with_count += 1;
+        valuevar = "_[%d]" % this.__with_count;
+        this.set_lineno(node);
+        this.visit(node.expr);
+        this.emit('DUP_TOP');
+        this.emit('LOAD_ATTR', '__exit__');
+        this.emit('ROT_TWO');
+        this.emit('LOAD_ATTR', '__enter__');
+        this.emit('CALL_FUNCTION', 0);
+        if node.vars is nil{
+            this.emit('POP_TOP');
+        } else{
+            this._implicitNameOp('STORE', valuevar);
+        } this.emit('SETUP_FINALLY', final);
+        this.nextBlock(body);
+        this.setups.push((TRY_FINALLY, body));
+        if node.vars is not nil{
+            this._implicitNameOp('LOAD', valuevar);
+            this._implicitNameOp('DELETE', valuevar);
+            this.visit(node.vars);
+        } this.visit(node.body);
+        this.emit('POP_BLOCK');
+        this.setups.pop();
+        this.emit('LOAD_CONST', nil);
+        this.nextBlock(final);
+        this.setups.push((END_FINALLY, final));
+        this.emit('WITH_CLEANUP');
+        this.emit('END_FINALLY');
+        this.setups.pop();
+        this.__with_count -= 1;
+
+    # misc
+
+    }
+    function visitDiscard( node){
+        this.set_lineno(node);
+        this.visit(node.expr);
+        this.emit('POP_TOP');
+
+    }
+    function visitConst( node){
+        this.emit('LOAD_CONST', node.value);
+
+    }
+    function visitKeyword( node){
+        this.emit('LOAD_CONST', node.name);
+        this.visit(node.expr);
+
+    }
+    function visitGlobal( node){
+        # no code to generate
+        pass;
+
+    }
+    function visitName( node){
+        this.set_lineno(node);
+        this.loadName(node.name);
+
+    }
+    function visitPass( node){
+        this.set_lineno(node);
+
+    }
+    function visitImport( node){
+        this.set_lineno(node);
+        level = 0 if this.graph.checkFlag(CO_FUTURE_ABSIMPORT) else -1;
+        for name, alias in node.names{
+            if VERSION > 1{
+                this.emit('LOAD_CONST', level);
+                this.emit('LOAD_CONST', nil);
+            } this.emit('IMPORT_NAME', name);
+            mod = name.split(".")[0];
+            if alias{
+                this._resolveDots(name);
+                this.storeName(alias);
+            } else{
+                this.storeName(mod);
+
+    }
+    } } function visitFrom( node){
+        this.set_lineno(node);
+        level = node.level;
+        if level == 0 and not this.graph.checkFlag(CO_FUTURE_ABSIMPORT){
+            level = -1;
+        } fromlist = tuple(name for (name, alias) in node.names);
+        if VERSION > 1{
+            this.emit('LOAD_CONST', level);
+            this.emit('LOAD_CONST', fromlist);
+        } this.emit('IMPORT_NAME', node.modname);
+        for name, alias in node.names{
+            if VERSION > 1{
+                if name == '*'{
+                    this.namespace = 0;
+                    this.emit('IMPORT_STAR');
+                    # There can only be one name w/ from ... import *
+                    assert len(node.names) == 1;
+                    return;
+                } else{
+                    this.emit('IMPORT_FROM', name);
+                    this._resolveDots(name);
+                    this.storeName(alias or name);
+            } } else{
+                this.emit('IMPORT_FROM', name);
+        } } this.emit('POP_TOP');
+
+    }
+    function _resolveDots( name){
+        elts = name.split(".");
+        if len(elts) == 1{
+            return;
+        } for elt in elts[1:]{
+            this.emit('LOAD_ATTR', elt);
+
+    }
+    } function visitGetattr( node){
+        this.visit(node.expr);
+        this.emit('LOAD_ATTR', this.mangle(node.attrname));
+
+    # next five implement assignments
+
+    }
+    function visitAssign( node){
+        this.set_lineno(node);
+        this.visit(node.expr);
+        dups = len(node.nodes) - 1;
+        for i in range(len(node.nodes)){
+            elt = node.nodes[i];
+            if i < dups{
+                this.emit('DUP_TOP');
+            } if isinstance(elt, ast.Node){
+                this.visit(elt);
+
+    }
+    } } function visitAssName( node){
+        if node.flags == 'OP_ASSIGN'{
+            this.storeName(node.name);
+        } elif node.flags == 'OP_DELETE'{
+            this.set_lineno(node);
+            this.delName(node.name);
+        } else{
+            print "oops", node.flags;
+
+    }
+    } function visitAssAttr( node){
+        this.visit(node.expr);
+        if node.flags == 'OP_ASSIGN'{
+            this.emit('STORE_ATTR', this.mangle(node.attrname));
+        } elif node.flags == 'OP_DELETE'{
+            this.emit('DELETE_ATTR', this.mangle(node.attrname));
+        } else{
+            print "warning: unexpected flags:", node.flags;
+            print node;
+
+    }
+    } function _visitAssSequence( node, op='UNPACK_SEQUENCE'){
+        if findOp(node) != 'OP_DELETE'{
+            this.emit(op, len(node.nodes));
+        } for child in node.nodes{
+            this.visit(child);
+
+    }
+    } if VERSION > 1{
+        visitAssTuple = _visitAssSequence;
+        visitAssList = _visitAssSequence;
+    } else{
+        function visitAssTuple( node){
+            this._visitAssSequence(node, 'UNPACK_TUPLE');
+
+        }
+        function visitAssList( node){
+            this._visitAssSequence(node, 'UNPACK_LIST');
+
+    # augmented assignment
+
+    }
+    } function visitAugAssign( node){
+        this.set_lineno(node);
+        aug_node = wrap_aug(node.node);
+        this.visit(aug_node, "load");
+        this.visit(node.expr);
+        this.emit(this._augmented_opcode[node.op]);
+        this.visit(aug_node, "store");
+
+    }
+    _augmented_opcode = {
+        '+=' : 'INPLACE_ADD',
+        '-=' : 'INPLACE_SUBTRACT',
+        '*=' : 'INPLACE_MULTIPLY',
+        '/=' : 'INPLACE_DIVIDE',
+        '//=': 'INPLACE_FLOOR_DIVIDE',
+        '%=' : 'INPLACE_MODULO',
+        '**=': 'INPLACE_POWER',
+        '>>=': 'INPLACE_RSHIFT',
+        '<<=': 'INPLACE_LSHIFT',
+        '&=' : 'INPLACE_AND',
+        '^=' : 'INPLACE_XOR',
+        '|=' : 'INPLACE_OR',
+        };
+
+    function visitAugName( node, mode){
+        if mode == "load"{
+            this.loadName(node.name);
+        } elif mode == "store"{
+            this.storeName(node.name);
+
+    }
+    } function visitAugGetattr( node, mode){
+        if mode == "load"{
+            this.visit(node.expr);
+            this.emit('DUP_TOP');
+            this.emit('LOAD_ATTR', this.mangle(node.attrname));
+        } elif mode == "store"{
+            this.emit('ROT_TWO');
+            this.emit('STORE_ATTR', this.mangle(node.attrname));
+
+    }
+    } function visitAugSlice( node, mode){
+        if mode == "load"{
+            this.visitSlice(node, 1);
+        } elif mode == "store"{
+            slice = 0;
+            if node.lower{
+                slice = slice | 1;
+            } if node.upper{
+                slice = slice | 2;
+            } if slice == 0{
+                this.emit('ROT_TWO');
+            } elif slice == 3{
+                this.emit('ROT_FOUR');
+            } else{
+                this.emit('ROT_THREE');
+            } this.emit('STORE_SLICE+%d' % slice);
+
+    }
+    } function visitAugSubscript( node, mode){
+        if mode == "load"{
+            this.visitSubscript(node, 1);
+        } elif mode == "store"{
+            this.emit('ROT_THREE');
+            this.emit('STORE_SUBSCR');
+
+    }
+    } function visitExec( node){
+        this.visit(node.expr);
+        if node.locals is nil{
+            this.emit('LOAD_CONST', nil);
+        } else{
+            this.visit(node.locals);
+        } if node.globals is nil{
+            this.emit('DUP_TOP');
+        } else{
+            this.visit(node.globals);
+        } this.emit('EXEC_STMT');
+
+    }
+    function visitCallFunc( node){
+        pos = 0;
+        kw = 0;
+        this.set_lineno(node);
+        this.visit(node.node);
+        for arg in node.args{
+            this.visit(arg);
+            if isinstance(arg, ast.Keyword){
+                kw = kw + 1;
+            } else{
+                pos = pos + 1;
+        } } if node.star_args is not nil{
+            this.visit(node.star_args);
+        } if node.dstar_args is not nil{
+            this.visit(node.dstar_args);
+        } have_star = node.star_args is not nil;
+        have_dstar = node.dstar_args is not nil;
+        opcode = callfunc_opcode_info[have_star, have_dstar];
+        this.emit(opcode, kw << 8 | pos);
+
+    }
+    function visitPrint( node, newline=0){
+        this.set_lineno(node);
+        if node.dest{
+            this.visit(node.dest);
+        } for child in node.nodes{
+            if node.dest{
+                this.emit('DUP_TOP');
+            } this.visit(child);
+            if node.dest{
+                this.emit('ROT_TWO');
+                this.emit('PRINT_ITEM_TO');
+            } else{
+                this.emit('PRINT_ITEM');
+        } } if node.dest and not newline{
+            this.emit('POP_TOP');
+
+    }
+    } function visitPrintnl( node){
+        this.visitPrint(node, newline=1);
+        if node.dest{
+            this.emit('PRINT_NEWLINE_TO');
+        } else{
+            this.emit('PRINT_NEWLINE');
+
+    }
+    } function visitReturn( node){
+        this.set_lineno(node);
+        this.visit(node.value);
+        this.emit('RETURN_VALUE');
+
+    }
+    function visitYield( node){
+        this.set_lineno(node);
+        this.visit(node.value);
+        this.emit('YIELD_VALUE');
+
+    # slice and subscript stuff
+
+    }
+    function visitSlice( node, aug_flag=nil){
+        # aug_flag is used by visitAugSlice
+        this.visit(node.expr);
+        slice = 0;
+        if node.lower{
+            this.visit(node.lower);
+            slice = slice | 1;
+        } if node.upper{
+            this.visit(node.upper);
+            slice = slice | 2;
+        } if aug_flag{
+            if slice == 0{
+                this.emit('DUP_TOP');
+            } elif slice == 3{
+                this.emit('DUP_TOPX', 3);
+            } else{
+                this.emit('DUP_TOPX', 2);
+        } } if node.flags == 'OP_APPLY'{
+            this.emit('SLICE+%d' % slice);
+        } elif node.flags == 'OP_ASSIGN'{
+            this.emit('STORE_SLICE+%d' % slice);
+        } elif node.flags == 'OP_DELETE'{
+            this.emit('DELETE_SLICE+%d' % slice);
+        } else{
+            print "weird slice", node.flags;
+            raise;
+
+    }
+    } function visitSubscript( node, aug_flag=nil){
+        this.visit(node.expr);
+        for sub in node.subs{
+            this.visit(sub);
+        } if len(node.subs) > 1{
+            this.emit('BUILD_TUPLE', len(node.subs));
+        } if aug_flag{
+            this.emit('DUP_TOPX', 2);
+        } if node.flags == 'OP_APPLY'{
+            this.emit('BINARY_SUBSCR');
+        } elif node.flags == 'OP_ASSIGN'{
+            this.emit('STORE_SUBSCR');
+        } elif node.flags == 'OP_DELETE'{
+            this.emit('DELETE_SUBSCR');
+
+    # binary ops
+
+    }
+    } function binaryOp( node, op){
+        this.visit(node.left);
+        this.visit(node.right);
+        this.emit(op);
+
+    }
+    function visitAdd( node){
+        return this.binaryOp(node, 'BINARY_ADD');
+
+    }
+    function visitSub( node){
+        return this.binaryOp(node, 'BINARY_SUBTRACT');
+
+    }
+    function visitMul( node){
+        return this.binaryOp(node, 'BINARY_MULTIPLY');
+
+    }
+    function visitDiv( node){
+        return this.binaryOp(node, this._div_op);
+
+    }
+    function visitFloorDiv( node){
+        return this.binaryOp(node, 'BINARY_FLOOR_DIVIDE');
+
+    }
+    function visitMod( node){
+        return this.binaryOp(node, 'BINARY_MODULO');
+
+    }
+    function visitPower( node){
+        return this.binaryOp(node, 'BINARY_POWER');
+
+    }
+    function visitLeftShift( node){
+        return this.binaryOp(node, 'BINARY_LSHIFT');
+
+    }
+    function visitRightShift( node){
+        return this.binaryOp(node, 'BINARY_RSHIFT');
+
+    # unary ops
+
+    }
+    function unaryOp( node, op){
+        this.visit(node.expr);
+        this.emit(op);
+
+    }
+    function visitInvert( node){
+        return this.unaryOp(node, 'UNARY_INVERT');
+
+    }
+    function visitUnarySub( node){
+        return this.unaryOp(node, 'UNARY_NEGATIVE');
+
+    }
+    function visitUnaryAdd( node){
+        return this.unaryOp(node, 'UNARY_POSITIVE');
+
+    }
+    function visitUnaryInvert( node){
+        return this.unaryOp(node, 'UNARY_INVERT');
+
+    }
+    function visitNot( node){
+        return this.unaryOp(node, 'UNARY_NOT');
+
+    }
+    function visitBackquote( node){
+        return this.unaryOp(node, 'UNARY_CONVERT');
+
+    # bit ops
+
+    }
+    function bitOp( nodes, op){
+        this.visit(nodes[0]);
+        for node in nodes[1:]{
+            this.visit(node);
+            this.emit(op);
+
+    }
+    } function visitBitand( node){
+        return this.bitOp(node.nodes, 'BINARY_AND');
+
+    }
+    function visitBitor( node){
+        return this.bitOp(node.nodes, 'BINARY_OR');
+
+    }
+    function visitBitxor( node){
+        return this.bitOp(node.nodes, 'BINARY_XOR');
+
+    # object constructors
+
+    }
+    function visitEllipsis( node){
+        this.emit('LOAD_CONST', Ellipsis);
+
+    }
+    function visitTuple( node){
+        this.set_lineno(node);
+        for elt in node.nodes{
+            this.visit(elt);
+        } this.emit('BUILD_TUPLE', len(node.nodes));
+
+    }
+    function visitList( node){
+        this.set_lineno(node);
+        for elt in node.nodes{
+            this.visit(elt);
+        } this.emit('BUILD_LIST', len(node.nodes));
+
+    }
+    function visitSet( node){
+        this.set_lineno(node);
+        for elt in node.nodes{
+            this.visit(elt);
+        } this.emit('BUILD_SET', len(node.nodes));
+
+    }
+    function visitSliceobj( node){
+        for child in node.nodes{
+            this.visit(child);
+        } this.emit('BUILD_SLICE', len(node.nodes));
+
+    }
+    function visitDict( node){
+        this.set_lineno(node);
+        this.emit('BUILD_MAP', 0);
+        for k, v in node.items{
+            this.emit('DUP_TOP');
+            this.visit(k);
+            this.visit(v);
+            this.emit('ROT_THREE');
+            this.emit('STORE_SUBSCR');
+
+}
+} } class NestedScopeMixin{
+    """Defines initClass() for nested scoping (Python 2.2-compatible)""";
+    function initClass(){
+        this.__class__.NameFinder = LocalNameFinder;
+        this.__class__.FunctionGen = FunctionCodeGenerator;
+        this.__class__.ClassGen = ClassCodeGenerator;
+
+}
+} class ModuleCodeGenerator(NestedScopeMixin, CodeGenerator){
+    __super_init = CodeGenerator.__init__;
+
+    scopes = nil;
+
+    function __init__( tree){
+        this.graph = pyassem.PyFlowGraph("<module>", tree.filename);
+        this.futures = future.find_futures(tree);
+        this.__super_init();
+        walk(tree, this);
+
+    }
+    function get_module(){
+        return this;
+
+}
+} class ExpressionCodeGenerator(NestedScopeMixin, CodeGenerator){
+    __super_init = CodeGenerator.__init__;
+
+    scopes = nil;
+    futures = ();
+
+    function __init__( tree){
+        this.graph = pyassem.PyFlowGraph("<expression>", tree.filename);
+        this.__super_init();
+        walk(tree, this);
+
+    }
+    function get_module(){
+        return this;
+
+}
+} class InteractiveCodeGenerator(NestedScopeMixin, CodeGenerator){
+
+    __super_init = CodeGenerator.__init__;
+
+    scopes = nil;
+    futures = ();
+
+    function __init__( tree){
+        this.graph = pyassem.PyFlowGraph("<interactive>", tree.filename);
+        this.__super_init();
+        this.set_lineno(tree);
+        walk(tree, this);
+        this.emit('RETURN_VALUE');
+
+    }
+    function get_module(){
+        return this;
+
+    }
+    function visitDiscard( node){
+        # XXX Discard means it's an expression.  Perhaps this is a bad
+        # name.
+        this.visit(node.expr);
+        this.emit('PRINT_EXPR');
+
+}
+} class AbstractFunctionCode{
+    optimized = 1;
+    lambdaCount = 0;
+
+    function __init__( func, scopes, isLambda, class_name, mod){
+        this.class_name = class_name;
+        this.module = mod;
+        if isLambda{
+            klass = FunctionCodeGenerator;
+            name = "<lambda.%d>" % klass.lambdaCount;
+            klass.lambdaCount = klass.lambdaCount + 1;
+        } else{
+            name = func.name;
+
+        }
+        args, hasTupleArg = generateArgList(func.argnames);
+        this.graph = pyassem.PyFlowGraph(name, func.filename, args,
+                                         optimized=1);
+        this.isLambda = isLambda;
+        this.super_init();
+
+        if not isLambda and func.doc{
+            this.setDocstring(func.doc);
+
+        }
+        lnf = walk(func.code, this.NameFinder(args), verbose=0);
+        this.locals.push(lnf.getLocals());
+        if func.varargs{
+            this.graph.setFlag(CO_VARARGS);
+        } if func.kwargs{
+            this.graph.setFlag(CO_VARKEYWORDS);
+        } this.set_lineno(func);
+        if hasTupleArg{
+            this.generateArgUnpack(func.argnames);
+
+    }
+    } function get_module(){
+        return this.module;
+
+    }
+    function finish(){
+        this.graph.startExitBlock();
+        if not this.isLambda{
+            this.emit('LOAD_CONST', nil);
+        } this.emit('RETURN_VALUE');
+
+    }
+    function generateArgUnpack( args){
+        for i in range(len(args)){
+            arg = args[i];
+            if isinstance(arg, tuple){
+                this.emit('LOAD_FAST', '.%d' % (i * 2));
+                this.unpackSequence(arg);
+
+    }
+    } } function unpackSequence( tup){
+        if VERSION > 1{
+            this.emit('UNPACK_SEQUENCE', len(tup));
+        } else{
+            this.emit('UNPACK_TUPLE', len(tup));
+        } for elt in tup{
+            if isinstance(elt, tuple){
+                this.unpackSequence(elt);
+            } else{
+                this._nameOp('STORE', elt);
+
+    }
+    } } unpackTuple = unpackSequence;
+
+}
+class FunctionCodeGenerator(NestedScopeMixin, AbstractFunctionCode,
+                            CodeGenerator){
+    super_init = CodeGenerator.__init__; # call be other init
+    scopes = nil;
+
+    __super_init = AbstractFunctionCode.__init__;
+
+    function __init__( func, scopes, isLambda, class_name, mod){
+        this.scopes = scopes;
+        this.scope = scopes[func];
+        this.__super_init(func, scopes, isLambda, class_name, mod);
+        this.graph.setFreeVars(this.scope.get_free_vars());
+        this.graph.setCellVars(this.scope.get_cell_vars());
+        if this.scope.generator is not nil{
+            this.graph.setFlag(CO_GENERATOR);
+
+}
+} } class GenExprCodeGenerator(NestedScopeMixin, AbstractFunctionCode,
+                           CodeGenerator){
+    super_init = CodeGenerator.__init__; # call be other init
+    scopes = nil;
+
+    __super_init = AbstractFunctionCode.__init__;
+
+    function __init__( gexp, scopes, class_name, mod){
+        this.scopes = scopes;
+        this.scope = scopes[gexp];
+        this.__super_init(gexp, scopes, 1, class_name, mod);
+        this.graph.setFreeVars(this.scope.get_free_vars());
+        this.graph.setCellVars(this.scope.get_cell_vars());
+        this.graph.setFlag(CO_GENERATOR);
+
+}
+} class AbstractClassCode{
+
+    function __init__( klass, scopes, module){
+        this.class_name = klass.name;
+        this.module = module;
+        this.graph = pyassem.PyFlowGraph(klass.name, klass.filename,
+                                           optimized=0, klass=1);
+        this.super_init();
+        lnf = walk(klass.code, this.NameFinder(), verbose=0);
+        this.locals.push(lnf.getLocals());
+        this.graph.setFlag(CO_NEWLOCALS);
+        if klass.doc{
+            this.setDocstring(klass.doc);
+
+    }
+    } function get_module(){
+        return this.module;
+
+    }
+    function finish(){
+        this.graph.startExitBlock();
+        this.emit('LOAD_LOCALS');
+        this.emit('RETURN_VALUE');
+
+}
+} class ClassCodeGenerator(NestedScopeMixin, AbstractClassCode, CodeGenerator){
+    super_init = CodeGenerator.__init__;
+    scopes = nil;
+
+    __super_init = AbstractClassCode.__init__;
+
+    function __init__( klass, scopes, module){
+        this.scopes = scopes;
+        this.scope = scopes[klass];
+        this.__super_init(klass, scopes, module);
+        this.graph.setFreeVars(this.scope.get_free_vars());
+        this.graph.setCellVars(this.scope.get_cell_vars());
+        this.set_lineno(klass);
+        this.emit("LOAD_GLOBAL", "__name__");
+        this.storeName("__module__");
+        if klass.doc{
+            this.emit("LOAD_CONST", klass.doc);
+            this.storeName('__doc__');
+
+}
+} } function generateArgList(arglist){
+    """Generate an arg list marking TupleArgs""";
+    args = [];
+    extra = [];
+    count = 0;
+    for i in range(len(arglist)){
+        elt = arglist[i];
+        if isinstance(elt, str){
+            args.append(elt);
+        } elif isinstance(elt, tuple){
+            args.append(TupleArg(i * 2, elt));
+            extra.extend(misc.flatten(elt));
+            count = count + 1;
+        } else{
+            raise ValueError, "unexpect argument type:", elt;
+    } } return args + extra, count;
+
+}
+function findOp(node){
+    """Find the op (DELETE, LOAD, STORE) in an AssTuple tree""";
+    v = OpFinder();
+    walk(node, v, verbose=0);
+    return v.op;
+
+}
+class OpFinder{
+    function __init__(){
+        this.op = nil;
+    } function visitAssName( node){
+        if this.op is nil{
+            this.op = node.flags;
+        } elif this.op != node.flags{
+            raise ValueError, "mixed ops in stmt";
+    } } visitAssAttr = visitAssName;
+    visitSubscript = visitAssName;
+
+}
+class Delegator{
+    """Base class to support delegation for augmented assignment nodes
+
+    To generator code for augmented assignments, we use the following
+    wrapper classes.  In visitAugAssign, the left-hand expression node
+    is visited twice.  The first time the visit uses the normal method
+    for that node .  The second time the visit uses a different method
+    that generates the appropriate code to perform the assignment.
+    These delegator classes wrap the original AST nodes in order to
+    support the variant visit methods.
+    """;
+    function __init__( obj){
+        this.obj = obj;
+
+    }
+    function __getattr__( attr){
+        return getattr(this.obj, attr);
+
+}
+} class AugGetattr(Delegator){
+    pass;
+
+}
+class AugName(Delegator){
+    pass;
+
+}
+class AugSlice(Delegator){
+    pass;
+
+}
+class AugSubscript(Delegator){
+    pass;
+
+}
+wrapper = {
+    ast.Getattr: AugGetattr,
+    ast.Name: AugName,
+    ast.Slice: AugSlice,
+    ast.Subscript: AugSubscript,
+    };
+
+function wrap_aug(node){
+    return wrapper[node.__class__](node);
+
+}
+if __name__ == "__main__"{
+    for file in sys.argv[1:]{
+        compileFile(file);
+
+}
+}

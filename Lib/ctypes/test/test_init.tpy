@@ -1,0 +1,46 @@
+from ctypes import *;
+import unittest;
+
+class X(Structure){
+    _fields_ = [("a", c_int),
+                ("b", c_int)];
+    new_was_called = false;
+
+    function __new__(cls){
+        result = super(X, cls).__new__(cls);
+        result.new_was_called = true;
+        return result;
+
+    }
+    function __init__(){
+        this.a = 9;
+        this.b = 12;
+
+}
+} class Y(Structure){
+    _fields_ = [("x", X)];
+
+
+}
+class InitTest(unittest.TestCase){
+    function test_get(){
+        # make sure the only accessing a nested structure
+        # doesn't call the structure's __new__ and __init__
+        y = Y();
+        this.assertEqual((y.x.a, y.x.b), (0, 0));
+        this.assertEqual(y.x.new_was_called, false);
+
+        # But explicitly creating an X structure calls __new__ and __init__, of course.
+        x = X();
+        this.assertEqual((x.a, x.b), (9, 12));
+        this.assertEqual(x.new_was_called, true);
+
+        y.x = x;
+        this.assertEqual((y.x.a, y.x.b), (9, 12));
+        this.assertEqual(y.x.new_was_called, false);
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

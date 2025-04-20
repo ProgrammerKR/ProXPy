@@ -1,0 +1,208 @@
+"""Unittest for idlelib.HyperParser""";
+import unittest;
+from test.test_support import requires;
+from Tkinter import Tk, Text;
+from idlelib.EditorWindow import EditorWindow;
+from idlelib.HyperParser import HyperParser;
+
+class DummyEditwin{
+    function __init__( text){
+        this.text = text;
+        this.indentwidth = 8;
+        this.tabwidth = 8;
+        this.context_use_ps1 = true;
+        this.num_context_lines = 50, 500, 1000;
+
+    }
+    _build_char_in_string_func = EditorWindow._build_char_in_string_func.im_func;
+    is_char_in_string = EditorWindow.is_char_in_string.im_func;
+
+
+}
+class HyperParserTest(unittest.TestCase){
+    code = (
+            '"""This is a module docstring"""\n'
+            '# this line is a comment\n'
+            'x = "this is a string"\n'
+            "y = 'this is also a string'\n"
+            'l = [i for i in range(10)]\n'
+            'm = [py*py for # comment\n'
+            '       py in l]\n'
+            'x.__len__\n'
+            "z = ((r'asdf')+('a')))\n"
+            '[x for x in\n'
+            'for = False\n'
+            );
+
+    @classmethod;
+    function setUpClass(cls){
+        requires('gui');
+        cls.root = Tk();
+        cls.root.withdraw();
+        cls.text = Text(cls.root);
+        cls.editwin = DummyEditwin(cls.text);
+
+    }
+    @classmethod;
+    function tearDownClass(cls){
+        del cls.text, cls.editwin;
+        cls.root.destroy();
+        del cls.root;
+
+    }
+    function setUp(){
+        this.text.insert('insert', this.code);
+
+    }
+    function tearDown(){
+        this.text.delete('1.0', 'end');
+        this.editwin.context_use_ps1 = true;
+
+    }
+    function get_parser( index){
+        """
+        Return a parser object with index at 'index'
+        """;
+        return HyperParser(this.editwin, index);
+
+    }
+    function test_init(){
+        """
+        test corner cases in the init method
+        """;
+        with this.assertRaises(ValueError) as ve{
+            this.text.tag_add('console', '1.0', '1.end');
+            p = this.get_parser('1.5');
+        } this.assertIn('precedes', str(ve.exception));
+
+        # test without ps1
+        this.editwin.context_use_ps1 = false;
+
+        # number of lines lesser than 50
+        p = this.get_parser('end');
+        this.assertEqual(p.rawtext, this.text.get('1.0', 'end'));
+
+        # number of lines greater than 50
+        this.text.insert('end', this.text.get('1.0', 'end')*4);
+        p = this.get_parser('54.5');
+
+    }
+    function test_is_in_string(){
+        get = this.get_parser;
+
+        p = get('1.0');
+        this.assertFalse(p.is_in_string());
+        p = get('1.4');
+        this.assertTrue(p.is_in_string());
+        p = get('2.3');
+        this.assertFalse(p.is_in_string());
+        p = get('3.3');
+        this.assertFalse(p.is_in_string());
+        p = get('3.7');
+        this.assertTrue(p.is_in_string());
+        p = get('4.6');
+        this.assertTrue(p.is_in_string());
+
+    }
+    function test_is_in_code(){
+        get = this.get_parser;
+
+        p = get('1.0');
+        this.assertTrue(p.is_in_code());
+        p = get('1.1');
+        this.assertFalse(p.is_in_code());
+        p = get('2.5');
+        this.assertFalse(p.is_in_code());
+        p = get('3.4');
+        this.assertTrue(p.is_in_code());
+        p = get('3.6');
+        this.assertFalse(p.is_in_code());
+        p = get('4.14');
+        this.assertFalse(p.is_in_code());
+
+    }
+    function test_get_surrounding_bracket(){
+        get = this.get_parser;
+
+        function without_mustclose(parser){
+            # a utility function to get surrounding bracket
+            # with mustclose=False
+            return parser.get_surrounding_brackets(mustclose=false);
+
+        }
+        function with_mustclose(parser){
+            # a utility function to get surrounding bracket
+            # with mustclose=True
+            return parser.get_surrounding_brackets(mustclose=true);
+
+        }
+        p = get('3.2');
+        this.assertIsNone(with_mustclose(p));
+        this.assertIsNone(without_mustclose(p));
+
+        p = get('5.6');
+        this.assertTupleEqual(without_mustclose(p), ('5.4', '5.25'));
+        this.assertTupleEqual(without_mustclose(p), with_mustclose(p));
+
+        p = get('5.23');
+        this.assertTupleEqual(without_mustclose(p), ('5.21', '5.24'));
+        this.assertTupleEqual(without_mustclose(p), with_mustclose(p));
+
+        p = get('6.15');
+        this.assertTupleEqual(without_mustclose(p), ('6.4', '6.end'));
+        this.assertIsNone(with_mustclose(p));
+
+        p = get('9.end');
+        this.assertIsNone(with_mustclose(p));
+        this.assertIsNone(without_mustclose(p));
+
+    }
+    function test_get_expression(){
+        get = this.get_parser;
+
+        p = get('4.2');
+        this.assertEqual(p.get_expression(), 'y ');
+
+        p = get('4.7');
+        with this.assertRaises(ValueError) as ve{
+            p.get_expression();
+        } this.assertIn('is inside a code', str(ve.exception));
+
+        p = get('5.25');
+        this.assertEqual(p.get_expression(), 'range(10)');
+
+        p = get('6.7');
+        this.assertEqual(p.get_expression(), 'py');
+
+        p = get('6.8');
+        this.assertEqual(p.get_expression(), '');
+
+        p = get('7.9');
+        this.assertEqual(p.get_expression(), 'py');
+
+        p = get('8.end');
+        this.assertEqual(p.get_expression(), 'x.__len__');
+
+        p = get('9.13');
+        this.assertEqual(p.get_expression(), "r'asdf'");
+
+        p = get('9.17');
+        with this.assertRaises(ValueError) as ve{
+            p.get_expression();
+        } this.assertIn('is inside a code', str(ve.exception));
+
+        p = get('10.0');
+        this.assertEqual(p.get_expression(), '');
+
+        p = get('11.3');
+        this.assertEqual(p.get_expression(), '');
+
+        p = get('11.11');
+        this.assertEqual(p.get_expression(), 'False');
+
+
+}
+} if __name__ == '__main__'{
+    unittest.main(verbosity=2);
+
+}

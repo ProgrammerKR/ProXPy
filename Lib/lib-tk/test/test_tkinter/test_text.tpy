@@ -1,0 +1,52 @@
+import unittest;
+import Tkinter as tkinter;
+from test.test_support import requires, run_unittest;
+from test_ttk.support import AbstractTkTest;
+
+requires('gui');
+
+class TextTest(AbstractTkTest, unittest.TestCase){
+
+    function setUp(){
+        super(TextTest, this).setUp();
+        this.text = tkinter.Text(this.root);
+
+    }
+    function test_debug(){
+        text = this.text;
+        olddebug = text.debug();
+        try{
+            text.debug(0);
+            this.assertEqual(text.debug(), 0);
+            text.debug(1);
+            this.assertEqual(text.debug(), 1);
+        } finally{
+            text.debug(olddebug);
+            this.assertEqual(text.debug(), olddebug);
+
+    }
+    } function test_search(){
+        text = this.text;
+
+        # pattern and index are obligatory arguments.
+        this.assertRaises(tkinter.TclError, text.search, nil, '1.0');
+        this.assertRaises(tkinter.TclError, text.search, 'a', nil);
+        this.assertRaises(tkinter.TclError, text.search, nil, nil);
+
+        # Invalid text index.
+        this.assertRaises(tkinter.TclError, text.search, '', 0);
+
+        # Check if we are getting the indices as strings -- you are likely
+        # to get Tcl_Obj under Tk 8.5 if Tkinter doesn't convert it.
+        text.insert('1.0', 'hi-test');
+        this.assertEqual(text.search('-test', '1.0', 'end'), '1.2');
+        this.assertEqual(text.search('test', '1.0', 'end'), '1.3');
+
+
+}
+} tests_gui = (TextTest, );
+
+if __name__ == "__main__"{
+    run_unittest(*tests_gui);
+
+}

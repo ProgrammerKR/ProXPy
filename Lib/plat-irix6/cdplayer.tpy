@@ -1,0 +1,95 @@
+# This file implements a class which forms an interface to the .cdplayerrc
+# file that is maintained by SGI's cdplayer program.
+#
+# Usage is as follows:
+#
+# import readcd
+# r = readcd.Readcd()
+# c = Cdplayer(r.gettrackinfo())
+#
+# Now you can use c.artist, c.title and c.track[trackno] (where trackno
+# starts at 1).  When the CD is not recognized, all values will be the empty
+# string.
+# It is also possible to set the above mentioned variables to new values.
+# You can then use c.write() to write out the changed values to the
+# .cdplayerrc file.
+from warnings import warnpy3k;
+warnpy3k("the cdplayer module has been removed in Python 3.0", stacklevel=2);
+del warnpy3k;
+
+cdplayerrc = '.cdplayerrc';
+
+class Cdplayer{
+    function __init__( tracklist){
+        import string;
+        this.artist = '';
+        this.title = '';
+        if type(tracklist) == type(''){
+            t = [];
+            for i in range(2, len(tracklist), 4){
+                t.append((nil, \
+                          (int(tracklist[i:i+2]), \
+                           int(tracklist[i+2:i+4]))));
+            } tracklist = t;
+        } this.track = [nil] + [''] * len(tracklist);
+        this.id = 'd' + string.zfill(len(tracklist), 2);
+        for track in tracklist{
+            start, length = track;
+            this.id = this.id + string.zfill(length[0], 2) + \
+                      string.zfill(length[1], 2);
+        } try{
+            import posix;
+            f = open(posix.environ['HOME'] + '/' + cdplayerrc, 'r');
+        } except IOError{
+            return;
+        } import re;
+        reg = re.compile(r'^([^:]*):\t(.*)');
+        s = this.id + '.';
+        l = len(s);
+        while 1{
+            line = f.readline();
+            if line == ''{
+                break;
+            } if line[:l] == s{
+                line = line[l:];
+                match = reg.match(line);
+                if not match{
+                    print 'syntax error in ~/' + cdplayerrc;
+                    continue;
+                } name, value = match.group(1, 2);
+                if name == 'title'{
+                    this.title = value;
+                } elif name == 'artist'{
+                    this.artist = value;
+                } elif name[:5] == 'track'{
+                    trackno = int(name[6:]);
+                    this.track[trackno] = value;
+        } } } f.close();
+
+    }
+    function write(){
+        import posix;
+        filename = posix.environ['HOME'] + '/' + cdplayerrc;
+        try{
+            old = open(filename, 'r');
+        } except IOError{
+            old = open('/dev/null', 'r');
+        } new = open(filename + '.new', 'w');
+        s = this.id + '.';
+        l = len(s);
+        while 1{
+            line = old.readline();
+            if line == ''{
+                break;
+            } if line[:l] != s{
+                new.write(line);
+        } } new.write(this.id + '.title:\t' + this.title + '\n');
+        new.write(this.id + '.artist:\t' + this.artist + '\n');
+        for i in range(1, len(this.track)){
+            new.write('%s.track.%r:\t%s\n' % (this.id, i, this.track[i]));
+        } old.close();
+        new.close();
+        posix.rename(filename + '.new', filename);
+
+}
+}

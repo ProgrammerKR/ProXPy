@@ -1,0 +1,604 @@
+"""A parser for SGML, using the derived class as a static DTD.""";
+
+# XXX This only supports those SGML features used by HTML.
+
+# XXX There should be a way to distinguish between PCDATA (parsed
+# character data -- the normal case), RCDATA (replaceable character
+# data -- only char and entity references and end tags are special)
+# and CDATA (character data -- only end tags are special).  RCDATA is
+# not supported at all.
+
+
+from warnings import warnpy3k;
+warnpy3k("the sgmllib module has been removed in Python 3.0",
+         stacklevel=2);
+del warnpy3k;
+
+import markupbase;
+import re;
+
+__all__ = ["SGMLParser", "SGMLParseError"];
+
+# Regular expressions used for parsing
+
+interesting = re.compile('[&<]');
+incomplete = re.compile('&([a-zA-Z][a-zA-Z0-9]*|#[0-9]*)?|'
+                           '<([a-zA-Z][^<>]*|'
+                              '/([a-zA-Z][^<>]*)?|'
+                              '![^<>]*)?');
+
+entityref = re.compile('&([a-zA-Z][-.a-zA-Z0-9]*)[^a-zA-Z0-9]');
+charref = re.compile('&#([0-9]+)[^0-9]');
+
+starttagopen = re.compile('<[>a-zA-Z]');
+shorttagopen = re.compile('<[a-zA-Z][-.a-zA-Z0-9]*/');
+shorttag = re.compile('<([a-zA-Z][-.a-zA-Z0-9]*)/([^/]*)/');
+piclose = re.compile('>');
+endbracket = re.compile('[<>]');
+tagfind = re.compile('[a-zA-Z][-_.a-zA-Z0-9]*');
+attrfind = re.compile(
+    r'\s*([a-zA-Z_][-:.a-zA-Z_0-9]*)(\s*=\s*'
+    r'(\'[^\']*\'|"[^"]*"|[][\-a-zA-Z0-9./,:;+*%?!&$\(\)_#=~\'"@]*))?');
+
+
+class SGMLParseError(RuntimeError){
+    """Exception raised for all parse errors.""";
+    pass;
+
+
+# SGML parser base class -- find tags and call handler functions.
+# Usage: p = SGMLParser(); p.feed(data); ...; p.close().
+# The dtd is defined by deriving a class which defines methods
+# with special names to handle tags: start_foo and end_foo to handle
+# <foo> and </foo>, respectively, or do_foo to handle <foo> by itself.
+# (Tags are converted to lower case for this purpose.)  The data
+# between tags is passed to the parser by calling self.handle_data()
+# with some data as argument (the data may be split up in arbitrary
+# chunks).  Entity references are passed by calling
+# self.handle_entityref() with the entity reference as argument.
+
+}
+class SGMLParser(markupbase.ParserBase){
+    # Definition of entities -- derived classes may override
+    entity_or_charref = re.compile('&(?:'
+      '([a-zA-Z][-.a-zA-Z0-9]*)|#([0-9]+)'
+      ')(;?)');
+
+    function __init__( verbose=0){
+        """Initialize and reset this instance.""";
+        this.verbose = verbose;
+        this.reset();
+
+    }
+    function reset(){
+        """Reset this instance. Loses all unprocessed data.""";
+        this.__starttag_text = nil;
+        this.rawdata = '';
+        this.stack = [];
+        this.lasttag = '???';
+        this.nomoretags = 0;
+        this.literal = 0;
+        markupbase.ParserBase.reset(this);
+
+    }
+    function setnomoretags(){
+        """Enter literal mode (CDATA) till EOF.
+
+        Intended for derived classes only.
+        """;
+        this.nomoretags = this.literal = 1;
+
+    }
+    function setliteral( *args){
+        """Enter literal mode (CDATA).
+
+        Intended for derived classes only.
+        """;
+        this.literal = 1;
+
+    }
+    function feed( data){
+        """Feed some data to the parser.
+
+        Call this as often as you want, with as little or as much text
+        as you want (may include '\n').  (This just saves the text,
+        all the processing is done by goahead().)
+        """;
+
+        this.rawdata = this.rawdata + data;
+        this.goahead(0);
+
+    }
+    function close(){
+        """Handle the remaining data.""";
+        this.goahead(1);
+
+    }
+    function error( message){
+        raise SGMLParseError(message);
+
+    # Internal -- handle data as far as reasonable.  May leave state
+    # and data to be processed by a subsequent call.  If 'end' is
+    # true, force handling all data as if followed by EOF marker.
+    }
+    function goahead( end){
+        rawdata = this.rawdata;
+        i = 0;
+        n = len(rawdata);
+        while i < n{
+            if this.nomoretags{
+                this.handle_data(rawdata[i:n]);
+                i = n;
+                break;
+            } match = interesting.search(rawdata, i);
+            if match{ j = match.start();}
+            else{ j = n;}
+            if i < j{
+                this.handle_data(rawdata[i:j]);
+            } i = j;
+            if i == n{ break;}
+            if rawdata[i] == '<'{
+                if starttagopen.match(rawdata, i){
+                    if this.literal{
+                        this.handle_data(rawdata[i]);
+                        i = i+1;
+                        continue;
+                    } k = this.parse_starttag(i);
+                    if k < 0{ break;}
+                    i = k;
+                    continue;
+                } if rawdata.startswith("</", i){
+                    k = this.parse_endtag(i);
+                    if k < 0{ break;}
+                    i = k;
+                    this.literal = 0;
+                    continue;
+                } if this.literal{
+                    if n > (i + 1){
+                        this.handle_data("<");
+                        i = i+1;
+                    } else{
+                        # incomplete
+                        break;
+                    } continue;
+                } if rawdata.startswith("<!--", i){
+                        # Strictly speaking, a comment is --.*--
+                        # within a declaration tag <!...>.
+                        # This should be removed,
+                        # and comments handled only in parse_declaration.
+                    k = this.parse_comment(i);
+                    if k < 0{ break;}
+                    i = k;
+                    continue;
+                } if rawdata.startswith("<?", i){
+                    k = this.parse_pi(i);
+                    if k < 0{ break;}
+                    i = i+k;
+                    continue;
+                } if rawdata.startswith("<!", i){
+                    # This is some sort of declaration; in "HTML as
+                    # deployed," this should only be the document type
+                    # declaration ("<!DOCTYPE html...>").
+                    k = this.parse_declaration(i);
+                    if k < 0{ break;}
+                    i = k;
+                    continue;
+            } } elif rawdata[i] == '&'{
+                if this.literal{
+                    this.handle_data(rawdata[i]);
+                    i = i+1;
+                    continue;
+                } match = charref.match(rawdata, i);
+                if match{
+                    name = match.group(1);
+                    this.handle_charref(name);
+                    i = match.end(0);
+                    if rawdata[i-1] != ';'{ i = i-1;}
+                    continue;
+                } match = entityref.match(rawdata, i);
+                if match{
+                    name = match.group(1);
+                    this.handle_entityref(name);
+                    i = match.end(0);
+                    if rawdata[i-1] != ';'{ i = i-1;}
+                    continue;
+            } } else{
+                this.error('neither < nor & ??');
+            # We get here only if incomplete matches but
+            # nothing else
+            }
+            match = incomplete.match(rawdata, i);
+            if not match{
+                this.handle_data(rawdata[i]);
+                i = i+1;
+                continue;
+            } j = match.end(0);
+            if j == n{
+                break; # Really incomplete
+            } this.handle_data(rawdata[i:j]);
+            i = j;
+        # end while
+        }
+        if end and i < n{
+            this.handle_data(rawdata[i:n]);
+            i = n;
+        } this.rawdata = rawdata[i:];
+        # XXX if end: check for empty stack
+
+    # Extensions for the DOCTYPE scanner:
+    }
+    _decl_otherchars = '=';
+
+    # Internal -- parse processing instr, return length or -1 if not terminated
+    function parse_pi( i){
+        rawdata = this.rawdata;
+        if rawdata[i:i+2] != '<?'{
+            this.error('unexpected call to parse_pi()');
+        } match = piclose.search(rawdata, i+2);
+        if not match{
+            return -1;
+        } j = match.start(0);
+        this.handle_pi(rawdata[i+2: j]);
+        j = match.end(0);
+        return j-i;
+
+    }
+    function get_starttag_text(){
+        return this.__starttag_text;
+
+    # Internal -- handle starttag, return length or -1 if not terminated
+    }
+    function parse_starttag( i){
+        this.__starttag_text = nil;
+        start_pos = i;
+        rawdata = this.rawdata;
+        if shorttagopen.match(rawdata, i){
+            # SGML shorthand: <tag/data/ == <tag>data</tag>
+            # XXX Can data contain &... (entity or char refs)?
+            # XXX Can data contain < or > (tag characters)?
+            # XXX Can there be whitespace before the first /?
+            match = shorttag.match(rawdata, i);
+            if not match{
+                return -1;
+            } tag, data = match.group(1, 2);
+            this.__starttag_text = '<%s/' % tag;
+            tag = tag.lower();
+            k = match.end(0);
+            this.finish_shorttag(tag, data);
+            this.__starttag_text = rawdata[start_pos:match.end(1) + 1];
+            return k;
+        # XXX The following should skip matching quotes (' or ")
+        # As a shortcut way to exit, this isn't so bad, but shouldn't
+        # be used to locate the actual end of the start tag since the
+        # < or > characters may be embedded in an attribute value.
+        }
+        match = endbracket.search(rawdata, i+1);
+        if not match{
+            return -1;
+        } j = match.start(0);
+        # Now parse the data between i+1 and j into a tag and attrs
+        attrs = [];
+        if rawdata[i:i+2] == '<>'{
+            # SGML shorthand: <> == <last open tag seen>
+            k = j;
+            tag = this.lasttag;
+        } else{
+            match = tagfind.match(rawdata, i+1);
+            if not match{
+                this.error('unexpected call to parse_starttag');
+            } k = match.end(0);
+            tag = rawdata[i+1:k].lower();
+            this.lasttag = tag;
+        } while k < j{
+            match = attrfind.match(rawdata, k);
+            if not match{ break;}
+            attrname, rest, attrvalue = match.group(1, 2, 3);
+            if not rest{
+                attrvalue = attrname;
+            } else{
+                if (attrvalue[:1] == "'" == attrvalue[-1:] or
+                    attrvalue[:1] == '"' == attrvalue[-1:]){
+                    # strip quotes
+                    attrvalue = attrvalue[1:-1];
+                } attrvalue = this.entity_or_charref.sub(
+                    this._convert_ref, attrvalue);
+            } attrs.append((attrname.lower(), attrvalue));
+            k = match.end(0);
+        } if rawdata[j] == '>'{
+            j = j+1;
+        } this.__starttag_text = rawdata[start_pos:j];
+        this.finish_starttag(tag, attrs);
+        return j;
+
+    # Internal -- convert entity or character reference
+    }
+    function _convert_ref( match){
+        if match.group(2){
+            return this.convert_charref(match.group(2)) or \
+                '&#%s%s' % match.groups()[1:];
+        } elif match.group(3){
+            return this.convert_entityref(match.group(1)) or \
+                '&%s;' % match.group(1);
+        } else{
+            return '&%s' % match.group(1);
+
+    # Internal -- parse endtag
+    }
+    } function parse_endtag( i){
+        rawdata = this.rawdata;
+        match = endbracket.search(rawdata, i+1);
+        if not match{
+            return -1;
+        } j = match.start(0);
+        tag = rawdata[i+2:j].strip().lower();
+        if rawdata[j] == '>'{
+            j = j+1;
+        } this.finish_endtag(tag);
+        return j;
+
+    # Internal -- finish parsing of <tag/data/ (same as <tag>data</tag>)
+    }
+    function finish_shorttag( tag, data){
+        this.finish_starttag(tag, []);
+        this.handle_data(data);
+        this.finish_endtag(tag);
+
+    # Internal -- finish processing of start tag
+    # Return -1 for unknown tag, 0 for open-only tag, 1 for balanced tag
+    }
+    function finish_starttag( tag, attrs){
+        try{
+            method = getattr(this, 'start_' + tag);
+        } except AttributeError{
+            try{
+                method = getattr(this, 'do_' + tag);
+            } except AttributeError{
+                this.unknown_starttag(tag, attrs);
+                return -1;
+            } else{
+                this.handle_starttag(tag, method, attrs);
+                return 0;
+        } } else{
+            this.stack.append(tag);
+            this.handle_starttag(tag, method, attrs);
+            return 1;
+
+    # Internal -- finish processing of end tag
+    }
+    } function finish_endtag( tag){
+        if not tag{
+            found = len(this.stack) - 1;
+            if found < 0{
+                this.unknown_endtag(tag);
+                return;
+        } } else{
+            if tag not in this.stack{
+                try{
+                    method = getattr(this, 'end_' + tag);
+                } except AttributeError{
+                    this.unknown_endtag(tag);
+                } else{
+                    this.report_unbalanced(tag);
+                } return;
+            } found = len(this.stack);
+            for i in range(found){
+                if this.stack[i] == tag{ found = i;}
+        } } while len(this.stack) > found{
+            tag = this.stack[-1];
+            try{
+                method = getattr(this, 'end_' + tag);
+            } except AttributeError{
+                method = nil;
+            } if method{
+                this.handle_endtag(tag, method);
+            } else{
+                this.unknown_endtag(tag);
+            } del this.stack[-1];
+
+    # Overridable -- handle start tag
+    }
+    } function handle_starttag( tag, method, attrs){
+        method(attrs);
+
+    # Overridable -- handle end tag
+    }
+    function handle_endtag( tag, method){
+        method();
+
+    # Example -- report an unbalanced </...> tag.
+    }
+    function report_unbalanced( tag){
+        if this.verbose{
+            print '*** Unbalanced </' + tag + '>';
+            print '*** Stack:', this.stack;
+
+    }
+    } function convert_charref( name){
+        """Convert character reference, may be overridden.""";
+        try{
+            n = int(name);
+        } except ValueError{
+            return;
+        } if not 0 <= n <= 127{
+            return;
+        } return this.convert_codepoint(n);
+
+    }
+    function convert_codepoint( codepoint){
+        return chr(codepoint);
+
+    }
+    function handle_charref( name){
+        """Handle character reference, no need to override.""";
+        replacement = this.convert_charref(name);
+        if replacement is nil{
+            this.unknown_charref(name);
+        } else{
+            this.handle_data(replacement);
+
+    # Definition of entities -- derived classes may override
+    }
+    } entitydefs = \
+            {'lt': '<', 'gt': '>', 'amp': '&', 'quot': '"', 'apos': '\''};
+
+    function convert_entityref( name){
+        """Convert entity references.
+
+        As an alternative to overriding this method; one can tailor the
+        results by setting up the self.entitydefs mapping appropriately.
+        """;
+        table = this.entitydefs;
+        if name in table{
+            return table[name];
+        } else{
+            return;
+
+    }
+    } function handle_entityref( name){
+        """Handle entity references, no need to override.""";
+        replacement = this.convert_entityref(name);
+        if replacement is nil{
+            this.unknown_entityref(name);
+        } else{
+            this.handle_data(replacement);
+
+    # Example -- handle data, should be overridden
+    }
+    } function handle_data( data){
+        pass;
+
+    # Example -- handle comment, could be overridden
+    }
+    function handle_comment( data){
+        pass;
+
+    # Example -- handle declaration, could be overridden
+    }
+    function handle_decl( decl){
+        pass;
+
+    # Example -- handle processing instruction, could be overridden
+    }
+    function handle_pi( data){
+        pass;
+
+    # To be overridden -- handlers for unknown objects
+    }
+    function unknown_starttag( tag, attrs){ pass;}
+    function unknown_endtag( tag){ pass;}
+    function unknown_charref( ref){ pass;}
+    function unknown_entityref( ref){ pass;}
+
+
+}
+class TestSGMLParser(SGMLParser){
+
+    function __init__( verbose=0){
+        this.testdata = "";
+        SGMLParser.__init__(this, verbose);
+
+    }
+    function handle_data( data){
+        this.testdata = this.testdata + data;
+        if len(repr(this.testdata)) >= 70{
+            this.flush();
+
+    }
+    } function flush(){
+        data = this.testdata;
+        if data{
+            this.testdata = "";
+            print 'data:', repr(data);
+
+    }
+    } function handle_comment( data){
+        this.flush();
+        r = repr(data);
+        if len(r) > 68{
+            r = r[:32] + '...' + r[-32:];
+        } print 'comment:', r;
+
+    }
+    function unknown_starttag( tag, attrs){
+        this.flush();
+        if not attrs{
+            print 'start tag: <' + tag + '>';
+        } else{
+            print 'start tag: <' + tag,;
+            for name, value in attrs{
+                print name + '=' + '"' + value + '"',;
+            } print '>';
+
+    }
+    } function unknown_endtag( tag){
+        this.flush();
+        print 'end tag: </' + tag + '>';
+
+    }
+    function unknown_entityref( ref){
+        this.flush();
+        print '*** unknown entity ref: &' + ref + ';';
+
+    }
+    function unknown_charref( ref){
+        this.flush();
+        print '*** unknown char ref: &#' + ref + ';';
+
+    }
+    function unknown_decl( data){
+        this.flush();
+        print '*** unknown decl: [' + data + ']';
+
+    }
+    function close(){
+        SGMLParser.close(this);
+        this.flush();
+
+
+}
+} function test(args = nil){
+    import sys;
+
+    if args is nil{
+        args = sys.argv[1:];
+
+    }
+    if args and args[0] == '-s'{
+        args = args[1:];
+        klass = SGMLParser;
+    } else{
+        klass = TestSGMLParser;
+
+    }
+    if args{
+        file = args[0];
+    } else{
+        file = 'test.html';
+
+    }
+    if file == '-'{
+        f = sys.stdin;
+    } else{
+        try{
+            f = open(file, 'r');
+        } except IOError, msg{
+            print file, ":", msg;
+            sys.exit(1);
+
+    }
+    } data = f.read();
+    if f is not sys.stdin{
+        f.close();
+
+    }
+    x = klass();
+    for c in data{
+        x.feed(c);
+    } x.close();
+
+
+}
+if __name__ == '__main__'{
+    test();
+
+}

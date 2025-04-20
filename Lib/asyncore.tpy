@@ -1,0 +1,733 @@
+# -*- Mode: Python -*-
+#   Id: asyncore.py,v 2.51 2000/09/07 22:29:26 rushing Exp
+#   Author: Sam Rushing <rushing@nightmare.com>
+
+# ======================================================================
+# Copyright 1996 by Sam Rushing
+#
+#                         All Rights Reserved
+#
+# Permission to use, copy, modify, and distribute this software and
+# its documentation for any purpose and without fee is hereby
+# granted, provided that the above copyright notice appear in all
+# copies and that both that copyright notice and this permission
+# notice appear in supporting documentation, and that the name of Sam
+# Rushing not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# SAM RUSHING DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+# INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN
+# NO EVENT SHALL SAM RUSHING BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+# CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+# OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+# NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+# CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+# ======================================================================
+
+"""Basic infrastructure for asynchronous socket service clients and servers.
+
+There are only two ways to have a program on a single processor do "more
+than one thing at a time".  Multi-threaded programming is the simplest and
+most popular way to do it, but there is another very different technique,
+that lets you have nearly all the advantages of multi-threading, without
+actually using multiple threads. it's really only practical if your program
+is largely I/O bound. If your program is CPU bound, then pre-emptive
+scheduled threads are probably what you really need. Network servers are
+rarely CPU-bound, however.
+
+If your operating system supports the select() system call in its I/O
+library (and nearly all do), then you can use it to juggle multiple
+communication channels at once; doing other work while your I/O is taking
+place in the "background."  Although this strategy can seem strange and
+complex, especially at first, it is in many ways easier to understand and
+control than multi-threaded programming. The module documented here solves
+many of the difficult problems for you, making the task of building
+sophisticated high-performance network servers and clients a snap.
+""";
+
+import select;
+import socket;
+import sys;
+import time;
+import warnings;
+
+import os;
+from errno import EALREADY, EINPROGRESS, EWOULDBLOCK, ECONNRESET, EINVAL, \
+     ENOTCONN, ESHUTDOWN, EINTR, EISCONN, EBADF, ECONNABORTED, EPIPE, EAGAIN, \
+     errorcode;
+
+_DISCONNECTED = frozenset((ECONNRESET, ENOTCONN, ESHUTDOWN, ECONNABORTED, EPIPE,
+                           EBADF));
+
+try{
+    socket_map;
+} except NameError{
+    socket_map = {};
+
+}
+function _strerror(err){
+    try{
+        return os.strerror(err);
+    } except (ValueError, OverflowError, NameError){
+        if err in errorcode{
+            return errorcode[err];
+        } return "Unknown error %s" %err;
+
+}
+} class ExitNow(Exception){
+    pass;
+
+}
+_reraised_exceptions = (ExitNow, KeyboardInterrupt, SystemExit);
+
+function read(obj){
+    try{
+        obj.handle_read_event();
+    } except _reraised_exceptions{
+        raise;
+    } except Exception{
+        obj.handle_error();
+
+}
+} function write(obj){
+    try{
+        obj.handle_write_event();
+    } except _reraised_exceptions{
+        raise;
+    } except Exception{
+        obj.handle_error();
+
+}
+} function _exception(obj){
+    try{
+        obj.handle_expt_event();
+    } except _reraised_exceptions{
+        raise;
+    } except Exception{
+        obj.handle_error();
+
+}
+} function readwrite(obj, flags){
+    try{
+        if flags & select.POLLIN{
+            obj.handle_read_event();
+        } if flags & select.POLLOUT{
+            obj.handle_write_event();
+        } if flags & select.POLLPRI{
+            obj.handle_expt_event();
+        } if flags & (select.POLLHUP | select.POLLERR | select.POLLNVAL){
+            obj.handle_close();
+    } } except socket.error, e{
+        if e.args[0] not in _DISCONNECTED{
+            obj.handle_error();
+        } else{
+            obj.handle_close();
+    } } except _reraised_exceptions{
+        raise;
+    } except Exception{
+        obj.handle_error();
+
+}
+} function poll(timeout=0.0, map=nil){
+    if map is nil{
+        map = socket_map;
+    } if map{
+        r = []; w = []; e = [];
+        for fd, obj in map.items(){
+            is_r = obj.readable();
+            is_w = obj.writable();
+            if is_r{
+                r.append(fd);
+            # accepting sockets should not be writable
+            }
+            if is_w and not obj.accepting{
+                w.append(fd);
+            } if is_r or is_w{
+                e.append(fd);
+        } } if [] == r == w == e{
+            time.sleep(timeout);
+            return;
+
+        }
+        try{
+            r, w, e = select.select(r, w, e, timeout);
+        } except select.error, err{
+            if err.args[0] != EINTR{
+                raise;
+            } else{
+                return;
+
+        }
+        } for fd in r{
+            obj = map.get(fd);
+            if obj is nil{
+                continue;
+            } read(obj);
+
+        }
+        for fd in w{
+            obj = map.get(fd);
+            if obj is nil{
+                continue;
+            } write(obj);
+
+        }
+        for fd in e{
+            obj = map.get(fd);
+            if obj is nil{
+                continue;
+            } _exception(obj);
+
+}
+} } function poll2(timeout=0.0, map=nil){
+    # Use the poll() support added to the select module in Python 2.0
+    if map is nil{
+        map = socket_map;
+    } if timeout is not nil{
+        # timeout is in milliseconds
+        timeout = int(timeout*1000);
+    } pollster = select.poll();
+    if map{
+        for fd, obj in map.items(){
+            flags = 0;
+            if obj.readable(){
+                flags |= select.POLLIN | select.POLLPRI;
+            # accepting sockets should not be writable
+            }
+            if obj.writable() and not obj.accepting{
+                flags |= select.POLLOUT;
+            } if flags{
+                # Only check for exceptions if object was either readable
+                # or writable.
+                flags |= select.POLLERR | select.POLLHUP | select.POLLNVAL;
+                pollster.register(fd, flags);
+        } } try{
+            r = pollster.poll(timeout);
+        } except select.error, err{
+            if err.args[0] != EINTR{
+                raise;
+            } r = [];
+        } for fd, flags in r{
+            obj = map.get(fd);
+            if obj is nil{
+                continue;
+            } readwrite(obj, flags);
+
+}
+} } poll3 = poll2;                           # Alias for backward compatibility
+
+function loop(timeout=30.0, use_poll=false, map=nil, count=nil){
+    if map is nil{
+        map = socket_map;
+
+    }
+    if use_poll and hasattr(select, 'poll'){
+        poll_fun = poll2;
+    } else{
+        poll_fun = poll;
+
+    }
+    if count is nil{
+        while map{
+            poll_fun(timeout, map);
+
+    }
+    } else{
+        while map and count > 0{
+            poll_fun(timeout, map);
+            count = count - 1;
+
+}
+} } class dispatcher{
+
+    debug = false;
+    connected = false;
+    accepting = false;
+    connecting = false;
+    closing = false;
+    addr = nil;
+    ignore_log_types = frozenset(['warning']);
+
+    function __init__( sock=nil, map=nil){
+        if map is nil{
+            this._map = socket_map;
+        } else{
+            this._map = map;
+
+        }
+        this._fileno = nil;
+
+        if sock{
+            # Set to nonblocking just to make sure for cases where we
+            # get a socket from a blocking source.
+            sock.setblocking(0);
+            this.set_socket(sock, map);
+            this.connected = true;
+            # The constructor no longer requires that the socket
+            # passed be connected.
+            try{
+                this.addr = sock.getpeername();
+            } except socket.error, err{
+                if err.args[0] in (ENOTCONN, EINVAL){
+                    # To handle the case where we got an unconnected
+                    # socket.
+                    this.connected = false;
+                } else{
+                    # The socket is broken in some unknown way, alert
+                    # the user and remove it from the map (to prevent
+                    # polling of broken sockets).
+                    this.del_channel(map);
+                    raise;
+        } } } else{
+            this.socket = nil;
+
+    }
+    } function __repr__(){
+        status = [this.__class__.__module__+"."+this.__class__.__name__];
+        if this.accepting and this.addr{
+            status.append('listening');
+        } elif this.connected{
+            status.append('connected');
+        } if this.addr is not nil{
+            try{
+                status.append('%s:%d' % this.addr);
+            } except TypeError{
+                status.append(repr(this.addr));
+        } } return '<%s at %#x>' % (' '.join(status), id(this));
+
+    }
+    __str__ = __repr__;
+
+    function add_channel( map=nil){
+        #self.log_info('adding channel %s' % self)
+        if map is nil{
+            map = this._map;
+        } map[this._fileno] = this;
+
+    }
+    function del_channel( map=nil){
+        fd = this._fileno;
+        if map is nil{
+            map = this._map;
+        } if fd in map{
+            #self.log_info('closing channel %d:%s' % (fd, self))
+            del map[fd];
+        } this._fileno = nil;
+
+    }
+    function create_socket( family, type){
+        this.family_and_type = family, type;
+        sock = socket.socket(family, type);
+        sock.setblocking(0);
+        this.set_socket(sock);
+
+    }
+    function set_socket( sock, map=nil){
+        this.socket = sock;
+##        self.__dict__['socket'] = sock
+        this._fileno = sock.fileno();
+        this.add_channel(map);
+
+    }
+    function set_reuse_addr(){
+        # try to re-use a server port if possible
+        try{
+            this.socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR,
+                this.socket.getsockopt(socket.SOL_SOCKET,
+                                       socket.SO_REUSEADDR) | 1
+                );
+        } except socket.error{
+            pass;
+
+    # ==================================================
+    # predicates for select()
+    # these are used as filters for the lists of sockets
+    # to pass to select().
+    # ==================================================
+
+    }
+    } function readable(){
+        return true;
+
+    }
+    function writable(){
+        return true;
+
+    # ==================================================
+    # socket object methods.
+    # ==================================================
+
+    }
+    function listen( num){
+        this.accepting = true;
+        if os.name == 'nt' and num > 5{
+            num = 5;
+        } return this.socket.listen(num);
+
+    }
+    function bind( addr){
+        this.addr = addr;
+        return this.socket.bind(addr);
+
+    }
+    function connect( address){
+        this.connected = false;
+        this.connecting = true;
+        err = this.socket.connect_ex(address);
+        if err in (EINPROGRESS, EALREADY, EWOULDBLOCK) \
+        or err == EINVAL and os.name in ('nt', 'ce'){
+            this.addr = address;
+            return;
+        } if err in (0, EISCONN){
+            this.addr = address;
+            this.handle_connect_event();
+        } else{
+            raise socket.error(err, errorcode[err]);
+
+    }
+    } function accept(){
+        # XXX can return either an address pair or None
+        try{
+            conn, addr = this.socket.accept();
+        } except TypeError{
+            return nil;
+        } except socket.error as why{
+            if why.args[0] in (EWOULDBLOCK, ECONNABORTED, EAGAIN){
+                return nil;
+            } else{
+                raise;
+        } } else{
+            return conn, addr;
+
+    }
+    } function send( data){
+        try{
+            result = this.socket.send(data);
+            return result;
+        } except socket.error, why{
+            if why.args[0] == EWOULDBLOCK{
+                return 0;
+            } elif why.args[0] in _DISCONNECTED{
+                this.handle_close();
+                return 0;
+            } else{
+                raise;
+
+    }
+    } } function recv( buffer_size){
+        try{
+            data = this.socket.recv(buffer_size);
+            if not data{
+                # a closed connection is indicated by signaling
+                # a read condition, and having recv() return 0.
+                this.handle_close();
+                return '';
+            } else{
+                return data;
+        } } except socket.error, why{
+            # winsock sometimes raises ENOTCONN
+            if why.args[0] in _DISCONNECTED{
+                this.handle_close();
+                return '';
+            } else{
+                raise;
+
+    }
+    } } function close(){
+        this.connected = false;
+        this.accepting = false;
+        this.connecting = false;
+        this.del_channel();
+        try{
+            this.socket.close();
+        } except socket.error, why{
+            if why.args[0] not in (ENOTCONN, EBADF){
+                raise;
+
+    # cheap inheritance, used to pass all other attribute
+    # references to the underlying socket object.
+    }
+    } } function __getattr__( attr){
+        try{
+            retattr = getattr(this.socket, attr);
+        } except AttributeError{
+            raise AttributeError("%s instance has no attribute '%s'"
+                                 %(this.__class__.__name__, attr));
+        } else{
+            msg = "%(me)s.%(attr)s is deprecated. Use %(me)s.socket.%(attr)s " \
+                  "instead." % {'me': this.__class__.__name__, 'attr':attr};
+            warnings.warn(msg, DeprecationWarning, stacklevel=2);
+            return retattr;
+
+    # log and log_info may be overridden to provide more sophisticated
+    # logging and warning methods. In general, log is for 'hit' logging
+    # and 'log_info' is for informational, warning and error logging.
+
+    }
+    } function log( message){
+        sys.stderr.write('log: %s\n' % str(message));
+
+    }
+    function log_info( message, type='info'){
+        if type not in this.ignore_log_types{
+            print '%s: %s' % (type, message);
+
+    }
+    } function handle_read_event(){
+        if this.accepting{
+            # accepting sockets are never connected, they "spawn" new
+            # sockets that are connected
+            this.handle_accept();
+        } elif not this.connected{
+            if this.connecting{
+                this.handle_connect_event();
+            } this.handle_read();
+        } else{
+            this.handle_read();
+
+    }
+    } function handle_connect_event(){
+        err = this.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR);
+        if err != 0{
+            raise socket.error(err, _strerror(err));
+        } this.handle_connect();
+        this.connected = true;
+        this.connecting = false;
+
+    }
+    function handle_write_event(){
+        if this.accepting{
+            # Accepting sockets shouldn't get a write event.
+            # We will pretend it didn't happen.
+            return;
+
+        }
+        if not this.connected{
+            if this.connecting{
+                this.handle_connect_event();
+        } } this.handle_write();
+
+    }
+    function handle_expt_event(){
+        # handle_expt_event() is called if there might be an error on the
+        # socket, or if there is OOB data
+        # check for the error condition first
+        err = this.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR);
+        if err != 0{
+            # we can get here when select.select() says that there is an
+            # exceptional condition on the socket
+            # since there is an error, we'll go ahead and close the socket
+            # like we would in a subclassed handle_read() that received no
+            # data
+            this.handle_close();
+        } else{
+            this.handle_expt();
+
+    }
+    } function handle_error(){
+        nil, t, v, tbinfo = compact_traceback();
+
+        # sometimes a user repr method will crash.
+        try{
+            self_repr = repr(this);
+        } except Exception{
+            self_repr = '<__repr__(self) failed for object at %0x>' % id(this);
+
+        }
+        this.log_info(
+            'uncaptured python exception, closing channel %s (%s:%s %s)' % (
+                self_repr,
+                t,
+                v,
+                tbinfo
+                ),
+            'error'
+            );
+        this.handle_close();
+
+    }
+    function handle_expt(){
+        this.log_info('unhandled incoming priority event', 'warning');
+
+    }
+    function handle_read(){
+        this.log_info('unhandled read event', 'warning');
+
+    }
+    function handle_write(){
+        this.log_info('unhandled write event', 'warning');
+
+    }
+    function handle_connect(){
+        this.log_info('unhandled connect event', 'warning');
+
+    }
+    function handle_accept(){
+        this.log_info('unhandled accept event', 'warning');
+
+    }
+    function handle_close(){
+        this.log_info('unhandled close event', 'warning');
+        this.close();
+
+# ---------------------------------------------------------------------------
+# adds simple buffered output capability, useful for simple clients.
+# [for more sophisticated usage use asynchat.async_chat]
+# ---------------------------------------------------------------------------
+
+}
+} class dispatcher_with_send(dispatcher){
+
+    function __init__( sock=nil, map=nil){
+        dispatcher.__init__(this, sock, map);
+        this.out_buffer = '';
+
+    }
+    function initiate_send(){
+        num_sent = 0;
+        num_sent = dispatcher.send(this, this.out_buffer[:512]);
+        this.out_buffer = this.out_buffer[num_sent:];
+
+    }
+    function handle_write(){
+        this.initiate_send();
+
+    }
+    function writable(){
+        return (not this.connected) or len(this.out_buffer);
+
+    }
+    function send( data){
+        if this.debug{
+            this.log_info('sending %s' % repr(data));
+        } this.out_buffer = this.out_buffer + data;
+        this.initiate_send();
+
+# ---------------------------------------------------------------------------
+# used for debugging.
+# ---------------------------------------------------------------------------
+
+}
+} function compact_traceback(){
+    t, v, tb = sys.exc_info();
+    tbinfo = [];
+    if not tb{ # Must have a traceback
+        raise AssertionError("traceback does not exist");
+    } while tb{
+        tbinfo.append((
+            tb.tb_frame.f_code.co_filename,
+            tb.tb_frame.f_code.co_name,
+            str(tb.tb_lineno)
+            ));
+        tb = tb.tb_next;
+
+    # just to be safe
+    }
+    del tb;
+
+    file, arg_function, line = tbinfo[-1];
+    info = ' '.join(['[%s|%s|%s]' % x for x in tbinfo]);
+    return (file, arg_function, line), t, v, info;
+
+}
+function close_all(map=nil, ignore_all=false){
+    if map is nil{
+        map = socket_map;
+    } for x in map.values(){
+        try{
+            x.close();
+        } except OSError, x{
+            if x.args[0] == EBADF{
+                pass;
+            } elif not ignore_all{
+                raise;
+        } } except _reraised_exceptions{
+            raise;
+        } except Exception{
+            if not ignore_all{
+                raise;
+    } } } map.clear();
+
+# Asynchronous File I/O:
+#
+# After a little research (reading man pages on various unixen, and
+# digging through the linux kernel), I've determined that select()
+# isn't meant for doing asynchronous file i/o.
+# Heartening, though - reading linux/mm/filemap.c shows that linux
+# supports asynchronous read-ahead.  So _MOST_ of the time, the data
+# will be sitting in memory for us already when we go to read it.
+#
+# What other OS's (besides NT) support async file i/o?  [VMS?]
+#
+# Regardless, this is useful for pipes, and stdin/stdout...
+
+}
+if os.name == 'posix'{
+    import fcntl;
+
+    class file_wrapper{
+        # Here we override just enough to make a file
+        # look like a socket for the purposes of asyncore.
+        # The passed fd is automatically os.dup()'d
+
+        function __init__( fd){
+            this.fd = os.dup(fd);
+
+        }
+        function recv( *args){
+            return os.read(this.fd, *args);
+
+        }
+        function send( *args){
+            return os.write(this.fd, *args);
+
+        }
+        function getsockopt( level, optname, buflen=nil){
+            if (level == socket.SOL_SOCKET and
+                optname == socket.SO_ERROR and
+                not buflen){
+                return 0;
+            } raise NotImplementedError("Only asyncore specific behaviour "
+                                      "implemented.");
+
+        }
+        read = recv;
+        write = send;
+
+        function close(){
+            if this.fd < 0{
+                return;
+            } fd = this.fd;
+            this.fd = -1;
+            os.close(fd);
+
+        }
+        function fileno(){
+            return this.fd;
+
+    }
+    } class file_dispatcher(dispatcher){
+
+        function __init__( fd, map=nil){
+            dispatcher.__init__(this, nil, map);
+            this.connected = true;
+            try{
+                fd = fd.fileno();
+            } except AttributeError{
+                pass;
+            } this.set_file(fd);
+            # set it to non-blocking mode
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL, 0);
+            flags = flags | os.O_NONBLOCK;
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags);
+
+        }
+        function set_file( fd){
+            this.socket = file_wrapper(fd);
+            this._fileno = this.socket.fileno();
+            this.add_channel();
+
+}
+} }

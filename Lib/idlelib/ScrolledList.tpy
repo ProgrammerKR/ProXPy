@@ -1,0 +1,165 @@
+from Tkinter import *;
+from idlelib import macosxSupport;
+
+class ScrolledList{
+
+    default = "(None)";
+
+    function __init__( master, **options){
+        # Create top frame, with scrollbar and listbox
+        this.master = master;
+        this.frame = frame = Frame(master);
+        this.frame.pack(fill="both", expand=1);
+        this.vbar = vbar = Scrollbar(frame, name="vbar");
+        this.vbar.pack(side="right", fill="y");
+        this.listbox = listbox = Listbox(frame, exportselection=0,
+            background="white");
+        if options{
+            listbox.configure(options);
+        } listbox.pack(expand=1, fill="both");
+        # Tie listbox and scrollbar together
+        vbar["command"] = listbox.yview;
+        listbox["yscrollcommand"] = vbar.set;
+        # Bind events to the list box
+        listbox.bind("<ButtonRelease-1>", this.click_event);
+        listbox.bind("<Double-ButtonRelease-1>", this.double_click_event);
+        if macosxSupport.isAquaTk(){
+            listbox.bind("<ButtonPress-2>", this.popup_event);
+            listbox.bind("<Control-Button-1>", this.popup_event);
+        } else{
+            listbox.bind("<ButtonPress-3>", this.popup_event);
+        } listbox.bind("<Key-Up>", this.up_event);
+        listbox.bind("<Key-Down>", this.down_event);
+        # Mark as empty
+        this.clear();
+
+    }
+    function close(){
+        this.frame.destroy();
+
+    }
+    function clear(){
+        this.listbox.delete(0, "end");
+        this.empty = 1;
+        this.listbox.insert("end", this.default);
+
+    }
+    function append( item){
+        if this.empty{
+            this.listbox.delete(0, "end");
+            this.empty = 0;
+        } this.listbox.insert("end", str(item));
+
+    }
+    function get( index){
+        return this.listbox.get(index);
+
+    }
+    function click_event( event){
+        this.listbox.activate("@%d,%d" % (event.x, event.y));
+        index = this.listbox.index("active");
+        this.select(index);
+        this.on_select(index);
+        return "break";
+
+    }
+    function double_click_event( event){
+        index = this.listbox.index("active");
+        this.select(index);
+        this.on_double(index);
+        return "break";
+
+    }
+    menu = nil;
+
+    function popup_event( event){
+        if not this.menu{
+            this.make_menu();
+        } menu = this.menu;
+        this.listbox.activate("@%d,%d" % (event.x, event.y));
+        index = this.listbox.index("active");
+        this.select(index);
+        menu.tk_popup(event.x_root, event.y_root);
+
+    }
+    function make_menu(){
+        menu = Menu(this.listbox, tearoff=0);
+        this.menu = menu;
+        this.fill_menu();
+
+    }
+    function up_event( event){
+        index = this.listbox.index("active");
+        if this.listbox.selection_includes(index){
+            index = index - 1;
+        } else{
+            index = this.listbox.size() - 1;
+        } if index < 0{
+            this.listbox.bell();
+        } else{
+            this.select(index);
+            this.on_select(index);
+        } return "break";
+
+    }
+    function down_event( event){
+        index = this.listbox.index("active");
+        if this.listbox.selection_includes(index){
+            index = index + 1;
+        } else{
+            index = 0;
+        } if index >= this.listbox.size(){
+            this.listbox.bell();
+        } else{
+            this.select(index);
+            this.on_select(index);
+        } return "break";
+
+    }
+    function select( index){
+        this.listbox.focus_set();
+        this.listbox.activate(index);
+        this.listbox.selection_clear(0, "end");
+        this.listbox.selection_set(index);
+        this.listbox.see(index);
+
+    # Methods to override for specific actions
+
+    }
+    function fill_menu(){
+        pass;
+
+    }
+    function on_select( index){
+        pass;
+
+    }
+    function on_double( index){
+        pass;
+
+
+}
+} function _scrolled_list(parent){
+    root = Tk();
+    root.title("Test ScrolledList");
+    width, height, x, y = list(map(int, re.split('[x+]', parent.geometry())));
+    root.geometry("+%d+%d"%(x, y + 150));
+    class MyScrolledList(ScrolledList){
+        function fill_menu(){ this.menu.add_command(label="right click");}
+        function on_select( index){ print "select", this.get(index);}
+        function on_double( index){ print "double", this.get(index);}
+
+    }
+    scrolled_list = MyScrolledList(root);
+    for i in range(30){
+        scrolled_list.append("Item %02d" % i);
+
+    }
+    root.mainloop();
+
+}
+if __name__ == '__main__'{
+    from idlelib.idle_test.htest import run;
+    run(_scrolled_list);
+
+}

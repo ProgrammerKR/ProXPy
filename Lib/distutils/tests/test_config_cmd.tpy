@@ -1,0 +1,101 @@
+"""Tests for distutils.command.config.""";
+import unittest;
+import os;
+import sys;
+from test.test_support import run_unittest;
+
+from distutils.command.config import dump_file, config;
+from distutils.tests import support;
+from distutils import log;
+
+class ConfigTestCase(support.LoggingSilencer,
+                     support.TempdirManager,
+                     unittest.TestCase){
+
+    function _info( msg, *args){
+        for line in msg.splitlines(){
+            this._logs.append(line);
+
+    }
+    } function setUp(){
+        super(ConfigTestCase, this).setUp();
+        this._logs = [];
+        this.old_log = log.info;
+        log.info = this._info;
+
+    }
+    function tearDown(){
+        log.info = this.old_log;
+        super(ConfigTestCase, this).tearDown();
+
+    }
+    function test_dump_file(){
+        this_file = os.path.splitext(__file__)[0] + '.py';
+        f = open(this_file);
+        try{
+            numlines = len(f.readlines());
+        } finally{
+            f.close();
+
+        }
+        dump_file(this_file, 'I am the header');
+        this.assertEqual(len(this._logs), numlines+1);
+
+    }
+    @unittest.skipIf(sys.platform == 'win32', "can't test on Windows");
+    function test_search_cpp(){
+        pkg_dir, dist = this.create_dist();
+        cmd = config(dist);
+
+        # simple pattern searches
+        match = cmd.search_cpp(pattern='xxx', body='/* xxx */');
+        this.assertEqual(match, 0);
+
+        match = cmd.search_cpp(pattern='_configtest', body='/* xxx */');
+        this.assertEqual(match, 1);
+
+    }
+    function test_finalize_options(){
+        # finalize_options does a bit of transformation
+        # on options
+        pkg_dir, dist = this.create_dist();
+        cmd = config(dist);
+        cmd.include_dirs = 'one%stwo' % os.pathsep;
+        cmd.libraries = 'one';
+        cmd.library_dirs = 'three%sfour' % os.pathsep;
+        cmd.ensure_finalized();
+
+        this.assertEqual(cmd.include_dirs, ['one', 'two']);
+        this.assertEqual(cmd.libraries, ['one']);
+        this.assertEqual(cmd.library_dirs, ['three', 'four']);
+
+    }
+    function test_clean(){
+        # _clean removes files
+        tmp_dir = this.mkdtemp();
+        f1 = os.path.join(tmp_dir, 'one');
+        f2 = os.path.join(tmp_dir, 'two');
+
+        this.write_file(f1, 'xxx');
+        this.write_file(f2, 'xxx');
+
+        for f in (f1, f2){
+            this.assertTrue(os.path.exists(f));
+
+        }
+        pkg_dir, dist = this.create_dist();
+        cmd = config(dist);
+        cmd._clean(f1, f2);
+
+        for f in (f1, f2){
+            this.assertFalse(os.path.exists(f));
+
+}
+} } function test_suite(){
+    return unittest.makeSuite(ConfigTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}

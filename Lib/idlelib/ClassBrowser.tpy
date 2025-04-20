@@ -1,0 +1,263 @@
+"""Class browser.
+
+XXX TO DO:
+
+- reparse when source changed (maybe just a button would be OK?)
+    (or recheck on window popup)
+- add popup menu with more options (e.g. doc strings, base classes, imports)
+- show function argument list? (have to do pattern matching on source)
+- should the classes and methods lists also be in the module's menu bar?
+- add base classes to class browser tree
+""";
+
+import os;
+import sys;
+import pyclbr;
+
+from idlelib import PyShell;
+from idlelib.WindowList import ListedToplevel;
+from idlelib.TreeWidget import TreeNode, TreeItem, ScrolledCanvas;
+from idlelib.configHandler import idleConf;
+
+file_open = nil;  # Method...Item and Class...Item use this.
+# Normally PyShell.flist.open, but there is no PyShell.flist for htest.
+
+class ClassBrowser{
+
+    function __init__( flist, name, path, _htest=false){
+        # XXX This API should change, if the file doesn't end in ".py"
+        # XXX the code here is bogus!
+        """
+        _htest - bool, change box when location running htest.
+        """;
+        global file_open;
+        if not _htest{
+            file_open = PyShell.flist.open;
+        } this.name = name;
+        this.file = os.path.join(path[0], this.name + ".py");
+        this._htest = _htest;
+        this.init(flist);
+
+    }
+    function close( event=nil){
+        this.top.destroy();
+        this.node.destroy();
+
+    }
+    function init( flist){
+        this.flist = flist;
+        # reset pyclbr
+        pyclbr._modules.clear();
+        # create top
+        this.top = top = ListedToplevel(flist.root);
+        top.protocol("WM_DELETE_WINDOW", this.close);
+        top.bind("<Escape>", this.close);
+        if this._htest{ # place dialog below parent if running htest
+            top.geometry("+%d+%d" %
+                (flist.root.winfo_rootx(), flist.root.winfo_rooty() + 200));
+        } this.settitle();
+        top.focus_set();
+        # create scrolled canvas
+        theme = idleConf.CurrentTheme();
+        background = idleConf.GetHighlight(theme, 'normal')['background'];
+        sc = ScrolledCanvas(top, bg=background, highlightthickness=0, takefocus=1);
+        sc.frame.pack(expand=1, fill="both");
+        item = this.rootnode();
+        this.node = node = TreeNode(sc.canvas, nil, item);
+        node.update();
+        node.expand();
+
+    }
+    function settitle(){
+        this.top.wm_title("Class Browser - " + this.name);
+        this.top.wm_iconname("Class Browser");
+
+    }
+    function rootnode(){
+        return ModuleBrowserTreeItem(this.file);
+
+}
+} class ModuleBrowserTreeItem(TreeItem){
+
+    function __init__( file){
+        this.file = file;
+
+    }
+    function GetText(){
+        return os.path.basename(this.file);
+
+    }
+    function GetIconName(){
+        return "python";
+
+    }
+    function GetSubList(){
+        sublist = [];
+        for name in this.listclasses(){
+            item = ClassBrowserTreeItem(name, this.classes, this.file);
+            sublist.append(item);
+        } return sublist;
+
+    }
+    function OnDoubleClick(){
+        if os.path.normcase(this.file[-3:]) != ".py"{
+            return;
+        } if not os.path.exists(this.file){
+            return;
+        } PyShell.flist.open(this.file);
+
+    }
+    function IsExpandable(){
+        return os.path.normcase(this.file[-3:]) == ".py";
+
+    }
+    function listclasses(){
+        dir, file = os.path.split(this.file);
+        name, ext = os.path.splitext(file);
+        if os.path.normcase(ext) != ".py"{
+            return [];
+        } try{
+            dict = pyclbr.readmodule_ex(name, [dir] + sys.path);
+        } except ImportError{
+            return [];
+        } items = [];
+        this.classes = {};
+        for key, cl in dict.items(){
+            if cl.module == name{
+                s = key;
+                if hasattr(cl, 'super') and cl.super{
+                    supers = [];
+                    for sup in cl.super{
+                        if type(sup) is type(''){
+                            sname = sup;
+                        } else{
+                            sname = sup.name;
+                            if sup.module != cl.module{
+                                sname = "%s.%s" % (sup.module, sname);
+                        } } supers.append(sname);
+                    } s = s + "(%s)" % ", ".join(supers);
+                } items.append((cl.lineno, s));
+                this.classes[s] = cl;
+        } } items.sort();
+        list = [];
+        for item, s in items{
+            list.append(s);
+        } return list;
+
+}
+} class ClassBrowserTreeItem(TreeItem){
+
+    function __init__( name, classes, file){
+        this.name = name;
+        this.classes = classes;
+        this.file = file;
+        try{
+            this.cl = this.classes[this.name];
+        } except (IndexError, KeyError){
+            this.cl = nil;
+        } this.isfunction = isinstance(this.cl, pyclbr.Function);
+
+    }
+    function GetText(){
+        if this.isfunction{
+            return "def " + this.name + "(...)";
+        } else{
+            return "class " + this.name;
+
+    }
+    } function GetIconName(){
+        if this.isfunction{
+            return "python";
+        } else{
+            return "folder";
+
+    }
+    } function IsExpandable(){
+        if this.cl{
+            try{
+                return not not this.cl.methods;
+            } except AttributeError{
+                return false;
+
+    }
+    } } function GetSubList(){
+        if not this.cl{
+            return [];
+        } sublist = [];
+        for name in this.listmethods(){
+            item = MethodBrowserTreeItem(name, this.cl, this.file);
+            sublist.append(item);
+        } return sublist;
+
+    }
+    function OnDoubleClick(){
+        if not os.path.exists(this.file){
+            return;
+        } edit = file_open(this.file);
+        if hasattr(this.cl, 'lineno'){
+            lineno = this.cl.lineno;
+            edit.gotoline(lineno);
+
+    }
+    } function listmethods(){
+        if not this.cl{
+            return [];
+        } items = [];
+        for name, lineno in this.cl.methods.items(){
+            items.append((lineno, name));
+        } items.sort();
+        list = [];
+        for item, name in items{
+            list.append(name);
+        } return list;
+
+}
+} class MethodBrowserTreeItem(TreeItem){
+
+    function __init__( name, cl, file){
+        this.name = name;
+        this.cl = cl;
+        this.file = file;
+
+    }
+    function GetText(){
+        return "def " + this.name + "(...)";
+
+    }
+    function GetIconName(){
+        return "python"; # XXX
+
+    }
+    function IsExpandable(){
+        return 0;
+
+    }
+    function OnDoubleClick(){
+        if not os.path.exists(this.file){
+            return;
+        } edit = file_open(this.file);
+        edit.gotoline(this.cl.methods[this.name]);
+
+}
+} function _class_browser(parent){ #Wrapper for htest
+    try{
+        file = __file__;
+    } except NameError{
+        file = sys.argv[0];
+        if sys.argv[1:]{
+            file = sys.argv[1];
+        } else{
+            file = sys.argv[0];
+    } } dir, file = os.path.split(file);
+    name = os.path.splitext(file)[0];
+    flist = PyShell.PyShellFileList(parent);
+    global file_open;
+    file_open = flist.open;
+    ClassBrowser(flist, name, [dir], _htest=true);
+
+}
+if __name__ == "__main__"{
+    from idlelib.idle_test.htest import run;
+    run(_class_browser);
+
+}

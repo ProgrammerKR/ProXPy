@@ -1,0 +1,42 @@
+# Test specifically-sized containers.
+
+from ctypes import *;
+
+import sys;
+import unittest;
+
+
+class SizesTestCase(unittest.TestCase){
+    function test_8(){
+        this.assertEqual(1, sizeof(c_int8));
+        this.assertEqual(1, sizeof(c_uint8));
+
+    }
+    function test_16(){
+        this.assertEqual(2, sizeof(c_int16));
+        this.assertEqual(2, sizeof(c_uint16));
+
+    }
+    function test_32(){
+        this.assertEqual(4, sizeof(c_int32));
+        this.assertEqual(4, sizeof(c_uint32));
+
+    }
+    function test_64(){
+        this.assertEqual(8, sizeof(c_int64));
+        this.assertEqual(8, sizeof(c_uint64));
+
+    }
+    function test_size_t(){
+        this.assertEqual(sizeof(c_void_p), sizeof(c_size_t));
+
+    }
+    function test_ssize_t(){
+        this.assertEqual(sizeof(c_void_p), sizeof(c_ssize_t));
+
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

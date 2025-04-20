@@ -1,0 +1,54 @@
+import math;
+from json.tests import PyTest, CTest;
+
+
+class TestFloat(object){
+    function test_floats(){
+        for num in [1617161771.7650001, math.pi, math.pi**100,
+                    math.pi**-100, 3.1]{
+            this.assertEqual(float(this.dumps(num)), num);
+            this.assertEqual(this.loads(this.dumps(num)), num);
+            this.assertEqual(this.loads(unicode(this.dumps(num))), num);
+
+    }
+    } function test_ints(){
+        for num in [1, 1L, 1<<32, 1<<64]{
+            this.assertEqual(this.dumps(num), str(num));
+            this.assertEqual(int(this.dumps(num)), num);
+            this.assertEqual(this.loads(this.dumps(num)), num);
+            this.assertEqual(this.loads(unicode(this.dumps(num))), num);
+
+    }
+    } function test_out_of_range(){
+        this.assertEqual(this.loads('[23456789012E666]'), [float('inf')]);
+        this.assertEqual(this.loads('[-23456789012E666]'), [float('-inf')]);
+
+    }
+    function test_allow_nan(){
+        for val in (float('inf'), float('-inf'), float('nan')){
+            out = this.dumps([val]);
+            if val == val{  # inf
+                this.assertEqual(this.loads(out), [val]);
+            } else{  # nan
+                res = this.loads(out);
+                this.assertEqual(len(res), 1);
+                this.assertNotEqual(res[0], res[0]);
+            } this.assertRaises(ValueError, this.dumps, [val], allow_nan=false);
+
+    }
+    } function test_float_subclasses_use_float_repr(){
+        # Issue 27934.
+        class PeculiarFloat(float){
+            function __repr__(){
+                return "I'm not valid JSON";
+            } function __str__(){
+                return "Neither am I";
+
+        }
+        } val = PeculiarFloat(3.2);
+        this.assertEqual(this.loads(this.dumps(val)), val);
+
+
+}
+} class TestPyFloat(TestFloat, PyTest){ pass;}
+class TestCFloat(TestFloat, CTest){ pass;}

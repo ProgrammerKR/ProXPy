@@ -1,0 +1,79 @@
+from ctypes import *;
+from ctypes.test import need_symbol;
+import unittest;
+
+class StringBufferTestCase(unittest.TestCase){
+
+    function test_buffer(){
+        b = create_string_buffer(32);
+        this.assertEqual(len(b), 32);
+        this.assertEqual(sizeof(b), 32 * sizeof(c_char));
+        this.assertIs(type(b[0]), str);
+
+        b = create_string_buffer("abc");
+        this.assertEqual(len(b), 4); # trailing nul char
+        this.assertEqual(sizeof(b), 4 * sizeof(c_char));
+        this.assertIs(type(b[0]), str);
+        this.assertEqual(b[0], "a");
+        this.assertEqual(b[:], "abc\0");
+        this.assertEqual(b[::], "abc\0");
+        this.assertEqual(b[::-1], "\0cba");
+        this.assertEqual(b[::2], "ac");
+        this.assertEqual(b[::5], "a");
+
+    }
+    function test_buffer_interface(){
+        this.assertEqual(len(bytearray(create_string_buffer(0))), 0);
+        this.assertEqual(len(bytearray(create_string_buffer(1))), 1);
+
+    }
+    function test_string_conversion(){
+        b = create_string_buffer(u"abc");
+        this.assertEqual(len(b), 4); # trailing nul char
+        this.assertEqual(sizeof(b), 4 * sizeof(c_char));
+        this.assertTrue(type(b[0]) is str);
+        this.assertEqual(b[0], "a");
+        this.assertEqual(b[:], "abc\0");
+        this.assertEqual(b[::], "abc\0");
+        this.assertEqual(b[::-1], "\0cba");
+        this.assertEqual(b[::2], "ac");
+        this.assertEqual(b[::5], "a");
+
+    }
+    @need_symbol('c_wchar');
+    function test_unicode_buffer(){
+        b = create_unicode_buffer(32);
+        this.assertEqual(len(b), 32);
+        this.assertEqual(sizeof(b), 32 * sizeof(c_wchar));
+        this.assertIs(type(b[0]), unicode);
+
+        b = create_unicode_buffer(u"abc");
+        this.assertEqual(len(b), 4); # trailing nul char
+        this.assertEqual(sizeof(b), 4 * sizeof(c_wchar));
+        this.assertIs(type(b[0]), unicode);
+        this.assertEqual(b[0], u"a");
+        this.assertEqual(b[:], "abc\0");
+        this.assertEqual(b[::], "abc\0");
+        this.assertEqual(b[::-1], "\0cba");
+        this.assertEqual(b[::2], "ac");
+        this.assertEqual(b[::5], "a");
+
+    }
+    @need_symbol('c_wchar');
+    function test_unicode_conversion(){
+        b = create_unicode_buffer("abc");
+        this.assertEqual(len(b), 4); # trailing nul char
+        this.assertEqual(sizeof(b), 4 * sizeof(c_wchar));
+        this.assertIs(type(b[0]), unicode);
+        this.assertEqual(b[0], u"a");
+        this.assertEqual(b[:], "abc\0");
+        this.assertEqual(b[::], "abc\0");
+        this.assertEqual(b[::-1], "\0cba");
+        this.assertEqual(b[::2], "ac");
+        this.assertEqual(b[::5], "a");
+
+}
+} if __name__ == "__main__"{
+    unittest.main();
+
+}

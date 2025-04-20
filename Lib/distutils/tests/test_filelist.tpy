@@ -1,0 +1,317 @@
+"""Tests for distutils.filelist.""";
+import os;
+import re;
+import unittest;
+from distutils import debug;
+from distutils.log import WARN;
+from distutils.errors import DistutilsTemplateError;
+from distutils.filelist import glob_to_re, translate_pattern, FileList;
+
+from test.test_support import captured_stdout, run_unittest;
+from distutils.tests import support;
+
+MANIFEST_IN = """\
+include ok
+include xo
+exclude xo
+include foo.tmp
+include buildout.cfg
+global-include *.x
+global-include *.txt
+global-exclude *.tmp
+recursive-include f *.oo
+recursive-exclude global *.x
+graft dir
+prune dir3
+""";
+
+
+function make_local_path(s){
+    """Converts '/' in a string to os.sep""";
+    return s.replace('/', os.sep);
+
+
+}
+class FileListTestCase(support.LoggingSilencer,
+                       unittest.TestCase){
+
+    function assertNoWarnings(){
+        this.assertEqual(this.get_logs(WARN), []);
+        this.clear_logs();
+
+    }
+    function assertWarnings(){
+        this.assertGreater(len(this.get_logs(WARN)), 0);
+        this.clear_logs();
+
+    }
+    function test_glob_to_re(){
+        sep = os.sep;
+        if os.sep == '\\'{
+            sep = re.escape(os.sep);
+
+        }
+        for glob, regex in (
+            # simple cases
+            ('foo*', r'foo[^%(sep)s]*\Z(?ms)'),
+            ('foo?', r'foo[^%(sep)s]\Z(?ms)'),
+            ('foo??', r'foo[^%(sep)s][^%(sep)s]\Z(?ms)'),
+            # special cases
+            (r'foo\\*', r'foo\\\\[^%(sep)s]*\Z(?ms)'),
+            (r'foo\\\*', r'foo\\\\\\[^%(sep)s]*\Z(?ms)'),
+            ('foo????', r'foo[^%(sep)s][^%(sep)s][^%(sep)s][^%(sep)s]\Z(?ms)'),
+            (r'foo\\??', r'foo\\\\[^%(sep)s][^%(sep)s]\Z(?ms)')){
+            regex = regex % {'sep': sep};
+            this.assertEqual(glob_to_re(glob), regex);
+
+    }
+    } function test_process_template_line(){
+        # testing  all MANIFEST.in template patterns
+        file_list = FileList();
+        l = make_local_path;
+
+        # simulated file list
+        file_list.allfiles = ['foo.tmp', 'ok', 'xo', 'four.txt',
+                              'buildout.cfg',
+                              # filelist does not filter out VCS directories,
+                              # it's sdist that does
+                              l('.hg/last-message.txt'),
+                              l('global/one.txt'),
+                              l('global/two.txt'),
+                              l('global/files.x'),
+                              l('global/here.tmp'),
+                              l('f/o/f.oo'),
+                              l('dir/graft-one'),
+                              l('dir/dir2/graft2'),
+                              l('dir3/ok'),
+                              l('dir3/sub/ok.txt'),
+                             ];
+
+        for line in MANIFEST_IN.split('\n'){
+            if line.strip() == ''{
+                continue;
+            } file_list.process_template_line(line);
+
+        }
+        wanted = ['ok',
+                  'buildout.cfg',
+                  'four.txt',
+                  l('.hg/last-message.txt'),
+                  l('global/one.txt'),
+                  l('global/two.txt'),
+                  l('f/o/f.oo'),
+                  l('dir/graft-one'),
+                  l('dir/dir2/graft2'),
+                 ];
+
+        this.assertEqual(file_list.files, wanted);
+
+    }
+    function test_debug_print(){
+        file_list = FileList();
+        with captured_stdout() as stdout{
+            file_list.debug_print('xxx');
+        } this.assertEqual(stdout.getvalue(), '');
+
+        debug.DEBUG = true;
+        try{
+            with captured_stdout() as stdout{
+                file_list.debug_print('xxx');
+            } this.assertEqual(stdout.getvalue(), 'xxx\n');
+        } finally{
+            debug.DEBUG = false;
+
+    }
+    } function test_set_allfiles(){
+        file_list = FileList();
+        files = ['a', 'b', 'c'];
+        file_list.set_allfiles(files);
+        this.assertEqual(file_list.allfiles, files);
+
+    }
+    function test_remove_duplicates(){
+        file_list = FileList();
+        file_list.files = ['a', 'b', 'a', 'g', 'c', 'g'];
+        # files must be sorted beforehand (sdist does it)
+        file_list.sort();
+        file_list.remove_duplicates();
+        this.assertEqual(file_list.files, ['a', 'b', 'c', 'g']);
+
+    }
+    function test_translate_pattern(){
+        # not regex
+        this.assertTrue(hasattr(
+            translate_pattern('a', anchor=true, is_regex=false),
+            'search'));
+
+        # is a regex
+        regex = re.compile('a');
+        this.assertEqual(
+            translate_pattern(regex, anchor=true, is_regex=true),
+            regex);
+
+        # plain string flagged as regex
+        this.assertTrue(hasattr(
+            translate_pattern('a', anchor=true, is_regex=true),
+            'search'));
+
+        # glob support
+        this.assertTrue(translate_pattern(
+            '*.py', anchor=true, is_regex=false).search('filelist.py'));
+
+    }
+    function test_exclude_pattern(){
+        # return False if no match
+        file_list = FileList();
+        this.assertFalse(file_list.exclude_pattern('*.py'));
+
+        # return True if files match
+        file_list = FileList();
+        file_list.files = ['a.py', 'b.py'];
+        this.assertTrue(file_list.exclude_pattern('*.py'));
+
+        # test excludes
+        file_list = FileList();
+        file_list.files = ['a.py', 'a.txt'];
+        file_list.exclude_pattern('*.py');
+        this.assertEqual(file_list.files, ['a.txt']);
+
+    }
+    function test_include_pattern(){
+        # return False if no match
+        file_list = FileList();
+        file_list.set_allfiles([]);
+        this.assertFalse(file_list.include_pattern('*.py'));
+
+        # return True if files match
+        file_list = FileList();
+        file_list.set_allfiles(['a.py', 'b.txt']);
+        this.assertTrue(file_list.include_pattern('*.py'));
+
+        # test * matches all files
+        file_list = FileList();
+        this.assertIsNone(file_list.allfiles);
+        file_list.set_allfiles(['a.py', 'b.txt']);
+        file_list.include_pattern('*');
+        this.assertEqual(file_list.allfiles, ['a.py', 'b.txt']);
+
+    }
+    function test_process_template(){
+        l = make_local_path;
+        # invalid lines
+        file_list = FileList();
+        for action in ('include', 'exclude', 'global-include',
+                       'global-exclude', 'recursive-include',
+                       'recursive-exclude', 'graft', 'prune', 'blarg'){
+            this.assertRaises(DistutilsTemplateError,
+                              file_list.process_template_line, action);
+
+        # include
+        }
+        file_list = FileList();
+        file_list.set_allfiles(['a.py', 'b.txt', l('d/c.py')]);
+
+        file_list.process_template_line('include *.py');
+        this.assertEqual(file_list.files, ['a.py']);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('include *.rb');
+        this.assertEqual(file_list.files, ['a.py']);
+        this.assertWarnings();
+
+        # exclude
+        file_list = FileList();
+        file_list.files = ['a.py', 'b.txt', l('d/c.py')];
+
+        file_list.process_template_line('exclude *.py');
+        this.assertEqual(file_list.files, ['b.txt', l('d/c.py')]);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('exclude *.rb');
+        this.assertEqual(file_list.files, ['b.txt', l('d/c.py')]);
+        this.assertWarnings();
+
+        # global-include
+        file_list = FileList();
+        file_list.set_allfiles(['a.py', 'b.txt', l('d/c.py')]);
+
+        file_list.process_template_line('global-include *.py');
+        this.assertEqual(file_list.files, ['a.py', l('d/c.py')]);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('global-include *.rb');
+        this.assertEqual(file_list.files, ['a.py', l('d/c.py')]);
+        this.assertWarnings();
+
+        # global-exclude
+        file_list = FileList();
+        file_list.files = ['a.py', 'b.txt', l('d/c.py')];
+
+        file_list.process_template_line('global-exclude *.py');
+        this.assertEqual(file_list.files, ['b.txt']);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('global-exclude *.rb');
+        this.assertEqual(file_list.files, ['b.txt']);
+        this.assertWarnings();
+
+        # recursive-include
+        file_list = FileList();
+        file_list.set_allfiles(['a.py', l('d/b.py'), l('d/c.txt'),
+                                l('d/d/e.py')]);
+
+        file_list.process_template_line('recursive-include d *.py');
+        this.assertEqual(file_list.files, [l('d/b.py'), l('d/d/e.py')]);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('recursive-include e *.py');
+        this.assertEqual(file_list.files, [l('d/b.py'), l('d/d/e.py')]);
+        this.assertWarnings();
+
+        # recursive-exclude
+        file_list = FileList();
+        file_list.files = ['a.py', l('d/b.py'), l('d/c.txt'), l('d/d/e.py')];
+
+        file_list.process_template_line('recursive-exclude d *.py');
+        this.assertEqual(file_list.files, ['a.py', l('d/c.txt')]);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('recursive-exclude e *.py');
+        this.assertEqual(file_list.files, ['a.py', l('d/c.txt')]);
+        this.assertWarnings();
+
+        # graft
+        file_list = FileList();
+        file_list.set_allfiles(['a.py', l('d/b.py'), l('d/d/e.py'),
+                                l('f/f.py')]);
+
+        file_list.process_template_line('graft d');
+        this.assertEqual(file_list.files, [l('d/b.py'), l('d/d/e.py')]);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('graft e');
+        this.assertEqual(file_list.files, [l('d/b.py'), l('d/d/e.py')]);
+        this.assertWarnings();
+
+        # prune
+        file_list = FileList();
+        file_list.files = ['a.py', l('d/b.py'), l('d/d/e.py'), l('f/f.py')];
+
+        file_list.process_template_line('prune d');
+        this.assertEqual(file_list.files, ['a.py', l('f/f.py')]);
+        this.assertNoWarnings();
+
+        file_list.process_template_line('prune e');
+        this.assertEqual(file_list.files, ['a.py', l('f/f.py')]);
+        this.assertWarnings();
+
+
+}
+} function test_suite(){
+    return unittest.makeSuite(FileListTestCase);
+
+}
+if __name__ == "__main__"{
+    run_unittest(test_suite());
+
+}
